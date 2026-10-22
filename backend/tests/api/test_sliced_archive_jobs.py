@@ -21,6 +21,8 @@ def library(tmp_path, monkeypatch):
 
 
 async def _post(client, body):
+    # These legacy files carry no machine eligibility; the tests here are about other behaviour, so the user "confirms" it (BIZ-263).
+    body = {"confirm_unknown_eligibility": True, **body}
     with patch("app.api.routes.jobs.queue_engine"):
         return await client.post("/api/v1/jobs", json=body)
 
@@ -47,22 +49,18 @@ def test_accepts_file(printer_type, name, ok):
     assert accepts_file(printer_type, name) is ok
 
 
-async def test_upload_reads_each_archive_plate_and_its_thumbnail_without_regenerating(client, library, upload_3mf):
-    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
-        file_id = await upload_3mf("part.gcode.3mf", make_sliced_archive())
+async def test_upload_reads_each_archive_plate_and_its_thumbnail(client, library, upload_3mf):
+    file_id = await upload_3mf("part.gcode.3mf", make_sliced_archive())
 
     plates = (await client.get(f"/api/v1/files/{file_id}/plates")).json()["plates"]
     assert [(p["plate_number"], p["estimated_time"], p["filament_g"]) for p in plates] == [(1, 600, 4.0), (2, 1200, 7.5)]
     listed = next(f for f in (await client.get("/api/v1/files")).json() if f["id"] == file_id)
     assert listed["kind"] == "gcode_3mf"
     assert [t["plate_number"] for t in listed["plate_thumbnails"]] == [1]
-    regen.assert_not_called()
 
 
-async def test_upload_of_a_plain_3mf_still_regenerates_thumbnails(client, library, upload_3mf):
-    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
-        file_id = await upload_3mf()
-    regen.assert_called_once()
+async def test_upload_of_a_plain_3mf_lists_it_as_a_model(client, library, upload_3mf):
+    file_id = await upload_3mf()
     listed = next(f for f in (await client.get("/api/v1/files")).json() if f["id"] == file_id)
     assert listed["kind"] == "3mf"
 
@@ -96,15 +94,15 @@ async def test_archive_job_refused_for_a_raw_gcode_printer(client, library, uplo
     assert "sliced .gcode.3mf archive" in resp.json()["detail"]
 
 
-async def test_archive_target_only_materializes_onto_archive_printers(
-        client, library, upload_3mf, create_printer, session_factory):
-    bambu = await create_printer(name="bambu", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+async def test_archive_target_only_materializes_onto_printers_of_its_model(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    bambu = await create_printer(name="bambu", machine_profile_override=P1S, orca_printer_profiles=[P1S])
     await create_printer(name="centauri", printer_type="elegoo_centauri",
-                         current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+                         machine_profile_override=P1S, orca_printer_profiles=[P1S])
 
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
-        "model_targets": [{"machine_profile": P1S}],
+        "model_targets": [{"model_uuid": await model_uuid_of(bambu)}],
     })
 
     assert resp.status_code == 201, resp.text
@@ -114,11 +112,11 @@ async def test_archive_target_only_materializes_onto_archive_printers(
 
 
 async def test_archive_target_refused_when_only_raw_gcode_printers_have_the_model(
-        client, library, upload_3mf, create_printer):
-    await create_printer(printer_type="elegoo_centauri", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+        client, library, upload_3mf, create_printer, model_uuid_of):
+    pid = await create_printer(printer_type="elegoo_centauri", machine_profile_override=P1S, orca_printer_profiles=[P1S])
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
-        "model_targets": [{"machine_profile": P1S}],
+        "model_targets": [{"model_uuid": await model_uuid_of(pid)}],
     })
     assert resp.status_code == 422
 
@@ -209,19 +207,19 @@ async def test_editing_an_archive_job_drops_overrides_and_keeps_the_header_estim
     qe.spawn_estimate.assert_not_called()
 
 
-async def test_target_sync_only_adds_archive_jobs_to_printers_that_take_archives(
-        client, library, upload_3mf, create_printer, session_factory):
-    """A printer that joins a make/model later gets the waiting archive job only if it prints archives."""
+async def test_target_sync_only_adds_archive_jobs_to_printers_of_the_targeted_model(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    """A printer that joins the targeted model later gets the waiting archive job; one of another model does not."""
     from app.models import Printer
     from app.services import model_targets
-    bambu = await create_printer(name="bambu", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    bambu = await create_printer(name="bambu", machine_profile_override=P1S, orca_printer_profiles=[P1S])
     job_id = (await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
-        "model_targets": [{"machine_profile": P1S}],
+        "model_targets": [{"model_uuid": await model_uuid_of(bambu)}],
     })).json()["id"]
-    late_bambu = await create_printer(name="bambu2", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    late_bambu = await create_printer(name="bambu2", machine_profile_override=P1S, orca_printer_profiles=[P1S])
     centauri = await create_printer(name="centauri", printer_type="elegoo_centauri",
-                                    current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+                                    machine_profile_override=P1S, orca_printer_profiles=[P1S])
 
     async with session_factory() as s:
         for pid in (late_bambu, centauri):

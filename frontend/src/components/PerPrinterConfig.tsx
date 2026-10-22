@@ -1,60 +1,52 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
-import { getPrinterProfiles, type ModelFilament } from '../api/queue';
-import { useSpoolmanConfig, useFilaments, filamentDisplayName, parseOrcaProfiles } from '../api/spoolman';
+import { getPrinterProfiles, type FilamentMapEntry, type ModelFilament } from '../api/queue';
+import { useInventory, useMaterials } from '../api/inventory';
+import { useSlotConflicts } from './useSlotConflicts';
+import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, type FilamentAsk } from '../lib/filamentAsk';
+import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
   filamentProfile: string | null;
-  filamentId: number | null;
+  // The filament ask: null = undefined (matches anything). The job stores only this tuple, never a material reference.
+  filamentManufacturer: string | null;
   filamentType: string | null;
+  filamentSubtype: string | null;
   filamentColor: string | null;
   toolIndex: number | null;
-  filamentMap: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+  filamentMap: FilamentMapEntry[] | null;
 }
 
 export function defaultPerPrinterCfg(): PerPrinterCfg {
   return {
-    printProfile: null, filamentProfile: null, filamentId: null,
-    filamentType: null, filamentColor: null, toolIndex: null,
-    filamentMap: null,
+    printProfile: null, filamentProfile: null,
+    filamentManufacturer: null, filamentType: null, filamentSubtype: null, filamentColor: null,
+    toolIndex: null, filamentMap: null,
   };
 }
+
+/** The config's single-filament ask as a tuple (and back, for onChange). */
+export const cfgAsk = (c: PerPrinterCfg): FilamentAsk => ({
+  filament_manufacturer: c.filamentManufacturer, filament_type: c.filamentType,
+  filament_subtype: c.filamentSubtype, filament_color: c.filamentColor,
+});
+export const askToCfg = (a: FilamentAsk): Pick<PerPrinterCfg, 'filamentManufacturer' | 'filamentType' | 'filamentSubtype' | 'filamentColor'> => ({
+  filamentManufacturer: a.filament_manufacturer, filamentType: a.filament_type,
+  filamentSubtype: a.filament_subtype, filamentColor: a.filament_color,
+});
 
 const BADGE: Record<string, string> = {
   bambu: 'P1S', elegoo_centauri: 'ECC', snapmaker_extended: 'U1',
 };
-const FILAMENT_TYPES = ['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC'];
 
-type FilamentMapEntry = {
-  model_filament: number;
-  tool_index: number | null;
-  filament_id: number | null;
-  filament_type: string | null;
-  filament_color: string | null;
-};
-
-function encodeAssignment(entry: FilamentMapEntry): string {
-  if (entry.tool_index !== null) return `t:${entry.tool_index}`;
-  if (entry.filament_id !== null) return `f:${entry.filament_id}`;
-  return 't:0'; // null/null legacy entry: neither slot nor catalog assigned — default to T0 display (harmless — handleAssignmentChange writes the proper shape on any change)
-}
-
-function findLoadedSlotForEntry(
-  entry: { filament_type: string | null; filament_color: string | null },
-  slots: { type?: string; color?: string }[],
-): number | null {
-  if (!entry.filament_type) return null;
-  const reqType = entry.filament_type.toLowerCase();
-  const reqColor = (entry.filament_color ?? '').replace('#', '').toLowerCase();
-  const idx = slots.findIndex(s => {
-    if ((s.type ?? '').toLowerCase() !== reqType) return false;
-    if (!reqColor) return true;
-    return (s.color ?? '').replace('#', '').toLowerCase() === reqColor;
-  });
-  return idx >= 0 ? idx : null;
-}
+/** A model colour pinned to tool `t` (the default: filament N on tool N-1, clamped to the slots there are). */
+const pinned = (modelFilament: number, tool: number): FilamentMapEntry => ({ model_filament: modelFilament, tool_index: tool, ...NO_ASK });
+const entryAsk = (e: FilamentMapEntry): FilamentAsk => ({
+  filament_manufacturer: e.filament_manufacturer, filament_type: e.filament_type,
+  filament_subtype: e.filament_subtype, filament_color: e.filament_color,
+});
 
 function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
   const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
@@ -71,7 +63,27 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-export function PerPrinterConfig({ printerId, printers, config: rawConfig, onChange, modelFilaments, gcode }: {
+const CHIP = {
+  ok: { background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)', color: 'var(--ok)' },
+  warn: { background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)', color: 'var(--warn)' },
+} as const;
+
+/** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
+function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; conflicts: number[]; testId?: string }) {
+  const idx = firstMatchingSlot(ask, slots, conflicts);       // a slot in conflict with its bound spool is skipped, as the queue does
+  const undefinedAsk = askIsUndefined(ask);
+  const tone = idx !== null || undefinedAsk ? CHIP.ok : CHIP.warn;
+  const text = idx !== null
+    ? `✓ T${idx} · ${describeAsk({ ...NO_ASK, filament_type: slots[idx].type || null, filament_subtype: slots[idx].subtype ?? null, filament_color: slots[idx].color || null })}`
+    : undefinedAsk ? '◉ Any loaded filament' : `⚠ nothing loaded matches ${describeAsk(ask)} — the job waits in the queue`;
+  return (
+    <span data-testid={testId} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4, ...tone }}>
+      {text}
+    </span>
+  );
+}
+
+export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments, gcode }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
@@ -80,95 +92,42 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
   /** Pre-sliced .gcode job: there is no slicing, so no print profile to choose. */
   gcode?: boolean;
 }) {
-  // The API's wire form of "no preference" is "any"; this component's own defer/match
-  // logic still treats that as null. onChange still emits null — NewJobScreen/EditJobScreen
-  // convert null -> "any" at the API boundary.
-  const config: PerPrinterCfg = {
-    ...rawConfig,
-    filamentType: rawConfig.filamentType === 'any' ? null : rawConfig.filamentType,
-    filamentColor: rawConfig.filamentColor === 'any' ? null : rawConfig.filamentColor,
-  };
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
   const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const filaments = useFilaments(spoolmanActive);
-
-  const selectedFilament = config.filamentId != null
-    ? filaments.find(f => f.id === config.filamentId) ?? null
-    : null;
-
-  const mappedProfiles: string[] | null = useMemo(() => {
-    if (!selectedFilament || !printer?.current_orca_printer_profile) return null;
-    const orcaProfiles = parseOrcaProfiles(selectedFilament);
-    const list = orcaProfiles[printer.current_orca_printer_profile];
-    return list && list.length > 0 ? list : null;
-  }, [selectedFilament, printer]);
-
-  useEffect(() => {
-    if (mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile !== mappedProfiles[0]) {
-      onChange({ filamentProfile: mappedProfiles[0] });
-    }
-  }, [mappedProfiles]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const [filamentConstraint, setFilamentConstraint] = useState<'defer' | 'type-only' | 'type-color'>(
-    () => {
-      if (!config.filamentType && !config.filamentId) return 'defer';
-      if (config.filamentType && !config.filamentColor) return 'type-only';
-      return 'type-color';
-    },
-  );
-  const [manualMode, setManualMode] = useState(
-    () => !spoolmanActive || (config.filamentId === null && !!config.filamentType),
-  );
-
-  useEffect(() => {
-    if (filamentConstraint === 'type-color' && (!spoolmanActive || manualMode) && config.filamentColor === null) {
-      onChange({ filamentColor: '#888888' });
-    }
-  }, [spoolmanActive, manualMode, filamentConstraint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const inventory = useInventory();
+  const catalogActive = !!inventory.plugin;          // "a material catalog is available" (only to fill the tuple from)
+  const materials = useMaterials(catalogActive);
+  const conflicts = useSlotConflicts(pid, printer?.loaded_filaments, undefined, !!printer);
 
   if (!printer) return null;
   const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
   const slots = printer.loaded_filaments ?? [];
-  const catalogValue = config.filamentId != null
-    ? (filaments.find(f => f.id === config.filamentId) != null
-        ? filamentDisplayName(filaments.find(f => f.id === config.filamentId)!) : '')
-    : (config.filamentProfile ?? '');
+  const ask = cfgAsk(config);
+  const multi = !!(modelFilaments && modelFilaments.length > 1 && slots.length >= 1);
 
-  function clearAsk() {
-    onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+  const profileSelect = !gcode && (
+    <div style={{ marginTop: 12 }}>
+      <label className="label">Filament profile (optional)</label>
+      <FilamentProfileSelect
+        profiles={filamentProfiles}
+        value={config.filamentProfile ?? null}
+        onChange={v => onChange({ filamentProfile: v })}
+        placeholder="— use the loaded slot's profile —"
+      />
+    </div>
+  );
+
+  function mapEntries(): FilamentMapEntry[] {
+    return config.filamentMap ?? modelFilaments!.map(mf => pinned(mf.index, Math.min(mf.index - 1, slots.length - 1)));
   }
 
-  function _normColor(c: string | null | undefined): string {
-    return (c ?? '').replace('#', '').toLowerCase();
+  function setEntry(index: number, entry: FilamentMapEntry) {
+    const next = mapEntries().filter(e => e.model_filament !== index);
+    next.push(entry);
+    next.sort((a, b) => a.model_filament - b.model_filament);
+    onChange({ filamentMap: next });
   }
-
-  function computeSlotMatch(): { state: 'match' | 'no-match' | 'defer'; label: string; color: string | null } {
-    if (filamentConstraint === 'defer') {
-      return { state: 'defer', label: 'Any loaded filament', color: null };
-    }
-    const reqType = (config.filamentType ?? '').toLowerCase();
-    const reqColor = _normColor(config.filamentColor);
-    for (let i = 0; i < slots.length; i++) {
-      const s = slots[i];
-      const sType = (s.type ?? '').toLowerCase();
-      if (!reqType) continue;
-      if (sType === reqType) {
-        if (filamentConstraint === 'type-only' || !reqColor || _normColor(s.color) === reqColor) {
-          const label = `${s.type ?? '?'} · slot ${i}`;
-          return { state: 'match', label, color: s.color ?? null };
-        }
-      }
-    }
-    const desc = filamentConstraint === 'type-only'
-      ? `No ${config.filamentType ?? '?'} loaded`
-      : `No ${config.filamentType ?? '?'} match`;
-    return { state: 'no-match', label: desc, color: null };
-  }
-
-  const slotMatch = computeSlotMatch();
 
   return (
     <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
@@ -194,61 +153,13 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
           )}
         </div>}
 
-        {(modelFilaments && modelFilaments.length > 1 && slots.length >= 1) ? (
+        {multi ? (
           <div>
             <label className="label">Filament mapping</label>
             <div className="col gap-2" style={{ marginTop: 4 }}>
-              {modelFilaments.map(f => {
-                const currentMap: FilamentMapEntry[] =
-                  (config.filamentMap as FilamentMapEntry[] | null) ??
-                  modelFilaments!.map(mf => ({
-                    model_filament: mf.index,
-                    tool_index: Math.min(mf.index - 1, slots.length - 1),
-                    filament_id: null,
-                    filament_type: null,
-                    filament_color: null,
-                  }));
-                const entry: FilamentMapEntry = currentMap.find(e => e.model_filament === f.index) ?? {
-                  model_filament: f.index,
-                  tool_index: Math.min(f.index - 1, slots.length - 1),
-                  filament_id: null,
-                  filament_type: null,
-                  filament_color: null,
-                };
-
-                function handleAssignmentChange(val: string) {
-                  const base: FilamentMapEntry[] =
-                    (config.filamentMap as FilamentMapEntry[] | null) ??
-                    modelFilaments!.map(mf => ({
-                      model_filament: mf.index,
-                      tool_index: Math.min(mf.index - 1, slots.length - 1),
-                      filament_id: null,
-                      filament_type: null,
-                      filament_color: null,
-                    }));
-                  const newMap = base.filter(e => e.model_filament !== f.index);
-                  if (val.startsWith('t:')) {
-                    newMap.push({ model_filament: f.index, tool_index: Number(val.slice(2)), filament_id: null, filament_type: null, filament_color: null });
-                  } else {
-                    const fid = Number(val.slice(2));
-                    const fil = filaments.find(fil => fil.id === fid);
-                    if (!fil) return;
-                    newMap.push({
-                      model_filament: f.index,
-                      tool_index: null,
-                      filament_id: fid,
-                      filament_type: fil.material,
-                      filament_color: fil.color_hex ? `#${fil.color_hex}` : null,
-                    });
-                  }
-                  newMap.sort((a, b) => a.model_filament - b.model_filament);
-                  onChange({ filamentMap: newMap });
-                }
-
-                const matchedSlot = entry.filament_id !== null
-                  ? findLoadedSlotForEntry(entry, slots)
-                  : null;
-
+              {modelFilaments!.map(f => {
+                const entry = mapEntries().find(e => e.model_filament === f.index) ?? pinned(f.index, Math.min(f.index - 1, slots.length - 1));
+                const byAsk = entry.tool_index === null;
                 return (
                   <div key={f.index}>
                     <div className="row gap-2" style={{ alignItems: 'center' }}>
@@ -263,44 +174,24 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                         data-testid={`map-tool-${f.index}`}
                         className="select"
                         style={{ flex: '0 0 auto', minWidth: 160 }}
-                        value={encodeAssignment(entry)}
-                        onChange={e => handleAssignmentChange(e.target.value)}
+                        value={byAsk ? 'ask' : `t:${entry.tool_index}`}
+                        onChange={e => setEntry(f.index, e.target.value === 'ask'
+                          ? { model_filament: f.index, tool_index: null, ...NO_ASK }
+                          : pinned(f.index, Number(e.target.value.slice(2))))}
                       >
-                        <optgroup label="Slots">
+                        <option value="ask">Match by filament…</option>
+                        <optgroup label="Pin to a tool">
                           {slots.map((s, i) => (
                             <option key={i} value={`t:${i}`}>T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}</option>
                           ))}
                         </optgroup>
-                        {spoolmanActive && filaments.length > 0 && (
-                          <optgroup label="Catalog">
-                            {filaments.map(fil => (
-                              <option key={fil.id} value={`f:${fil.id}`}>{filamentDisplayName(fil)} · {fil.material}</option>
-                            ))}
-                          </optgroup>
-                        )}
                       </select>
                     </div>
-                    {entry.filament_id !== null && entry.filament_type !== null && (
-                      <div style={{ marginLeft: 22, marginTop: 2 }}>
-                        {matchedSlot !== null ? (
-                          <span style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
-                            padding: '2px 6px', borderRadius: 4,
-                            background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)',
-                            color: 'var(--ok)',
-                          }}>
-                            ✓ T{matchedSlot} loaded now
-                          </span>
-                        ) : (
-                          <span style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
-                            padding: '2px 6px', borderRadius: 4,
-                            background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)',
-                            color: 'var(--warn)',
-                          }}>
-                            ⚠ {entry.filament_type || '?'} not loaded — will block at slice
-                          </span>
-                        )}
+                    {byAsk && (
+                      <div className="col gap-2" style={{ marginLeft: 22, marginTop: 4 }}>
+                        <FilamentAskEditor id={`map-ask-${f.index}`} value={entryAsk(entry)} materials={materials} catalogEnabled={catalogActive}
+                                           onChange={a => setEntry(f.index, { model_filament: f.index, tool_index: null, ...a })} />
+                        <div><MatchChip ask={entryAsk(entry)} slots={slots} conflicts={conflicts} testId={`map-match-${f.index}`} /></div>
                       </div>
                     )}
                   </div>
@@ -315,162 +206,38 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                     value={config.toolIndex ?? ''}
                     onChange={e => {
                       const v = e.target.value;
-                      if (v === '') { onChange({ toolIndex: null }); clearAsk(); return; }
+                      if (v === '') { onChange({ toolIndex: null }); return; }
                       const ti = Number(v);
-                      const s = slots[ti];
-                      onChange({
-                        toolIndex: ti,
-                        filamentProfile: s?.filament_profile ?? null,
-                        filamentId: null,
-                        filamentType: s?.type ?? null,
-                        filamentColor: s?.color ?? null,
-                      });
+                      onChange({ toolIndex: ti, filamentProfile: slots[ti]?.filament_profile ?? null, ...askToCfg(NO_ASK) });
                     }}>
-              <option value="">Any / default tool</option>
+              <option value="">Any tool (match by filament)</option>
               {slots.map((s, i) => (
                 <option key={i} value={i}>T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}</option>
               ))}
             </select>
-            <div className="tiny muted" style={{ marginTop: 4 }}>
-              {config.toolIndex == null
-                ? 'Prints on the default tool with whatever is loaded.'
-                : 'Prints on this physical tool; its loaded filament profile is used to slice.'}
-            </div>
+            {config.toolIndex == null ? (
+              <div className="col gap-2" style={{ marginTop: 8 }}>
+                <FilamentAskEditor id="filament-ask" value={ask} materials={materials} catalogEnabled={catalogActive}
+                                   onChange={a => onChange(askToCfg(a))} />
+                <div><MatchChip ask={ask} slots={slots} conflicts={conflicts} testId="filament-match" /></div>
+              </div>
+            ) : (
+              <div className="tiny muted" style={{ marginTop: 4 }}>
+                Prints on this physical tool whatever is loaded; its filament profile is used to slice.
+              </div>
+            )}
           </div>
         ) : (
           <div>
             <label className="label">Filament</label>
-            <select
-              data-testid="filament-mode"
-              className="select"
-              value={filamentConstraint}
-              onChange={e => {
-                const mode = e.target.value as 'defer' | 'type-only' | 'type-color';
-                setFilamentConstraint(mode);
-                if (mode === 'defer') { clearAsk(); }
-                else if (mode === 'type-only') { onChange({ filamentColor: null }); }
-              }}
-            >
-              <option value="defer">Use loaded filament</option>
-              <option value="type-only">Require by type</option>
-              <option value="type-color">Require by type + color</option>
-            </select>
-
-            {filamentConstraint !== 'defer' && (
-              <div style={{ marginTop: 8 }}>
-                {spoolmanActive && !manualMode ? (
-                  <select data-testid="filament-catalog-select" className="select" value={catalogValue}
-                          onChange={e => {
-                            const v = e.target.value;
-                            if (v === '__manual__') { setManualMode(true); clearAsk(); return; }
-                            const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
-                            onChange({
-                              filamentProfile: v || null, filamentId: f?.id ?? null,
-                              filamentType: f?.material ?? null,
-                              filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
-                            });
-                            setFilamentConstraint('type-color');
-                          }}>
-                    <option value="">— select filament —</option>
-                    {filaments.map(f => (
-                      <option key={f.id} value={filamentDisplayName(f)}>{filamentDisplayName(f)} · {f.material}</option>
-                    ))}
-                    <option value="__manual__">Enter manually…</option>
-                  </select>
-                ) : (
-                  <div className="col gap-2">
-                    <div className="row gap-2">
-                      <input data-testid="filament-type-input" className="input" list="filament-types"
-                             placeholder="Type (PLA, PETG, ABS…)" value={config.filamentType ?? ''}
-                             onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
-                             style={{ flex: 1 }} />
-                      {spoolmanActive && (
-                        <button className="btn ghost sm" onClick={() => { setManualMode(false); clearAsk(); }}>↩ Catalog</button>
-                      )}
-                    </div>
-                    <datalist id="filament-types">
-                      {FILAMENT_TYPES.map(t => <option key={t} value={t} />)}
-                    </datalist>
-                    {filamentConstraint === 'type-color' && (
-                      <div className="row gap-2" style={{ alignItems: 'center' }}>
-                        <input data-testid="filament-color-input" type="color" value={config.filamentColor ?? '#888888'}
-                               onChange={e => onChange({ filamentColor: e.target.value })}
-                               style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }} />
-                        <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Chip badge — slot match status */}
-            <div style={{ marginTop: 8 }}>
-              {slotMatch.state === 'defer' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
-                               padding: '3px 8px', borderRadius: 4,
-                               background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)',
-                               color: 'var(--warn)' }}>
-                  ◉ {slotMatch.label}
-                </span>
-              )}
-              {slotMatch.state === 'match' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
-                               padding: '3px 8px', borderRadius: 4,
-                               background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)',
-                               color: 'var(--ok)' }}>
-                  {slotMatch.color && (
-                    <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0,
-                                   background: slotMatch.color, display: 'inline-block' }} />
-                  )}
-                  ✓ {slotMatch.label}
-                </span>
-              )}
-              {slotMatch.state === 'no-match' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
-                               padding: '3px 8px', borderRadius: 4,
-                               background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.30)',
-                               color: 'var(--err)' }}>
-                  ✗ {slotMatch.label}
-                </span>
-              )}
-            </div>
+            <FilamentAskEditor id="filament-ask" value={ask} materials={materials} catalogEnabled={catalogActive}
+                               onChange={a => onChange(askToCfg(a))} />
+            <div style={{ marginTop: 8 }}><MatchChip ask={ask} slots={slots} conflicts={conflicts} testId="filament-match" /></div>
           </div>
         )}
       </div>
 
-      {/* Filament profile section — appears when Spoolman filament is selected */}
-      {spoolmanActive && config.filamentId != null && (
-        <div style={{ marginTop: 12 }}>
-          <label className="label">Filament profile</label>
-          {mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile === mappedProfiles[0] ? (
-            <div className="tiny" style={{ marginTop: 4, color: 'var(--text-2)' }}>
-              <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from Spoolman mapping)</>
-            </div>
-          ) : mappedProfiles !== null && mappedProfiles.length === 1 ? (
-            <FilamentProfileSelect
-              profiles={mappedProfiles}
-              value={config.filamentProfile ?? null}
-              onChange={v => onChange({ filamentProfile: v })}
-              placeholder="— use printer default —"
-            />
-          ) : (
-            <FilamentProfileSelect
-              profiles={mappedProfiles ?? filamentProfiles}
-              value={config.filamentProfile ?? null}
-              onChange={v => onChange({ filamentProfile: v })}
-              placeholder="— use printer default —"
-            />
-          )}
-          {mappedProfiles !== null && (
-            <div className="tiny muted" style={{ marginTop: 4 }}>
-              {mappedProfiles.length === 1
-                ? 'Profile set from Spoolman mapping. Select another to override.'
-                : `Showing ${mappedProfiles.length} profiles from Spoolman mapping.`}
-            </div>
-          )}
-        </div>
-      )}
+      {profileSelect}
     </div>
   );
 }

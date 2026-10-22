@@ -1,95 +1,102 @@
 import { useState, useMemo } from 'react';
 import type { LoadedFilament } from '../api/printers';
-import type { ApiSpool, ApiFilament } from '../api/spoolman';
-import { parseOrcaProfiles, slotPatchForSpool } from '../api/spoolman';
+import type { InvSpool } from '../api/inventory';
+import { activeSlotRef, profileLinks, slotPatchForSpool, spoolColor, spoolDisplayName } from '../api/inventory';
+import { slotBinding } from '../api/printers';
+import { SUBTYPES } from '../lib/filamentAsk';
 
 export interface SlotSpoolPickerProps {
   slot: LoadedFilament;
   printerPreset: string | null;
-  spools: ApiSpool[];
-  filaments: ApiFilament[];
+  /** The active inventory provider's id (a spool is bound as `{provider, spool_ref}`). */
+  provider: string;
+  spools: InvSpool[];
   filamentProfiles: string[];
   onChange: (patch: Partial<LoadedFilament>) => void;
+  /** The bound spool's material differs from what the printer reports for this slot: the queue skips the slot until it is fixed. */
+  conflict?: boolean;
 }
 
-function spoolColor(spool: ApiSpool): string {
-  return spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#94a3b8';
+function spoolRowLabel(spool: InvSpool): string {
+  return `#${spool.ref} ${spoolDisplayName(spool)}${spool.material?.material ? ` ${spool.material.material}` : ''}`;
 }
 
-function spoolRowLabel(spool: ApiSpool): string {
-  const vendor = spool.filament.vendor?.name;
-  return `#${spool.id} ${vendor ? `${vendor} ` : ''}${spool.filament.name} ${spool.filament.material}`;
+/** "412g left" (+ "not yet synced" while a queued deduction hasn't reached the provider). */
+function remainingLabel(spool: InvSpool): string | null {
+  if (spool.remaining_g == null) return null;
+  return `${Math.round(spool.remaining_g)}g left${spool.unsynced ? ' · not yet synced' : ''}`;
 }
 
 /** "Shelf B · 412g" — where the spool lives and what's left, so the right one can be found and trusted. */
-function spoolDetail(spool: ApiSpool): string {
-  const parts = [spool.location?.trim() || null, spool.remaining_weight != null ? `${Math.round(spool.remaining_weight)}g left` : null];
-  return parts.filter(Boolean).join(' · ');
+function spoolDetail(spool: InvSpool): string {
+  return [spool.location?.trim() || null, remainingLabel(spool)].filter(Boolean).join(' · ');
 }
 
 export function SlotSpoolPicker({
-  slot, printerPreset, spools, filaments, filamentProfiles, onChange,
+  slot, printerPreset, provider, spools, filamentProfiles, onChange, conflict = false,
 }: SlotSpoolPickerProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
 
-  const selectedSpool = useMemo(
-    () => spools.find(s => String(s.id) === slot.spoolman_spool_id) ?? null,
-    [spools, slot.spoolman_spool_id],
-  );
+  const boundRef = activeSlotRef(slot, provider);
+  const binding = slotBinding(slot);
+  const selectedSpool = useMemo(() => spools.find(s => s.ref === boundRef) ?? null, [spools, boundRef]);
 
-  const isCustom = !slot.spoolman_spool_id;
+  const isCustom = !binding;
   const isDegraded = !isCustom && !selectedSpool;
   const showCombobox = spools.length > 0;
 
   const resolvedProfiles = useMemo(() => {
     if (!selectedSpool || !printerPreset) return null;
-    const full = filaments.find(f => f.id === selectedSpool.filament.id);
-    if (!full) return null;
-    const profiles = parseOrcaProfiles(full)[printerPreset];
+    const profiles = profileLinks(selectedSpool.material)[printerPreset];
     return profiles && profiles.length > 0 ? profiles : null;
-  }, [selectedSpool, printerPreset, filaments]);
+  }, [selectedSpool, printerPreset]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
     return spools
       .filter(s => {
         if (!q) return true;
-        const vendor = s.filament.vendor?.name ?? '';
         return (
-          String(s.id).includes(q) ||
-          s.filament.name.toLowerCase().includes(q) ||
-          vendor.toLowerCase().includes(q) ||
-          s.filament.material.toLowerCase().includes(q)
+          s.ref.toLowerCase().includes(q) ||
+          spoolDisplayName(s).toLowerCase().includes(q) ||
+          (s.material?.material ?? '').toLowerCase().includes(q) ||
+          (s.location ?? '').toLowerCase().includes(q)
         );
       })
-      .sort((a, b) => {
-        const aKey = `${a.filament.vendor?.name ?? ''} ${a.filament.name}`.toLowerCase();
-        const bKey = `${b.filament.vendor?.name ?? ''} ${b.filament.name}`.toLowerCase();
-        return aKey.localeCompare(bKey);
-      });
+      .sort((a, b) => spoolDisplayName(a).toLowerCase().localeCompare(spoolDisplayName(b).toLowerCase()));
   }, [spools, query]);
 
-  function pickSpool(spool: ApiSpool) {
-    onChange(slotPatchForSpool(spool, filaments, printerPreset, slot));
+  function pickSpool(spool: InvSpool) {
+    onChange(slotPatchForSpool(spool, provider, printerPreset, slot));
     setQuery('');
     setOpen(false);
   }
 
   function clearSpool() {
-    onChange({ spoolman_spool_id: null, filament_profile: null });
+    onChange({ inventory: null, filament_profile: null });
     setQuery('');
     setOpen(false);
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {conflict && !isCustom && (
+        <div data-testid="slot-conflict" style={{
+          fontSize: 12, color: 'var(--err)', padding: '4px 8px',
+          background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
+        }}>
+          The bound spool differs from what the printer reports for this slot, so jobs skip it. Rebind the right spool, or unbind this one.
+        </div>
+      )}
       {isDegraded && (
         <div style={{
           fontSize: 12, color: 'var(--warn)', padding: '4px 8px',
           background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6,
         }}>
-          Spool #{slot.spoolman_spool_id} not found in Spoolman
+          {binding && binding.provider !== provider
+            ? `Spool #${binding.ref} belongs to another inventory (${binding.provider}), which isn't the active one`
+            : `Spool #${binding?.ref} not found in the inventory`}
         </div>
       )}
 
@@ -103,7 +110,7 @@ export function SlotSpoolPicker({
             }}>
               <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(selectedSpool), flexShrink: 0 }} />
               <span style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>
-                {spoolRowLabel(selectedSpool)} — {selectedSpool.remaining_weight != null ? `${selectedSpool.remaining_weight}g remaining` : '— remaining'}
+                {spoolRowLabel(selectedSpool)} — {remainingLabel(selectedSpool) ?? '— remaining'}
                 {selectedSpool.location?.trim() && (
                   <span data-testid="spool-location" className="muted" style={{ display: 'block', fontSize: 12 }}>
                     Stored at {selectedSpool.location.trim()}
@@ -148,7 +155,7 @@ export function SlotSpoolPicker({
               )}
               {filtered.map(spool => (
                 <div
-                  key={spool.id}
+                  key={spool.ref}
                   onMouseDown={() => pickSpool(spool)}
                   style={{ padding: '9px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
@@ -166,12 +173,36 @@ export function SlotSpoolPicker({
 
       {(isCustom || isDegraded) && (
         <>
-          <input
-            className="input"
-            placeholder="Type (e.g. PLA)"
-            value={slot.type}
-            onChange={e => onChange({ type: e.target.value })}
-          />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <input
+              className="input"
+              aria-label={`Manufacturer for slot ${slot.slot + 1}`}
+              placeholder="Manufacturer"
+              style={{ flex: '1 1 120px' }}
+              value={slot.manufacturer ?? ''}
+              onChange={e => onChange({ manufacturer: e.target.value || null })}
+            />
+            <input
+              className="input"
+              aria-label={`Type for slot ${slot.slot + 1}`}
+              placeholder="Type (e.g. PLA)"
+              style={{ flex: '1 1 90px' }}
+              value={slot.type}
+              onChange={e => onChange({ type: e.target.value, subtype: e.target.value.trim() ? (slot.subtype || 'standard') : null })}
+            />
+            <select
+              className="select"
+              aria-label={`Subtype for slot ${slot.slot + 1}`}
+              style={{ flex: '1 1 90px' }}
+              disabled={!slot.type.trim()}
+              value={slot.type.trim() ? slot.subtype || 'standard' : ''}
+              onChange={e => onChange({ subtype: e.target.value })}
+            >
+              {!slot.type.trim() && <option value="">—</option>}
+              {[...SUBTYPES.filter(s => s !== 'any'), ...(slot.subtype && !SUBTYPES.includes(slot.subtype) ? [slot.subtype] : [])]
+                .map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
           <input
             className="input"
             placeholder="Color (#hex)"
@@ -197,7 +228,8 @@ export function SlotSpoolPicker({
               flex: 1, padding: '7px 10px', background: 'var(--bg-1)',
               border: '1px solid var(--border-1)', borderRadius: 8, fontSize: 13, color: 'var(--text-2)',
             }}>
-              {selectedSpool.filament.material}
+              {[selectedSpool.material?.vendor, selectedSpool.material?.material, selectedSpool.material?.subtype]
+                .filter(Boolean).join(' ') || '—'}
             </div>
             <div style={{
               width: 34, height: 34, borderRadius: 8, flexShrink: 0,

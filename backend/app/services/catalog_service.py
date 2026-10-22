@@ -20,7 +20,7 @@ logger = logging.getLogger("app.laminus")
 _catalog: Catalog | None = None        # parsed catalog for internal callers (printers, jobs, projects)
 _catalog_bytes: bytes | None = None    # pre-serialised legacy JSON for the HTTP response
 _catalog_fetched_at: float | None = None
-# Holds {sync_id, raw, catalog, pending, created_at}. raw=None signals a Spoolman-only pending
+# Holds {sync_id, raw, catalog, pending, created_at}. raw=None signals an inventory-only pending
 # (no catalog swap on confirm).
 _pending_sync: dict | None = None
 
@@ -87,7 +87,7 @@ async def fetch_catalog() -> tuple[bytes, Catalog]:
     """Pull the catalog from the slicing provider. No cache side effects."""
     provider = get_slicing_provider()
     if provider is None:
-        raise CatalogUnavailable("Laminus sidecar not configured (LAMINUS_SIDECAR_URL not set)", 503)
+        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus", 503)
     try:
         catalog = await asyncio.to_thread(provider.get_catalog)
     except SlicingProviderError as exc:
@@ -204,8 +204,7 @@ async def _apply_drift_gate(raw: bytes, new_catalog: Catalog, session: AsyncSess
         return {"status": "ok", "bytes": len(raw)}
 
     from .catalog_utils import compute_drift
-    from .providers.filament_inventory import get_inventory_provider
-    drift = await compute_drift(old_catalog, new_catalog, session, await get_inventory_provider(session))
+    drift = await compute_drift(old_catalog, new_catalog, session)
 
     if drift is None:
         commit_catalog(raw, new_catalog)
@@ -237,7 +236,7 @@ async def rescan(session: AsyncSession) -> dict:
     """Tell the provider to rebuild its catalog from disk, wait for it, then refresh like `refresh`."""
     provider = get_slicing_provider()
     if provider is None:
-        raise CatalogUnavailable("Laminus sidecar not configured (LAMINUS_SIDECAR_URL not set)", 503)
+        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus", 503)
 
     try:
         await asyncio.to_thread(provider.request_catalog_rebuild, 10.0)

@@ -1,15 +1,14 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerPrinterConfig, defaultPerPrinterCfg } from './PerPrinterConfig';
-import * as spoolman from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
 
-// Mock spoolman hooks so they don't fire real HTTP requests
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn().mockReturnValue({ config: null, refetch: vi.fn() }),
-  useFilaments: vi.fn().mockReturnValue([]),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
-  parseOrcaProfiles: vi.fn(() => ({})),
+// Mock the inventory hooks so they don't fire real HTTP requests
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(() => ({ plugin: null, id: null, has: () => false })),
+  useMaterials: vi.fn(() => []),
 }));
 
 // Mock getPrinterProfiles so it doesn't fire real HTTP requests
@@ -25,14 +24,14 @@ vi.mock('../api/queue', async (importOriginal) => {
 });
 
 const MULTI = {
-  id: 3, name: 'U1', printer_type: 'snapmaker_extended', current_orca_printer_profile: 'U1',
+  id: 3, name: 'U1', printer_type: 'snapmaker_extended', machine_profile: 'U1',
   loaded_filaments: [
-    { slot: 0, type: 'PLA', color: '#fff', name: 'PLA', filament_profile: 'PLA @U1' },
-    { slot: 1, type: 'PETG', color: '#000', name: 'PETG', filament_profile: 'PETG @U1' },
-    { slot: 2, type: 'TPU', color: '#0f0', name: 'TPU', filament_profile: 'TPU @U1' },
+    { slot: 0, type: 'PLA', subtype: 'standard', manufacturer: 'Acme', color: '#ffffff', name: 'PLA', filament_profile: 'PLA @U1' },
+    { slot: 1, type: 'PETG', subtype: 'standard', manufacturer: null, color: '#000000', name: 'PETG', filament_profile: 'PETG @U1' },
+    { slot: 2, type: 'TPU', subtype: 'standard', manufacturer: null, color: '#00ff00', name: 'TPU', filament_profile: 'TPU @U1' },
   ],
 };
-const SINGLE = { id: 1, name: 'Mono', printer_type: 'elegoo_centauri', current_orca_printer_profile: 'M', loaded_filaments: [] };
+const SINGLE = { id: 1, name: 'Mono', printer_type: 'elegoo_centauri', machine_profile: 'M', loaded_filaments: [] };
 
 function renderCfg(printer: any, config = defaultPerPrinterCfg(), modelFilaments?: any[]) {
   const onChange = vi.fn();
@@ -46,174 +45,166 @@ const MODEL_FILAMENTS_3 = [
   { index: 3, color: '#0000ff', type: 'TPU' },
 ];
 
+const NO_ASK_CFG = { filamentManufacturer: null, filamentType: null, filamentSubtype: null, filamentColor: null };
+
+beforeEach(() => {
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
+});
+
 describe('PerPrinterConfig', () => {
-  it('defaultPerPrinterCfg is all-null (defer)', () => {
+  it('defaultPerPrinterCfg is the undefined ask (defer): every part null, no material reference', () => {
     expect(defaultPerPrinterCfg()).toEqual({
-      printProfile: null, filamentProfile: null, filamentId: null,
-      filamentType: null, filamentColor: null, toolIndex: null, filamentMap: null,
+      printProfile: null, filamentProfile: null, ...NO_ASK_CFG, toolIndex: null, filamentMap: null,
     });
   });
 
-  it('multi-tool: tool select offers Any/default first and writes toolIndex+slot identity', async () => {
-    const onChange = renderCfg(MULTI);
+  it('multi-tool: tool select offers "any tool" first; pinning a tool takes its profile and clears the ask', async () => {
+    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentSubtype: 'any' });
     const sel = await screen.findByTestId('tool-select');
-    expect((sel as HTMLSelectElement).options[0].textContent).toMatch(/Any \/ default/i);
+    expect((sel as HTMLSelectElement).options[0].textContent).toMatch(/Any tool/i);
     fireEvent.change(sel, { target: { value: '2' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ toolIndex: 2, filamentProfile: 'TPU @U1', filamentType: 'TPU' }));
+    expect(onChange).toHaveBeenCalledWith({ toolIndex: 2, filamentProfile: 'TPU @U1', ...NO_ASK_CFG });   // a pinned tool is not matched
   });
 
-  it('multi-tool: selecting Any/default defers (toolIndex null + cleared ask)', async () => {
-    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), toolIndex: 1, filamentType: 'PETG' });
-    const sel = await screen.findByTestId('tool-select');
-    fireEvent.change(sel, { target: { value: '' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ toolIndex: null }));
+  it('multi-tool: choosing "any tool" goes back to matching by filament', async () => {
+    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), toolIndex: 1 });
+    expect(screen.queryByTestId('filament-ask-type')).toBeNull();           // pinned: nothing to match
+    fireEvent.change(await screen.findByTestId('tool-select'), { target: { value: '' } });
+    expect(onChange).toHaveBeenCalledWith({ toolIndex: null });
   });
 
-  it('single-tool: defaults to defer (mode select present, ask hidden), Require reveals the ask', async () => {
-    renderCfg(SINGLE);
-    const mode = await screen.findByTestId('filament-mode');
-    expect((mode as HTMLSelectElement).value).toBe('defer');
-    expect(screen.queryByTestId('filament-type-input')).toBeNull();
-    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
-    fireEvent.change(mode, { target: { value: 'require' } });
-    // require mode shows either the catalog select or the manual type input
-    expect(screen.queryByTestId('filament-catalog-select') || screen.queryByTestId('filament-type-input')).not.toBeNull();
+  it('multi-tool without a pin edits the tuple: choosing a type gives subtype any, and says which tool would print', async () => {
+    const onChange = renderCfg(MULTI);
+    fireEvent.change(await screen.findByTestId('filament-ask-type'), { target: { value: 'PETG' } });
+    expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentType: 'PETG', filamentSubtype: 'any' });
+  });
+
+  it('single-slot printer: the ask starts undefined ("any loaded filament") and is edited as a tuple', async () => {
+    const onChange = renderCfg(SINGLE);
+    expect(await screen.findByTestId('filament-match')).toHaveTextContent('Any loaded filament');
+    fireEvent.change(screen.getByTestId('filament-ask-manufacturer'), { target: { value: 'Acme' } });
+    expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentManufacturer: 'Acme' });
+  });
+
+  it('the chip skips a slot the server reports in conflict with its bound spool, as the queue does', async () => {
+    const stubConflicts = (conflicts: number[]) => vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url.endsWith('/slot-conflicts') ? { conflicts } : []), { status: 200 })));
+    const config = { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentSubtype: 'any' };
+    stubConflicts([0]);
+    const { unmount } = render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()} config={config} />);
+    await waitFor(() => expect(screen.getByTestId('filament-match')).toHaveTextContent(/nothing loaded matches PLA/));
+    unmount();
+    stubConflicts([]);
+    render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()} config={config} />);
+    await waitFor(() => expect(screen.getByTestId('filament-match')).toHaveTextContent('✓ T0'));
+  });
+
+  it('the chip names the lowest matching slot using the whole tuple, and warns (job waits) when nothing matches', async () => {
+    const cfg = (over: object) => ({ ...defaultPerPrinterCfg(), ...over });
+    const { unmount } = render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()}
+      config={cfg({ filamentType: 'PLA', filamentSubtype: 'standard', filamentColor: '#FFFFFF', filamentManufacturer: 'acme' })} />);
+    expect(await screen.findByTestId('filament-match')).toHaveTextContent('✓ T0');
+    unmount();
+    render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()}
+      config={cfg({ filamentType: 'PLA', filamentSubtype: 'silk' })} />);
+    expect(await screen.findByTestId('filament-match')).toHaveTextContent(/nothing loaded matches PLA silk.*waits in the queue/);
   });
 
   it('multi-material: renders three map-tool-* selects when modelFilaments has 3 items', async () => {
     renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel1 = await screen.findByTestId('map-tool-1');
-    const sel2 = await screen.findByTestId('map-tool-2');
-    const sel3 = await screen.findByTestId('map-tool-3');
-    expect(sel1).not.toBeNull();
-    expect(sel2).not.toBeNull();
-    expect(sel3).not.toBeNull();
-    // tool-select (single-tool select) should NOT be present in this mode
+    expect(await screen.findByTestId('map-tool-1')).not.toBeNull();
+    expect(await screen.findByTestId('map-tool-2')).not.toBeNull();
+    expect(await screen.findByTestId('map-tool-3')).not.toBeNull();
     expect(screen.queryByTestId('tool-select')).toBeNull();
   });
 
-  it('multi-material: changing map-tool-2 calls onChange with filamentMap containing {model_filament:2, tool_index:chosen}', async () => {
+  it('multi-material: pinning filament 2 to a tool writes {model_filament, tool_index} with an undefined ask', async () => {
     const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel2 = await screen.findByTestId('map-tool-2');
-    // MULTI has 3 slots (T0, T1, T2); choose T2 (value=t:2)
-    fireEvent.change(sel2, { target: { value: 't:2' } });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filamentMap: expect.arrayContaining([
-          expect.objectContaining({ model_filament: 2, tool_index: 2, filament_id: null }),
-        ]),
-      }),
-    );
+    fireEvent.change(await screen.findByTestId('map-tool-2'), { target: { value: 't:2' } });
+    expect(onChange).toHaveBeenCalledWith({
+      filamentMap: expect.arrayContaining([
+        { model_filament: 2, tool_index: 2, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null },
+      ]),
+    });
   });
 
-  it('multi-material: single modelFilament still shows Sub-project A tool control', async () => {
-    // Only 1 model filament — must NOT show mapping list, must show tool-select instead
+  it('multi-material: two filaments may be pinned to the same tool (no error, no restriction)', async () => {
+    const pinned = (i: number, t: number) => ({ model_filament: i, tool_index: t, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null });
+    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), filamentMap: [pinned(1, 0), pinned(2, 1), pinned(3, 2)] }, MODEL_FILAMENTS_3);
+    fireEvent.change(await screen.findByTestId('map-tool-2'), { target: { value: 't:0' } });
+    const map = onChange.mock.calls[0][0].filamentMap;
+    expect(map.map((e: any) => [e.model_filament, e.tool_index])).toEqual([[1, 0], [2, 0], [3, 2]]);
+  });
+
+  it('multi-material: "Match by filament" gives the colour its own tuple editor and a match chip', async () => {
+    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    fireEvent.change(await screen.findByTestId('map-tool-2'), { target: { value: 'ask' } });
+    expect(onChange).toHaveBeenCalledWith({
+      filamentMap: expect.arrayContaining([
+        { model_filament: 2, tool_index: null, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null },
+      ]),
+    });
+  });
+
+  it('multi-material: editing the tuple of an asked colour keeps the other colours and previews the matching slot', async () => {
+    const asked = { model_filament: 2, tool_index: null, filament_manufacturer: null, filament_type: 'PETG', filament_subtype: 'any', filament_color: null };
+    const pinned1 = { model_filament: 1, tool_index: 0, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null };
+    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), filamentMap: [pinned1, asked] }, MODEL_FILAMENTS_3.slice(0, 2));
+    expect(await screen.findByTestId('map-match-2')).toHaveTextContent('✓ T1');
+    fireEvent.change(screen.getByTestId('map-ask-2-subtype'), { target: { value: 'silk' } });
+    const map = onChange.mock.calls[0][0].filamentMap;
+    expect(map).toEqual([pinned1, { ...asked, filament_subtype: 'silk' }]);
+  });
+
+  it('multi-material: a single model filament still shows the tool control', async () => {
     renderCfg(MULTI, defaultPerPrinterCfg(), [{ index: 1, color: '#ff0000', type: 'PLA' }]);
-    const toolSel = await screen.findByTestId('tool-select');
-    expect(toolSel).not.toBeNull();
+    expect(await screen.findByTestId('tool-select')).not.toBeNull();
     expect(screen.queryByTestId('map-tool-1')).toBeNull();
   });
 
-  it('multi-material: no modelFilaments prop still shows Sub-project A tool control', async () => {
+  it('multi-material: no modelFilaments prop still shows the tool control', async () => {
     renderCfg(MULTI);
-    const toolSel = await screen.findByTestId('tool-select');
-    expect(toolSel).not.toBeNull();
+    expect(await screen.findByTestId('tool-select')).not.toBeNull();
   });
 });
 
-const MOCK_FILAMENTS = [
-  { id: 7,  name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
-  { id: 19, name: 'White',    vendor: { id: 3, name: 'Sunlu'  }, material: 'PETG', color_hex: 'FFFFFF' },
+const MATERIALS = [
+  mkMaterial({ ref: '7', name: 'Sky Blue', vendor: 'ELEGOO', material: 'PLA', subtype: 'silk', color_hex: '#5B9BD5' }),
+  mkMaterial({ ref: 'm-19', name: 'White', vendor: 'Sunlu', material: 'PETG', color_hex: '#FFFFFF' }),
 ];
 
-function mockSpoolman(enabled: boolean) {
-  vi.mocked(spoolman.useSpoolmanConfig).mockReturnValue(
-    enabled
-      ? { config: { enabled: true, url: 'http://artemis:7912', has_api_key: false, sync_interval_minutes: 15 }, refetch: vi.fn() }
-      : { config: null, refetch: vi.fn() },
-  );
-  vi.mocked(spoolman.useFilaments).mockReturnValue(enabled ? MOCK_FILAMENTS as never : []);
-}
-
-describe('PerPrinterConfig — multi-material unified dropdown', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('slot-only: renders optgroup "Slots" but no "Catalog" when spoolman off', async () => {
-    mockSpoolman(false);
-    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel1 = await screen.findByTestId('map-tool-1');
-    const html = sel1.innerHTML;
-    expect(html).toContain('Slots');
-    expect(html).not.toContain('Catalog');
+describe('PerPrinterConfig — an inventory only fills the tuple', () => {
+  beforeEach(() => {
+    vi.mocked(inventoryApi.useInventory).mockReturnValue(activeInventory('local_inventory'));
+    vi.mocked(inventoryApi.useMaterials).mockReturnValue(MATERIALS);
   });
 
-  it('renders "Catalog" optgroup when spoolman is on', async () => {
-    mockSpoolman(true);
-    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel1 = await screen.findByTestId('map-tool-1');
-    expect(sel1.innerHTML).toContain('Catalog');
+  it('picking a material copies manufacturer, type, subtype and colour — whatever the provider, no ref is kept', async () => {
+    const onChange = renderCfg(SINGLE);
+    fireEvent.click(await screen.findByTestId('filament-ask-pick'));
+    fireEvent.change(screen.getByTestId('filament-ask-material'), { target: { value: 'm-19' } });
+    const patch = onChange.mock.calls[0][0];
+    expect(patch).toEqual({ filamentManufacturer: 'Sunlu', filamentType: 'PETG', filamentSubtype: 'standard', filamentColor: '#FFFFFF' });
+    expect(JSON.stringify(patch)).not.toMatch(/material|ref|provider|filament_?id/i);
   });
 
-  it('catalog optgroup contains filament options', async () => {
-    mockSpoolman(true);
-    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel1 = await screen.findByTestId('map-tool-1');
-    const options = Array.from(sel1.querySelectorAll('option')).map(o => o.value);
-    expect(options).toContain('f:7');
-    expect(options).toContain('f:19');
+  it('a multi-material colour is filled from any provider\'s material (a non-numeric ref works)', async () => {
+    const asked = { model_filament: 2, tool_index: null, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null };
+    const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), filamentMap: [asked] }, MODEL_FILAMENTS_3.slice(0, 2));
+    fireEvent.click(await screen.findByTestId('map-ask-2-pick'));
+    fireEvent.change(screen.getByTestId('map-ask-2-material'), { target: { value: 'm-19' } });
+    expect(onChange).toHaveBeenCalledWith({ filamentMap: expect.arrayContaining([
+      { model_filament: 2, tool_index: null, filament_manufacturer: 'Sunlu', filament_type: 'PETG', filament_subtype: 'standard', filament_color: '#FFFFFF' },
+    ]) });
   });
 
-  it('selecting a catalog filament calls onChange with filament_id, filament_type, filament_color', async () => {
-    mockSpoolman(true);
-    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel1 = await screen.findByTestId('map-tool-1');
-    fireEvent.change(sel1, { target: { value: 'f:7' } });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filamentMap: expect.arrayContaining([
-          expect.objectContaining({
-            model_filament: 1,
-            tool_index: null,
-            filament_id: 7,
-            filament_type: 'PLA',
-            filament_color: '#5B9BD5',
-          }),
-        ]),
-      }),
-    );
-  });
-
-  it('selecting a slot calls onChange with tool_index set and filament fields null', async () => {
-    mockSpoolman(true);
-    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
-    const sel2 = await screen.findByTestId('map-tool-2');
-    fireEvent.change(sel2, { target: { value: 't:1' } });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        filamentMap: expect.arrayContaining([
-          expect.objectContaining({
-            model_filament: 2,
-            tool_index: 1,
-            filament_id: null,
-            filament_type: null,
-          }),
-        ]),
-      }),
-    );
-  });
-
-  it('amber badge shown when filament_type has no matching loaded slot', async () => {
-    mockSpoolman(true);
-    const cfgNoMatch = {
-      ...defaultPerPrinterCfg(),
-      filamentMap: [
-        { model_filament: 1, tool_index: null, filament_id: 5, filament_type: 'ABS', filament_color: null },
-        { model_filament: 2, tool_index: 0, filament_id: null, filament_type: null, filament_color: null },
-        { model_filament: 3, tool_index: 2, filament_id: null, filament_type: null, filament_color: null },
-      ],
-    };
-    renderCfg(MULTI, cfgNoMatch as any, MODEL_FILAMENTS_3);
-    const badge = await screen.findByText(/will block at slice/i);
-    expect(badge).toBeTruthy();
+  it('typing the tuple by hand needs no inventory at all', async () => {
+    vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+    vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
+    const onChange = renderCfg(SINGLE);
+    expect(screen.queryByTestId('filament-ask-pick')).toBeNull();
+    fireEvent.change(await screen.findByTestId('filament-ask-type'), { target: { value: 'ABS' } });
+    expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentType: 'ABS', filamentSubtype: 'any' });
   });
 });

@@ -4,6 +4,9 @@
     "id",
     "name",
     "printer_type",
+    "plugin_id",
+    "dormant",
+    "dormant_reason",
     "enabled",
     "queue_on",
     "connected",
@@ -30,10 +33,18 @@
     "id",
     "name",
     "printer_type",
+    "plugin_id",
+    "manufacturer_id",
+    "model_id",
+    "model_uuid",
     "connection_config",
     "awaiting_plate_clear",
     "orca_printer_profiles",
-    "current_orca_printer_profile",
+    "machine_profile_override",
+    "nozzle_variant",
+    "machine_profile",
+    "machine_profile_reason",
+    "model_label",
     "enabled",
     "queue_on",
     "connected",
@@ -43,6 +54,7 @@
     "bed_x_mm",
     "bed_y_mm",
     "machine_rate_per_hour",
+    "preferred_slicer_plugin_id",
     "quiet_start",
     "quiet_end"
   ],
@@ -69,6 +81,7 @@
     "uploaded_file_id",
     "plate_number",
     "order_id",
+    "project_id",
     "assigned_printer_id",
     "queue_position",
     "status",
@@ -78,6 +91,7 @@
     "actual_seconds",
     "actual_filament_breakdown",
     "deduction_skipped",
+    "deduction_note",
     "estimate_status",
     "estimate_seconds",
     "estimate_filament_grams",
@@ -141,9 +155,10 @@
     "quantity",
     "quantity_completed",
     "quantity_failed",
+    "filament_manufacturer",
     "filament_type",
+    "filament_subtype",
     "filament_color",
-    "filament_id",
     "sort_order"
   ],
   "project_link": [
@@ -192,7 +207,8 @@
     "plate_thumbnails",
     "kind",
     "sliced_version_count",
-    "sliced_version"
+    "sliced_version",
+    "eligibility"
   ],
   "project_payment": [
     "id",
@@ -361,6 +377,107 @@
     "source_changed",
     "stale",
     "stale_reasons",
-    "printable_now"
+    "printable_now",
+    "model_uuids"
+  ],
+  "plugin_summary": [
+    "id",
+    "name",
+    "version",
+    "description",
+    "docs_url",
+    "source",
+    "loaded",
+    "install",
+    "provides",
+    "requires",
+    "optional",
+    "defines",
+    "ui",
+    "diagnostics",
+    "enabled",
+    "active",
+    "error"
+  ],
+  "plugin_connection_result": [
+    "ok",
+    "state"
+  ],
+  "plugin_provides": [
+    "capability",
+    "version",
+    "features",
+    "selected",
+    "mode",
+    "status",
+    "waiting_on"
+  ],
+  "capability_info": [
+    "id",
+    "version",
+    "label",
+    "description",
+    "definer",
+    "features",
+    "required_methods",
+    "selected",
+    "explicit",
+    "status",
+    "waiting_on",
+    "error",
+    "providers",
+    "requires_by",
+    "mode",
+    "dormant_default"
+  ],
+  "printer_model_slicer_profile": [
+    "id",
+    "model_uuid",
+    "provider_plugin_id",
+    "nozzle_diameter_mm",
+    "flow",
+    "machine_profile",
+    "is_default"
+  ],
+  "slicer_profile_suggestions": [
+    "provider_plugin_id",
+    "available",
+    "candidates",
+    "variants",
+    "error"
+  ],
+  "slicer_profile_candidate": [
+    "name",
+    "nozzle_diameter_mm",
+    "flow",
+    "ref",
+    "confidence",
+    "match_reason"
+  ],
+  "slicer_profile_variant": [
+    "name",
+    "nozzle_diameter_mm",
+    "flow",
+    "ref",
+    "is_default_guess"
+  ],
+  "model_target": [
+    "model_uuid",
+    "model_label",
+    "print_profile",
+    "filament_profile",
+    "filament_manufacturer",
+    "filament_type",
+    "filament_subtype",
+    "filament_color",
+    "filament_map"
+  ],
+  "filament_match": [
+    "eligible",
+    "slots",
+    "reasons"
+  ],
+  "slot_conflicts": [
+    "conflicts"
   ]
 }

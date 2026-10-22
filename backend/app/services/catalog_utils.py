@@ -6,9 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.providers.slicing import Catalog
-from app.services.providers.filament_inventory import Filament, FilamentInventoryProvider
+from app.plugins.capabilities.filament_inventory import PROFILE_LINKS_READ, InvMaterial
+from app.services.inventory import provider as inventory_provider, read as inventory_read
 
 logger = logging.getLogger("app.catalog_utils")
+
+# Drift/remap field for a model's slicer profile mapping rows (as opposed to a printer's own raw override).
+MODEL_PROFILE_FIELD = "model_slicer_profile"
 
 
 def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], set[str]]:
@@ -21,12 +25,12 @@ def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], s
     )
 
 
-def stale_binding_groups(filaments: list[Filament], is_stale) -> dict[tuple[str, str], dict]:
+def stale_binding_groups(filaments: list[InvMaterial], is_stale) -> dict[tuple[str, str], dict]:
     """Group the profile names bound to inventory filaments that `is_stale(name)` flags, by (printer preset, name)."""
     groups: dict[tuple[str, str], dict] = {}
     for fil in filaments:
         fil_id = int(fil.ref) if fil.ref.isdigit() else fil.ref
-        for printer_preset, names in fil.profile_bindings.items():
+        for printer_preset, names in (fil.profile_links or {}).items():
             for name in names:
                 if is_stale(name):
                     g = groups.setdefault((printer_preset, name), {
@@ -45,7 +49,6 @@ async def compute_drift(
     old_catalog: Catalog,
     new_catalog: Catalog,
     session: AsyncSession,
-    inventory: FilamentInventoryProvider | None,
 ) -> dict | None:
     """Compare old vs new catalog; query live data for stale references.
 
@@ -69,12 +72,38 @@ async def compute_drift(
     # Printers: group by (field, stale_value)
     printer_groups: dict[tuple[str, str], dict] = {}
     printers = (await session.execute(select(Printer))).scalars().all()
+    # Machine profiles now live on the model mapping rows (BIZ-294): one entry per stale profile, listing the printers whose model
+    # uses it. Applying it (routes/laminus.py) rewrites the mapping rows, so a model with no printers yet is still reported.
+    from app.models import PrinterModelRecord, PrinterModelSlicerProfile
+    stale_rows = [r for r in (await session.execute(select(PrinterModelSlicerProfile))).scalars().all()
+                  if r.machine_profile in removed_machines]
+    for row in stale_rows:
+        key = (MODEL_PROFILE_FIELD, row.machine_profile)
+        g = printer_groups.setdefault(key, {
+            "field": MODEL_PROFILE_FIELD,
+            "stale_value": row.machine_profile,
+            "options_kind": "machine",
+            "required": True,
+            "affected_printer_ids": [],
+            "affected_printer_names": [],
+            "affected_slots": [],
+        })
+        for printer in printers:
+            if printer.model_uuid == row.model_uuid and printer.id not in g["affected_printer_ids"]:
+                g["affected_printer_ids"].append(printer.id)
+                g["affected_printer_names"].append(printer.name)
+                g["affected_slots"].append(None)
+        if not any(p.model_uuid == row.model_uuid for p in printers):      # a model with no printers is only reachable by name
+            rec = await session.get(PrinterModelRecord, row.model_uuid)
+            name = rec.display_name if rec else row.model_uuid
+            if name not in g.setdefault("affected_model_names", []):
+                g["affected_model_names"].append(name)
     for printer in printers:
-        if printer.current_orca_printer_profile in removed_machines:
-            key = ("current_orca_printer_profile", printer.current_orca_printer_profile)
+        if printer.machine_profile_override in removed_machines:
+            key = ("machine_profile_override", printer.machine_profile_override)
             g = printer_groups.setdefault(key, {
-                "field": "current_orca_printer_profile",
-                "stale_value": printer.current_orca_printer_profile,
+                "field": "machine_profile_override",
+                "stale_value": printer.machine_profile_override,
                 "options_kind": "machine",
                 "required": True,
                 "affected_printer_ids": [],
@@ -141,33 +170,33 @@ async def compute_drift(
 
     # Inventory filaments: check that the profile names bound to each filament still exist in the new catalog.
     # Bindings are {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
-    spoolman_groups: dict[tuple[str, str], dict] = {}
-    spoolman_error: str | None = None
-    if inventory is not None and inventory.PROFILE_BINDINGS and removed_filaments:
-        try:
-            spoolman_groups = stale_binding_groups(
-                await inventory.list_filaments(), lambda name: name in removed_filaments)
-        except Exception as exc:
-            spoolman_error = str(exc)
-            logger.warning("Spoolman fetch failed during drift check: %s", exc)
+    inventory_groups: dict[tuple[str, str], dict] = {}
+    inventory_error: str | None = None
+    if inventory_provider.has(PROFILE_LINKS_READ) and removed_filaments:
+        fetched = await inventory_provider.call("list_materials")
+        if fetched.ok:
+            inventory_groups = stale_binding_groups(fetched.value, lambda name: name in removed_filaments)
+        else:
+            inventory_error = inventory_provider.describe_failure(fetched)[1]
+            logger.warning("Inventory fetch failed during drift check: %s", inventory_error)
 
     all_printer = list(printer_groups.values())
     all_jobs = list(job_groups.values())
-    all_spoolman = list(spoolman_groups.values())
+    all_inventory = list(inventory_groups.values())
 
-    if not any([all_printer, all_jobs, all_spoolman]):
+    if not any([all_printer, all_jobs, all_inventory]):
         return None
 
     return {
         "pending": {
             "printers": all_printer,
             "jobs": all_jobs,
-            "spoolman_filaments": all_spoolman,
+            "inventory_filaments": all_inventory,
         },
         "options": {
             "machine": sorted(new_machines),
             "process": sorted(new_processes),
             "filament": sorted(new_filaments),
         },
-        "spoolman_error": spoolman_error,
+        "inventory_error": inventory_error,
     }

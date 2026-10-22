@@ -1,5 +1,7 @@
 # Spool Picker for Printer Slot Configuration — Design Spec
 
+> **Superseded in part (2026-10-19):** the matching rules (what a job asks for, what a slot stores, how they are compared) are now in `2026-10-19-filament-matching-design.md`. Where this document disagrees, that one wins.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Replace the ad-hoc per-slot filament fields in both printer slot editors with a unified `SlotSpoolPicker` component that lets operators pick a specific Spoolman spool (or fall back to free-form Custom entry) as the primary way to configure what's loaded in a printer slot.

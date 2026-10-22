@@ -4,6 +4,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 
 ## Invariants (don't violate these)
 
+- **Printer assignment after start**: once a print has started (`printing`), only a user action (cancel, requeue/edit, stop or delete the printer) clears `jobs.assigned_printer_id`; printers, plugins and the queue never release it (a print the printer ended in failure becomes `failed` and keeps the printer, without reserving it). Before the start (slicing/`sliced`/`uploading`) the queue still releases and rescues as before. Exception: a printer declared dead releases its job.
 - **blocked vs failed**: `blocked` is *transient* — the queue re-evaluates it every cycle (filament
   mismatch, or a slice failure: `_handle_slice_failure` marks that printer's config `slice_failed` and blocks
   the job, even when every config has failed — it then waits for an unblock). `failed` is *terminal* — set
@@ -19,7 +20,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   *existing* table needs its own migration file (see `data-model.md` § Migrations) — there is no
   `_migrate()` guard function; that pattern was retired.
 - **Pre-sliced jobs (BIZ-188, BIZ-190)**: a job whose `UploadedFile` is a `.gcode` or a `.gcode.3mf` sliced archive
-  (`library_scanner.is_presliced_file`; `file_kind()` checks `.gcode.3mf` *before* `.3mf` — same suffix) is never sliced. The claim skips the Laminus health check; `_run_slice_and_print` stages a *copy* into
+  (`library_scanner.is_presliced_file`; `file_kind()` checks `.gcode.3mf` *before* `.3mf` — same suffix) is never sliced. The claim skips slicing-provider resolution (`resolve_slicing`) entirely; `_run_slice_and_print` stages a *copy* into
   `<data>/gcode/<job_id>/` (`_stage_gcode`) and goes straight to upload+print — finished jobs delete their
   `GcodeFile` path, so it must never be the library's own file. `print_profile` is `""`, overrides are dropped on
   create/PATCH, the estimate is parsed from the header at create (no background test-slice) and `verify-slice` 422s.
@@ -31,12 +32,30 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   take is 422'd for that explicit printer/model and never materialized onto it, and a config that slipped through
   blocks (never fails) at claim. A staged copy, and `LibraryScanner.unique_path`'s "name (2)" collision rename, keep the
   full `.gcode.3mf` suffix. A job on an archive must name a plate the archive has (422 otherwise).
-- **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
-  for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
-  `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy
-  fallback). Don't conflate them.
+- **filament_profile vs filament ask**: `job_printer_configs.ask_*` (manufacturer/type/subtype/color) is the *ask* (matched
+  for eligibility; undefined = NULL, never the string `"any"`; `ask_subtype="any"` is a real wildcard value). The OrcaSlicer filament
+  *preset* used for slicing comes from the matched `printer.loaded_filaments` slot's `filament_profile` (the operator picks it per
+  slot; the config's own `filament_profile` is an optional override). Don't conflate them.
+- **A per-printer mismatch never blocks; a fleet-wide one does**: a printer that cannot supply a job's filament is skipped for it (the job stays `queued`, the job
+  detail's `filament_match.reasons` say why). When NO printer in the fleet could take the job (compatible and with the filament loaded; every printer counts except a *dead* one, i.e. offline past the
+  user's limit, so a queue toggled off, a disabled printer or a fresh restart never blocks anything) the
+  unmatched-job sweep blocks it (`block_reason` starts "no eligible printer", one `job.blocked`, a webhook/notification) and releases it again as soon as a match
+  exists, because requeue-and-wait cannot fix that. A filament removed *after* the claim is a slice failure (`blocked`).
+  Matching is `filament_matching.evaluate` for the single ask, every `filament_map` colour and pinned `tool_index` alike; the chosen
+  slots are stored on the config (`slot_plan`) at claim and slicing + deduction follow that plan.
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads
   `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/ams_mapping` reliably.
+- **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
+  `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
+  or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade
+  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1`, read by core via `plugins/mock/defaults.toml` `[legacy_env]` (the test conftest and the `/themis-start` launcher set it;
+  set it yourself if you run uvicorn directly).
+- **Cross-capability conformance** (`tests/plugins/conformance.py`, `test_provider_conformance.py`, docs/provider-interfaces.md "Conformance"): a new
+  capability gets a `Kit` and inherits the shared host-side checks; `tests/test_plugin_id_boundary.py` + `frontend/src/pluginIdGuard.test.ts` fail on core/UI
+  importing or branching on any bundled plugin id (no exceptions). Plugin scenarios that cross boundaries are listed in `docs/plugin-test-matrix.md`
+  (a meta-test fails on a row naming a missing test); data lifecycle rules are `docs/plugin-lifecycle.md`.
+- **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
+  `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
 - **Cancel ↔ stop are bidirectional**: cancelling an active job stops the printer; stopping a printer
   reconciles its running job → `cancelled`. Keep both directions wired when touching either.
 - **Head-of-line queue**: a job that can't run blocks; the engine does **not** skip to a runnable job
@@ -83,13 +102,15 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   haunted.
 - **`npx tsc --noEmit` checks NOTHING here.** The root `frontend/tsconfig.json` is references-only; a
   no-emit run on it type-checks zero files. Always use `npm run build` or `npx tsc -b`.
-- **Config is platform-aware.** `config.py` resolves `%APPDATA%\OrcaSlicer` + the Program Files
-  `orca-slicer.exe` on Windows, Linux defaults otherwise. Override via `THEMIS_DATA_DIR`/
-  `ORCA_CONFIG_DIR`/`ORCA_EXECUTABLE`/`FFMPEG_EXECUTABLE`.
+- **Config is platform-aware.** `config.py` holds only core settings (e.g. `THEMIS_DATA_DIR`, `FFMPEG_EXECUTABLE`);
+  no Orca symbol remains (`ORCA_EXECUTABLE`/`get_orca_executable` went with the thumbnail regen, BIZ-284). Vendor/provider
+  config (e.g. the Laminus URL) is the plugin's setting, not config.py or compose; plugins must not read env vars
+  themselves: core resolves env-derived values and hands them over (`PluginContext`, `defaults.toml` `[legacy_env]`; see
+  docs/plugins.md "Configuration and defaults"). `tests/test_plugins_do_not_read_environment.py` enforces it (allowlist: `plugins/installer.py`).
 - **Stale routes / 405s** usually mean the dev server didn't reload (often the Store-Python issue above)
   — restart uvicorn before debugging the route.
 - **OrcaSlicer config dir is bind-mounted read-only** in Docker (`%APPDATA%\OrcaSlicer`). Don't write to
-  it; `ProfileIndex` only reads + watches mtime.
+  it.
 
 ## Running things
 
@@ -97,7 +118,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 # Backend (from backend/, python.org venv active)
 uvicorn app.main:app --reload --port 8001
 pytest -v                       # all (CI: `pytest -v -ra --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
-pytest tests/services/test_bambu_mqtt.py -v
+pytest tests/services/test_bambu_mqtt.py -v   # the Bambu client now lives in app/plugins/bambu/client.py
 
 # Frontend (from frontend/)
 npm run dev                     # :5173, proxies /api + /ws → :8001
@@ -123,6 +144,8 @@ npx playwright test             # e2e specs (mocked API; `e2e/mock-api.ts`)
   uses fixed zip timestamps so content hashes are stable); `tests/waiting.py` `wait_until` instead of `sleep`.
   Frontend: Vitest + Testing Library with `src/test/fetchStub.ts` (or `vi.stubGlobal('fetch', …)`) and a `FakeWS` stub.
   A response field the FE reads goes in `contracts/response-keys.json` (checked by both suites).
+  Golden files (BIZ-204): `tests/golden.py` `assert_golden(name, value)` pins wire format byte-for-byte in `tests/golden/`
+  (`UPDATE_GOLDEN=1` regenerates; mask timestamps with `mask()`); `tests/v032_fixture.py` builds a seeded v032 DB for migration tests.
 
 ## Git
 

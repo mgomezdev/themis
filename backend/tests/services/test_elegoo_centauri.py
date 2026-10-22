@@ -2,7 +2,7 @@ import json
 import time
 from unittest.mock import MagicMock
 import pytest
-from app.services.elegoo_centauri_client import ElegooCentauriClient, ElegooState, _CAMERA_PORT
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient, ElegooState, _CAMERA_PORT
 
 
 def _make_client(**kwargs) -> ElegooCentauriClient:
@@ -496,23 +496,23 @@ def test_parse_status_msg_box_fan_defaults_to_zero_when_absent():
 # ---------------------------------------------------------------------------
 
 def test_serialize_elegoo_exposes_three_fan_fields():
-    from app.services.printer_manager import _serialize_elegoo
-    from app.services.elegoo_centauri_client import ElegooState
+    from app.plugins.elegoo_centauri.client import serialize_elegoo
+    from app.plugins.elegoo_centauri.client import ElegooState
     state = ElegooState()
     state.connected = True
     state.fan_model = 80
     state.fan_aux = 60
     state.fan_box = 40
-    result = _serialize_elegoo(state, 1)
+    result = serialize_elegoo(state, 1)
     assert result["fan_model"] == 80
     assert result["fan_aux"] == 60
     assert result["fan_box"] == 40
 
 
 def test_serialize_elegoo_no_longer_has_fan_speed():
-    from app.services.printer_manager import _serialize_elegoo
-    from app.services.elegoo_centauri_client import ElegooState
-    result = _serialize_elegoo(ElegooState(), 1)
+    from app.plugins.elegoo_centauri.client import serialize_elegoo
+    from app.plugins.elegoo_centauri.client import ElegooState
+    result = serialize_elegoo(ElegooState(), 1)
     assert "fan_speed" not in result
 
 
@@ -591,7 +591,7 @@ def test_upload_file_small_file():
     from unittest.mock import patch
     client = _make_client()
     data = b"small file content" * 1000  # 18000 bytes, well below 1MB
-    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+    with patch("app.plugins.elegoo_centauri.client.httpx.post") as mock_post:
         mock_response = MagicMock()
         mock_response.json.return_value = {"success": True}
         mock_response.status_code = 200
@@ -622,7 +622,7 @@ def test_upload_file_large_file():
     client = _make_client()
     # 2.5 MB = 2 * 1024 * 1024 + 512 * 1024 bytes
     data = b"A" * (2 * 1024 * 1024 + 512 * 1024)
-    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+    with patch("app.plugins.elegoo_centauri.client.httpx.post") as mock_post:
         mock_response = MagicMock()
         mock_response.json.return_value = {"success": True}
         mock_response.status_code = 200
@@ -669,13 +669,13 @@ def test_upload_file_failure():
     from unittest.mock import patch
     client = _make_client()
     data = b"some data"
-    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+    with patch("app.plugins.elegoo_centauri.client.httpx.post") as mock_post:
         # Mock connection error
         mock_post.side_effect = Exception("Connection refused")
         res = client.upload_file(data, "test.gcode")
         assert res is False
 
-    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+    with patch("app.plugins.elegoo_centauri.client.httpx.post") as mock_post:
         # Mock bad status code / response rejection
         mock_response = MagicMock()
         mock_response.json.return_value = {"success": False, "code": "123456"}

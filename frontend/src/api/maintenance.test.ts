@@ -93,11 +93,11 @@ describe('resolveFleetVendorModels', () => {
 
   it('dedupes fleet printers to a sorted, unique vendor/model list', () => {
     const printers = [
-      { current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
-      { current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' }, // duplicate printer, same model
-      { current_orca_printer_profile: 'Bambu Lab X1 Carbon 0.4 nozzle' },
-      { current_orca_printer_profile: null }, // unset profile, ignored
-      { current_orca_printer_profile: 'Totally Unknown Printer' }, // unresolvable, ignored
+      { machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+      { machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle' }, // duplicate printer, same model
+      { machine_profile: 'Bambu Lab X1 Carbon 0.4 nozzle' },
+      { machine_profile: null }, // unset profile, ignored
+      { machine_profile: 'Totally Unknown Printer' }, // unresolvable, ignored
     ];
     expect(resolveFleetVendorModels(printers, catalog)).toEqual([
       { vendor: 'Bambu Lab', printer_model: 'X1 Carbon' },
@@ -106,6 +106,6 @@ describe('resolveFleetVendorModels', () => {
   });
 
   it('returns an empty list when the fleet has no resolvable profiles', () => {
-    expect(resolveFleetVendorModels([{ current_orca_printer_profile: null }], catalog)).toEqual([]);
+    expect(resolveFleetVendorModels([{ machine_profile: null }], catalog)).toEqual([]);
   });
 });

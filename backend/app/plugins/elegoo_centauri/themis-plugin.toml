@@ -1,0 +1,7 @@
+id = "elegoo_centauri"
+name = "Elegoo Centauri"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.elegoo_centauri:MANIFEST"
+publisher = "Themis"

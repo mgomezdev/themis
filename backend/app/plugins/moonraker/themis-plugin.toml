@@ -1,0 +1,7 @@
+id = "moonraker"
+name = "Moonraker (Klipper)"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.moonraker:MANIFEST"
+publisher = "Themis"

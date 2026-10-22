@@ -6,12 +6,14 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
-import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { CAP, useInventory, useSpools } from '../api/inventory';
+import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
-import { MachinePicker } from '../components/MachinePicker';
+import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useSlotConflicts } from '../components/useSlotConflicts';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
 import { useMediaQuery } from '../components/useMediaQuery';
@@ -102,12 +104,15 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 }) {
   const [draftName, setDraftName] = useState(p.name);
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
-  const [machinePreset, setMachinePreset] = useState<string>('');
+  const [nozzle, setNozzle] = useState<NozzleVariant | null>(null);   // null = the model's default nozzle
+  const [apiPrinter, setApiPrinter] = useState<ApiPrinter | null>(null);
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
   const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
   const [quietEnd, setQuietEnd] = useState('');
   const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  const [slicer, setSlicer] = useState('');   // '' = the default slicing provider
+  const [slicerTouched, setSlicerTouched] = useState(false);   // only a changed choice is sent, so an unloaded list can never wipe it
+  const [slicers, setSlicers] = useState<PluginSummary[]>([]);   // enabled plugins that provide gcode.produce
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
@@ -116,7 +121,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const printerType = printerTypes.find(t => t.printer_type === p.model);
+  const printerType = printerTypes.find(t => t.plugin_id === p.pluginId);
 
   useEffect(() => {
     fetchPrinter(Number(p.id))
@@ -126,16 +131,20 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           conn[k] = String(v ?? '');
         }
         setDraftConn(conn);
-        setMachinePreset(api.current_orca_printer_profile ?? '');
+        setApiPrinter(api);
+        setNozzle(api.nozzle_variant ?? null);
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
         setQuietStart(api.quiet_start ?? '');
         setQuietEnd(api.quiet_end ?? '');
         setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
+        setSlicer(api.preferred_slicer_plugin_id ?? '');
         setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-    fetchMachineCatalog().then(setCatalog).catch(console.error);
+    fetchPlugins()
+      .then(list => setSlicers((list?.plugins ?? []).filter(pl => pl.enabled && pl.provides.some(x => x.capability === 'gcode.produce'))))
+      .catch(console.error);
   }, [p.id]);
 
   const runTestConnection = async () => {
@@ -143,7 +152,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await testConnection({ printer_type: p.model, connection_config: draftConn });
+      const result = await testConnection({ printer_type: p.pluginId ?? p.model, connection_config: draftConn });
       setTestResult(result);
     } catch (e) {
       setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Test failed' });
@@ -159,9 +168,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
       await updatePrinter(Number(p.id), {
         name: draftName,
         connection_config: draftConn,
-        current_orca_printer_profile: machinePreset || null,
+        nozzle_variant: nozzle,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
         machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
+        ...(slicerTouched ? { preferred_slicer_plugin_id: slicer || null } : {}),
         // Both or neither: a half-filled window is treated as none.
         quiet_start: quietStart && quietEnd ? quietStart : null,
         quiet_end: quietStart && quietEnd ? quietEnd : null,
@@ -276,14 +286,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             )}
           </div>
 
-          <div className="col gap-2">
-            <div className="tag-key">Slicer profile</div>
-            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
-            <div className="tiny muted">
-              Sets which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
-              {machinePreset && <> Preset: <span className="mono">{machinePreset}</span>.</>}
-            </div>
-          </div>
+          {loaded && apiPrinter && (
+            <NozzleVariantPicker modelUuid={apiPrinter.model_uuid} value={nozzle} onChange={setNozzle}
+                                 resolvedProfile={apiPrinter.machine_profile} reason={apiPrinter.machine_profile_reason} />
+          )}
 
           <div className="col gap-2">
             <div className="tag-key">Machine cost</div>
@@ -294,6 +300,22 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
               Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
             </div>
           </div>
+
+          {(slicers.length > 1 || slicer) && (
+            <div className="col gap-2">
+              <div className="tag-key">Slicer</div>
+              <label className="label" htmlFor="preferred-slicer">Slice jobs for this printer with</label>
+              <select id="preferred-slicer" className="input" style={{ maxWidth: 260 }} value={slicer}
+                      onChange={e => { setSlicer(e.target.value); setSlicerTouched(true); }}>
+                <option value="">Default slicer</option>
+                {slicer && !slicers.some(s => s.id === slicer) && <option value={slicer}>{slicer} (disabled or removed)</option>}
+                {slicers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <div className="tiny muted">
+                A chosen slicer is never swapped for another: if it is off or down, this printer&apos;s jobs wait (Settings → Plugins).
+              </div>
+            </div>
+          )}
 
           <div className="col gap-2">
             <div className="tag-key">Quiet hours</div>
@@ -375,19 +397,19 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 
 // Multi-slot filament editor. A printer can have N manually-defined slots
 // (e.g. the Snapmaker U1 has 4 tools); each maps to a tool index Tn and carries
-// its own type/color/name + OrcaSlicer filament profile + optional Spoolman spool.
+// its own type/color/name + OrcaSlicer filament profile + optional inventory spool.
 function FilamentPicker({ printerId, onClose, onSaved }: {
   printerId: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { config } = useSpoolmanConfig();
-  const spoolmanActive = !!(config?.enabled && config?.url);
-  const spools = useSpools(spoolmanActive);
-  const filaments = useFilaments(spoolmanActive);
-  const [machinePreset, setMachinePreset] = useState<string | null>(null);
+  const inventory = useInventory();
+  const spools = useSpools(!!inventory.plugin);
+  const [machinePreset, setMachinePreset] = useState<string | null>(null);   // what the printer slices with (its model's profile)
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [slots, setSlots] = useState<LoadedFilament[]>([]);
+  const [stored, setStored] = useState<LoadedFilament[]>([]);      // the slots as the server holds them
+  const slotConflicts = useSlotConflicts(printerId, stored, slots);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -400,7 +422,8 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
       .then(p => {
         if (alive) {
           setSlots(p.loaded_filaments ?? []);
-          setMachinePreset(p.current_orca_printer_profile ?? null);
+          setStored(p.loaded_filaments ?? []);
+          setMachinePreset(p.machine_profile ?? null);
         }
       })
       .catch(() => {});
@@ -408,7 +431,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   }, [printerId]);
 
   const addSlot = () =>
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
   const removeSlot = (i: number) =>
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
   const updateSlot = (i: number, patch: Partial<LoadedFilament>) =>
@@ -449,10 +472,11 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
             <SlotSpoolPicker
               slot={s}
               printerPreset={machinePreset}
+              provider={inventory.id ?? ''}
               spools={spools}
-              filaments={filaments}
               filamentProfiles={filamentProfiles}
               onChange={patch => updateSlot(i, patch)}
+              conflict={slotConflicts.includes(i)}
             />
           </div>
         ))}
@@ -498,7 +522,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
     Promise.all([fetchPrinter(Number(printer.id)), fetchMachineCatalog()])
       .then(([apiPrinter, catalog]) => {
         if (!alive || userEditedRef.current) return;
-        const resolved = resolveVendorModelForProfile(apiPrinter.current_orca_printer_profile, catalog);
+        const resolved = resolveVendorModelForProfile(apiPrinter.machine_profile, catalog);
         if (resolved) {
           setDraft(d => ({ ...d, scope: 'model', machine_vendor: resolved.vendor, machine_model: resolved.printer_model }));
         }
@@ -626,6 +650,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
             </div>
           </div>
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+            {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
@@ -840,6 +865,15 @@ function cardCueStyle(p: Printer): React.CSSProperties {
   return {};
 }
 
+function DormantBadge({ reason }: { reason: string }) {
+  return (
+    <span className="tiny" title={reason} style={{
+      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+      background: 'rgba(148,163,184,0.18)', color: 'var(--text-dim, #94a3b8)', fontWeight: 600,
+    }}>DORMANT</span>
+  );
+}
+
 function QueueOffBadge() {
   return (
     <span className="tiny" style={{
@@ -897,6 +931,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
           <span className="tiny muted">{p.badge}</span>
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
+          {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
           {!p.queueOn && <QueueOffBadge />}
           <AlarmBadge printer={p} />
           <StatusPill status={p.status} />
@@ -982,6 +1017,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       </div>
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
         <StatusPill status={p.status} />
+        {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
         {!p.queueOn && <QueueOffBadge />}
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
@@ -1155,8 +1191,7 @@ export function FleetScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const { config: spoolmanConfig } = useSpoolmanConfig();
-  const spoolmanOn = !!(spoolmanConfig?.enabled && spoolmanConfig?.url);
+  const canScan = useInventory().has(CAP.LABEL_SCAN);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
   const { rows: maintenanceRows, refetch: refetchMaintenance } = useMaintenanceStatus();
@@ -1218,7 +1253,7 @@ export function FleetScreen() {
         <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
-          {spoolmanOn && (
+          {canScan && (
             <button className="btn sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setScanning(true)}>
               {Icons.spool} Scan spool
             </button>

@@ -90,9 +90,10 @@ test.describe('API Keys management', () => {
       if (path === '/files') return ok([]);
       if (path === '/jobs') return ok([]);
       if (path === '/orders') return ok([]);
+      if (path === '/projects') return ok([]);
       if (path === '/queue') return ok([]);
       if (path === '/queue/config' || path === '/settings/queue') return ok({ check_interval_minutes: 5 });
-      if (path === '/settings/spoolman') return ok({ enabled: false });
+      if (path === '/plugins') return ok({ plugins: [], selections: {} });
       if (path === '/laminus/catalog/status') return ok({ cached: false, laminus: { catalog_building: false } });
       if (path === '/machine-catalog') return ok([]);
 

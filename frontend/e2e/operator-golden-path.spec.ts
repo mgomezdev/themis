@@ -52,10 +52,11 @@ test('operator golden path: create job, cancel it, clear the plate', async ({ pa
   await expect(page.getByText(/1 job added to queue/)).toBeVisible();
   expect(posts('/jobs')).toHaveLength(1);
   const created = posts('/jobs')[0].body;
-  expect(created).toMatchObject({ uploaded_file_id: 1, plate_number: 1, order_id: null, overrides: null });
+  expect(created).toMatchObject({ uploaded_file_id: 1, plate_number: 1, project_id: null, overrides: null });
   expect(created.printer_configs).toHaveLength(1);
   expect(created.printer_configs[0]).toMatchObject({
-    printer_id: 1, print_profile: '0.20mm Standard', filament_type: 'any', filament_color: 'any', filament_id: null,
+    printer_id: 1, print_profile: '0.20mm Standard',
+    filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null,       // no ask: any loaded filament
   });
 
   // 2. The job is in the queue; remove it.

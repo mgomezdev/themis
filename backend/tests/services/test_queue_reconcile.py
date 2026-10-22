@@ -4,6 +4,8 @@ vendor client is faked."""
 import os
 from unittest.mock import MagicMock
 
+from app.plugins.bambu.client import serialize_bambu
+
 import pytest
 from sqlalchemy import select
 
@@ -11,6 +13,7 @@ from app.models import GcodeFile, Job, Printer, UploadedFile
 from app.services.abstract_printer_client import PrinterCapabilities
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
+from tests.waiting import settle_events
 
 FAILURE_REASON = "print cancelled or ended with failure on the printer"
 
@@ -23,6 +26,7 @@ def _client(state: str = "IDLE", connected: bool = True, idle: bool = True) -> M
     c.get_capabilities.return_value = PrinterCapabilities()
     c.state = MagicMock()
     c.state.state = state
+    c.serialize_state.side_effect = lambda printer_id: serialize_bambu(c.state, printer_id)   # as the Bambu client does
     return c
 
 
@@ -94,7 +98,7 @@ async def test_idle_printer_in_failed_state_fails_the_job_and_cleans_up(engine, 
     job = await _job(session_factory, job_id)
     assert job.status == "failed"
     assert job.block_reason == FAILURE_REASON
-    assert job.assigned_printer_id is None
+    assert job.assigned_printer_id == 1                    # a started print is released only by a user action, not by the printer
     assert job.completed_at is not None
     assert job.deduction_skipped is True
     assert await _gcode_rows(session_factory, job_id) == []
@@ -107,6 +111,7 @@ async def test_idle_printer_in_normal_state_completes_the_job_and_accrues_wear_c
     mgr._clients[1] = _client(state="IDLE")
 
     await engine._reconcile_printing_jobs()
+    await settle_events(session_factory)
 
     job = await _job(session_factory, job_id)
     assert job.status == "complete"
@@ -172,3 +177,19 @@ async def test_nothing_printing_is_a_noop(engine, mgr, session_factory, broadcas
     await engine._reconcile_printing_jobs()
 
     assert broadcasts.events == []
+
+
+async def test_a_failed_print_keeps_its_printer_but_does_not_reserve_it(engine, mgr, session_factory, tmp_path):
+    """After a print has started only the user releases the printer: the failed job keeps `assigned_printer_id` as its record, yet
+    a terminal job holds nothing (the busy check that blocks a direct start only counts live jobs)."""
+    from sqlalchemy import select as _select
+    from app.api.routes.printers import _BUSY_JOB_STATUSES
+    job_id, _ = await _seed_printing_job(session_factory, tmp_path)
+    mgr._clients[1] = _client(state="FAILED")
+
+    await engine._reconcile_printing_jobs()
+
+    assert (await _job(session_factory, job_id)).assigned_printer_id == 1
+    async with session_factory() as s:
+        busy = await s.execute(_select(Job.id).where(Job.assigned_printer_id == 1, Job.status.in_(_BUSY_JOB_STATUSES)))
+        assert busy.first() is None

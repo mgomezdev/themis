@@ -1,5 +1,5 @@
 """App startup/shutdown wiring (app.main.lifespan). Runs the real lifespan with the module-level DB session
-factory redirected to a per-test database and the long-running services (queue loop, Spoolman sync) replaced
+factory redirected to a per-test database and the long-running services (queue loop, inventory sync) replaced
 by spies, then asserts the singletons end up wired the way the rest of the app assumes."""
 import asyncio
 import logging
@@ -32,11 +32,16 @@ def boot(session_factory, tmp_path, monkeypatch):
     spies.engine_start, spies.engine_stop = AsyncMock(), AsyncMock()
     monkeypatch.setattr(queue_engine, "start", spies.engine_start, raising=False)
     monkeypatch.setattr(queue_engine, "stop", spies.engine_stop, raising=False)
-    spies.spoolman_configure = MagicMock()
-    spies.spoolman_start, spies.spoolman_stop = AsyncMock(), AsyncMock()
-    monkeypatch.setattr(main.spoolman_sync_loop, "configure", spies.spoolman_configure)
-    monkeypatch.setattr(main.spoolman_sync_loop, "start", spies.spoolman_start)
-    monkeypatch.setattr(main.spoolman_sync_loop, "stop", spies.spoolman_stop)
+    spies.inventory_configure = MagicMock()
+    spies.inventory_start, spies.inventory_stop = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(main.inventory_sync_loop, "configure", spies.inventory_configure)
+    monkeypatch.setattr(main.inventory_sync_loop, "start", spies.inventory_start)
+    monkeypatch.setattr(main.inventory_sync_loop, "stop", spies.inventory_stop)
+
+    from app.plugins.host import plugin_host
+    spies.plugin_start, spies.plugin_stop = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(plugin_host, "start", spies.plugin_start)
+    monkeypatch.setattr(plugin_host, "stop", spies.plugin_stop)
 
     saved = {k: getattr(printer_manager, k) for k in
              ("_loop", "_on_state_broadcast", "_on_job_complete", "_session_factory")}
@@ -71,8 +76,12 @@ async def test_startup_wires_the_printer_manager_queue_engine_and_background_ser
         assert queue_engine._mgr is printer_manager
         assert printer_manager._on_job_complete == queue_engine.handle_print_complete
         boot.engine_start.assert_awaited_once()
-        boot.spoolman_configure.assert_called_once_with(session_factory)
-        boot.spoolman_start.assert_awaited_once()
+        boot.inventory_configure.assert_called_once_with(session_factory)
+        boot.inventory_start.assert_awaited_once()
+        from app.plugins.host import plugin_host
+        assert plugin_host._session_factory is session_factory           # the plugin host is wired and started at boot
+        boot.plugin_start.assert_awaited_once()
+        boot.plugin_stop.assert_not_awaited()
         boot.engine_stop.assert_not_awaited()
 
 
@@ -95,7 +104,8 @@ async def test_shutdown_stops_background_services_and_disconnects_every_printer(
         client.disconnect = MagicMock(wraps=client.disconnect)
 
     boot.engine_stop.assert_awaited_once()
-    boot.spoolman_stop.assert_awaited_once()
+    boot.inventory_stop.assert_awaited_once()
+    boot.plugin_stop.assert_awaited_once()
     client.disconnect.assert_called_once()
     assert printer_manager.get_all_printer_ids() == []
 
@@ -173,3 +183,20 @@ async def test_no_slicing_provider_means_no_health_probe_and_no_warmup(boot, mon
         await asyncio.sleep(0)
 
     warm.assert_not_awaited()
+
+
+async def test_a_plugin_host_that_fails_to_start_does_not_stop_themis_booting(boot, session_factory):
+    boot.plugin_start.side_effect = RuntimeError("plugin tables unreadable")
+    async with main.lifespan(main.app):
+        boot.engine_start.assert_awaited_once()
+        boot.inventory_start.assert_awaited_once()
+
+
+async def test_the_plugin_host_starts_before_the_queue_engine(boot, session_factory):
+    """BIZ-260: the Laminus URL is a plugin setting, so the queue must not start slicing before the host has loaded it."""
+    order = []
+    boot.plugin_start.side_effect = lambda *a, **k: order.append("plugins")
+    boot.engine_start.side_effect = lambda *a, **k: order.append("queue")
+    async with main.lifespan(main.app):
+        pass
+    assert order.index("plugins") < order.index("queue")

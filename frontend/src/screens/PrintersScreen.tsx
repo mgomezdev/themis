@@ -8,18 +8,20 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
-  fetchMachineCatalog,
   type ApiPrinter,
+  type NozzleVariant,
   type PrinterType,
   type ConnectionField,
   type LoadedFilament,
-  type MachinePreset,
   type DiscoveredPrinter,
 } from '../api/printers';
-import { MachinePicker } from '../components/MachinePicker';
+import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
+import { ModelSlicerProfiles } from '../components/ModelSlicerProfiles';
+import type { ModelSlicerProfile } from '../api/slicerProfiles';
 import { getPrinterProfiles } from '../api/queue';
-import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
+import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
 
 // ---------------------------------------------------------------------------
@@ -49,11 +51,64 @@ function SlotSwatch({ color, name, type }: { color: string; name: string; type: 
 
 type ConnStatus = 'idle' | 'testing' | 'success' | 'error';
 
+/** Models a user may add: the registry's enabled subset whose plugin is enabled (the API lists the rest, the wizard does not). */
+const addable = (types: PrinterType[]) => types.filter(t => t.plugin_enabled && t.model_enabled);
+
+function manufacturersOf(types: PrinterType[]): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  for (const t of addable(types)) if (!seen.has(t.manufacturer_id)) seen.set(t.manufacturer_id, t.manufacturer_name);
+  return [...seen].map(([id, name]) => ({ id, name }));
+}
+
+const modelsOf = (types: PrinterType[], manufacturerId: string) =>
+  addable(types).filter(t => t.manufacturer_id === manufacturerId);
+
+/** The same model offered by several plugins (native vs modified firmware) is told apart by its plugin. */
+function modelLabel(t: PrinterType, all: PrinterType[]): string {
+  const offeredByMany = addable(all).filter(o => o.manufacturer_id === t.manufacturer_id && o.model_id === t.model_id).length > 1;
+  return offeredByMany ? `${t.display_name} (${t.plugin_id})` : t.display_name;
+}
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** The declared model an announcement's model text names: an exact match, else the longest declared name the text contains
+ *  ("X1 / X1 Carbon" -> "X1 Carbon"). No match returns undefined — never a guess. */
+function matchModel(candidates: PrinterType[], model: string | null): PrinterType | undefined {
+  if (!model) return undefined;
+  const m = norm(model);
+  const exact = candidates.find(t => norm(t.display_name) === m);
+  if (exact) return exact;
+  return candidates
+    .filter(t => norm(t.display_name) !== '' && m.includes(norm(t.display_name)))
+    .sort((a, b) => norm(b.display_name).length - norm(a.display_name).length)[0];
+}
+
+const sameModel = (t: PrinterType, p: { plugin_id: string | null; manufacturer_id: string | null; model_id: string | null }) =>
+  t.plugin_id === p.plugin_id && t.manufacturer_id === p.manufacturer_id && t.model_id === p.model_id;
+
 interface WizardData {
   printerType: PrinterType | null;
   nickname: string;
   connectionConfig: Record<string, string>;
+  /** A custom (user-defined) model only: the bed the user states, as typed. Blank = the model's placeholder. */
+  bedX?: string;
+  bedY?: string;
 }
+
+/** The connection values to send: what the user typed plus the form's defaults for anything left untouched, so a default the form
+ *  SHOWS (e.g. a declared model's toolhead count) is the value that is stored. */
+function withDefaults(type: PrinterType, typed: Record<string, string>): Record<string, string> {
+  const out = { ...typed };
+  for (const f of type.connection_fields) {
+    if (out[f.name] === undefined && f.default != null) out[f.name] = String(f.default);
+  }
+  return out;
+}
+
+const positive = (v: string | undefined, fallback: number): number => {
+  const n = Number(v ?? '');
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
 
 // ---------------------------------------------------------------------------
 // EditForm — inline edit for an existing printer
@@ -70,7 +125,7 @@ export function EditForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
-  const ptype = types.find(t => t.printer_type === printer.printer_type);
+  const ptype = types.find(t => t.plugin_id === printer.plugin_id);       // every model of a plugin shares its connection form
   const [name, setName] = useState(printer.name);
   const [config, setConfig] = useState<Record<string, string>>(
     Object.fromEntries(
@@ -78,19 +133,16 @@ export function EditForm({
     )
   );
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
-  const [preset, setPreset] = useState<string>(printer.current_orca_printer_profile ?? '');
+  const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const spools = useSpools(spoolmanEnabled);
-  const filaments = useFilaments(spoolmanEnabled);
+  const inventory = useInventory();
+  const spools = useSpools(!!inventory.plugin);
+  const slotConflicts = useSlotConflicts(printer.id, printer.loaded_filaments, slots);
 
-  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
   useEffect(() => {
     setFilamentProfiles([]);
     let alive = true;
@@ -98,10 +150,10 @@ export function EditForm({
       .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
       .catch(() => { if (alive) setFilamentProfiles([]); });
     return () => { alive = false; };
-  }, [printer.id, preset]);
+  }, [printer.id, printer.machine_profile]);
 
   function addSlot() {
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
   }
   function removeSlot(i: number) {
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
@@ -116,8 +168,7 @@ export function EditForm({
       await updatePrinter(printer.id, {
         name,
         connection_config: config,
-        current_orca_printer_profile: preset || null,
-        orca_printer_profiles: preset ? [preset] : [],
+        nozzle_variant: nozzle,
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
       });
@@ -150,10 +201,8 @@ export function EditForm({
           </div>
         ))}
 
-        <div>
-          <div className="label" style={{ marginBottom: 8 }}>Printer profile (make / model)</div>
-          <MachinePicker catalog={catalog} value={preset} onChange={setPreset} />
-        </div>
+        <NozzleVariantPicker modelUuid={printer.model_uuid} value={nozzle} onChange={setNozzle}
+                             resolvedProfile={printer.machine_profile} reason={printer.machine_profile_reason} />
 
         <div>
           <label className="label">Build plate</label>
@@ -192,11 +241,12 @@ export function EditForm({
                 </div>
                 <SlotSpoolPicker
                   slot={s}
-                  printerPreset={preset || null}
+                  printerPreset={printer.machine_profile}
+                  provider={inventory.id ?? ''}
                   spools={spools}
-                  filaments={filaments}
                   filamentProfiles={filamentProfiles}
                   onChange={patch => updateSlot(i, patch)}
+                  conflict={slotConflicts.includes(i)}
                 />
               </div>
             ))}
@@ -234,8 +284,9 @@ export function PrinterAddForm({
   backLabel?: string;
 }) {
   const [step, setStep] = useState(1);
+  const [modelUnconfirmed, setModelUnconfirmed] = useState(false);   // a discovered printer whose model we could not tell
   const [data, setData] = useState<WizardData>({
-    printerType: types[0] ?? null,
+    printerType: addable(types)[0] ?? null,
     nickname: '',
     connectionConfig: {},
   });
@@ -243,9 +294,8 @@ export function PrinterAddForm({
   const [connError, setConnError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
-  const [machinePreset, setMachinePreset] = useState<string>('');
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
-  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
+  const [modelProfiles, setModelProfiles] = useState<ModelSlicerProfile[] | null>(null);   // the chosen model's slicer profile mappings
+  useEffect(() => { setModelProfiles(null); }, [data.printerType?.model_uuid]);
 
   async function handleTestConnection() {
     if (!data.printerType) return;
@@ -253,8 +303,8 @@ export function PrinterAddForm({
     setConnError(null);
     try {
       const result = await testConnection({
-        printer_type: data.printerType.printer_type,
-        connection_config: data.connectionConfig,
+        printer_type: data.printerType.plugin_id,
+        connection_config: withDefaults(data.printerType, data.connectionConfig),
       });
       if (result.ok) {
         setConnStatus('success');
@@ -268,18 +318,22 @@ export function PrinterAddForm({
     }
   }
 
-  /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. */
+  /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. When its model
+   *  text names no declared model the wizard stays on the printer step (plugin's first model selected) so the user picks it. */
   function applyDiscovered(p: DiscoveredPrinter) {
-    const type = types.find(t => t.printer_type === p.printer_type);
-    if (!type) return;
+    const ofPlugin = addable(types).filter(t => t.plugin_id === p.plugin_id);
+    if (ofPlugin.length === 0) return;
+    // the server's registry match wins (stable UUID); the name match covers an older server / a model it could not place
+    const matched = ofPlugin.find(t => p.model_uuid && t.model_uuid === p.model_uuid) ?? matchModel(ofPlugin, p.model);
     setData({
-      printerType: type,
+      printerType: matched ?? ofPlugin[0],
       nickname: data.nickname || p.name || p.model || '',
       connectionConfig: Object.fromEntries(Object.entries(p.connection_config).map(([k, v]) => [k, String(v)])),
     });
     setConnStatus('idle');
     setConnError(null);
-    setStep(2);
+    setModelUnconfirmed(!matched);
+    setStep(matched ? 2 : 1);
   }
 
   async function handleFinish() {
@@ -288,11 +342,15 @@ export function PrinterAddForm({
     setFinishError(null);
     try {
       await createPrinter({
-        name: data.nickname || data.printerType.display_name,
-        printer_type: data.printerType.printer_type,
-        connection_config: data.connectionConfig,
-        current_orca_printer_profile: machinePreset || null,
-        orca_printer_profiles: machinePreset ? [machinePreset] : [],
+        name: data.nickname || `${data.printerType.manufacturer_name} ${data.printerType.display_name}`,
+        plugin_id: data.printerType.plugin_id,
+        manufacturer_id: data.printerType.manufacturer_id,
+        model_id: data.printerType.model_id,
+        connection_config: withDefaults(data.printerType, data.connectionConfig),
+        ...(data.printerType.custom ? {
+          bed_x_mm: positive(data.bedX, data.printerType.bed_mm[0]),
+          bed_y_mm: positive(data.bedY, data.printerType.bed_mm[1]),
+        } : {}),
       });
       onCreated();
     } catch (e) {
@@ -304,7 +362,7 @@ export function PrinterAddForm({
   const steps = [
     { n: 1, label: 'Type' },
     { n: 2, label: 'Connect' },
-    { n: 3, label: 'Profile' },
+    { n: 3, label: 'Slicer profile' },
     { n: 4, label: 'Review' },
   ] as const;
 
@@ -347,27 +405,51 @@ export function PrinterAddForm({
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
             <DiscoverPrinters onPick={applyDiscovered} />
-            <SectionHeader title="Select printer type" sub="Choose the vendor for this printer." />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
-              {types.map(t => {
-                const active = data.printerType?.printer_type === t.printer_type;
-                return (
-                  <button key={t.printer_type}
-                    onClick={() => setData({ ...data, printerType: t, connectionConfig: {} })}
-                    className="card"
-                    style={{
-                      textAlign: 'left', padding: 14, cursor: 'pointer',
-                      background: active ? 'var(--bg-3)' : 'var(--bg-1)',
-                      borderColor: active ? 'var(--accent)' : 'var(--border-1)',
+            <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
+            {modelUnconfirmed && (
+              <div className="small" role="status" style={{ marginBottom: 12, color: 'var(--warn)' }}>
+                We could not tell which model this printer is — choose the model below.
+              </div>
+            )}
+            {addable(types).length === 0 ? (
+              <div className="small muted" style={{ marginBottom: 20 }}>
+                No printer plugin is enabled. Enable one under Settings → Plugins.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+                <div>
+                  <label className="label" htmlFor="printer-manufacturer">Manufacturer</label>
+                  <select id="printer-manufacturer" className="input"
+                    value={data.printerType?.manufacturer_id ?? ''}
+                    onChange={e => {
+                      const first = modelsOf(types, e.target.value)[0] ?? null;
+                      setModelUnconfirmed(false);
+                      setData({ ...data, printerType: first, connectionConfig: {} });
                     }}>
-                    <div className="row between">
-                      <div style={{ fontWeight: 500 }}>{t.display_name}</div>
-                      {active && <div style={{ color: 'var(--accent-hi)' }}>{Icons.check}</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                    {manufacturersOf(types).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label" htmlFor="printer-model">Model</label>
+                  <select id="printer-model" className="input"
+                    value={data.printerType ? `${data.printerType.plugin_id}/${data.printerType.model_id}` : ''}
+                    onChange={e => {
+                      const next = modelsOf(types, data.printerType?.manufacturer_id ?? '')
+                        .find(t => `${t.plugin_id}/${t.model_id}` === e.target.value) ?? null;
+                      setModelUnconfirmed(false);
+                      // the same plugin shares one connection form, so values (e.g. a discovered IP) survive a model change
+                      const samePlugin = next?.plugin_id === data.printerType?.plugin_id;
+                      setData({ ...data, printerType: next, connectionConfig: samePlugin ? data.connectionConfig : {} });
+                    }}>
+                    {modelsOf(types, data.printerType?.manufacturer_id ?? '').map(t => (
+                      <option key={`${t.plugin_id}/${t.model_id}`} value={`${t.plugin_id}/${t.model_id}`}>
+                        {modelLabel(t, types)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             <div>
               <label className="label">Nickname</label>
               <input className="input" value={data.nickname}
@@ -407,6 +489,25 @@ export function PrinterAddForm({
                   {f.help_text && <div className="tiny muted" style={{ marginTop: 4 }}>{f.help_text}</div>}
                 </div>
               ))}
+              {data.printerType.custom && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                  <div>
+                    <label className="label" htmlFor="custom-bed-x">Bed width X (mm)</label>
+                    <input id="custom-bed-x" className="input" type="number" min={1}
+                           value={data.bedX ?? String(data.printerType.bed_mm[0])}
+                           onChange={e => setData({ ...data, bedX: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="custom-bed-y">Bed depth Y (mm)</label>
+                    <input id="custom-bed-y" className="input" type="number" min={1}
+                           value={data.bedY ?? String(data.printerType.bed_mm[1])}
+                           onChange={e => setData({ ...data, bedY: e.target.value })} />
+                  </div>
+                  <div className="tiny muted" style={{ gridColumn: '1 / -1' }}>
+                    A custom printer has no vendor-declared size: what you enter here is stored with the printer.
+                  </div>
+                </div>
+              )}
             </div>
 
             {connStatus === 'success' && (
@@ -434,17 +535,16 @@ export function PrinterAddForm({
           </div>
         )}
 
-        {/* Step 3: Printer profile (make/model) */}
+        {/* Step 3: the model's slicer profile — set once per model, so only asked for when the model has none */}
         {step === 3 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
-            <SectionHeader title="Printer profile"
-              sub="Pick the make/model so jobs slice with the right OrcaSlicer machine + filament presets. You can set this later." />
-            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
-            <div className="tiny muted" style={{ marginTop: 8 }}>
-              {machinePreset
-                ? <>Preset: <span className="mono">{machinePreset}</span></>
-                : 'Optional now — required before this printer can slice.'}
-            </div>
+            <SectionHeader title="Slicer profile"
+              sub={`Which slicer machine profile ${data.printerType.manufacturer_name} ${data.printerType.display_name} printers slice with. It is set once per model — every printer of this model uses it.`} />
+            {data.printerType.model_uuid
+              ? <ModelSlicerProfiles modelUuid={data.printerType.model_uuid}
+                                     modelLabel={`${data.printerType.manufacturer_name} ${data.printerType.display_name}`}
+                                     onChange={setModelProfiles} />
+              : <div className="tiny muted">This model is not in the registry yet, so its slicer profile can be set later under Settings → Printer models.</div>}
             <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
               <button className="btn primary" onClick={() => setStep(4)}>Next {Icons.chevR}</button>
@@ -466,8 +566,8 @@ export function PrinterAddForm({
                 <span className="small">{data.nickname || data.printerType.display_name}</span>
               </div>
               <div className="row gap-3">
-                <span className="muted small" style={{ width: 120 }}>Printer profile</span>
-                <span className="small mono">{machinePreset || '— not set —'}</span>
+                <span className="muted small" style={{ width: 120 }}>Slicer profile</span>
+                <span className="small mono">{modelProfiles?.find(r => r.is_default)?.machine_profile ?? '— not set for this model —'}</span>
               </div>
               {Object.entries(data.connectionConfig).map(([k, v]) => {
                 const field = data.printerType!.connection_fields.find(f => f.name === k);
@@ -550,7 +650,10 @@ export function PrintersScreen() {
   const offlineCount = printers.filter(p => !p.connected).length;
 
   const displayName = (p: ApiPrinter) =>
-    types.find(t => t.printer_type === p.printer_type)?.display_name ?? p.printer_type;
+    (() => {
+      const t = types.find(m => sameModel(m, p));
+      return t ? `${t.manufacturer_name} ${t.display_name}` : p.printer_type;
+    })();
 
   const connectionSummary = (p: ApiPrinter) => {
     const cfg = p.connection_config;

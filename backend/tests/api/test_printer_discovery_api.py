@@ -106,3 +106,30 @@ async def test_loopback_and_reserved_ranges_are_rejected_before_any_probe(client
     for r in ("127.0.0.1", "0.0.0.0/24", "255.255.255.255", "198.18.0.0/24"):
         assert (await client.post("/api/v1/printers/discover", json={"ranges": [r]})).status_code == 422
     assert lan.probes == []
+
+
+async def test_discovered_printers_name_the_plugin_that_serves_them(client, lan):
+    found = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()["found"]
+
+    assert {f["ip"]: (f["printer_type"], f["plugin_id"]) for f in found} == {
+        "192.168.7.20": ("bambu", "bambu"),
+        "192.168.7.30": ("snapmaker_extended", "snapmaker"),      # the client's printer_type differs from its plugin's id
+        "192.168.7.40": ("elegoo_centauri", "elegoo_centauri"),
+    }
+
+
+async def test_discovered_free_text_model_matches_the_registry_when_unambiguous_else_offers_the_custom_path(client, lan):
+    found = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()["found"]
+    by_ip = {f["ip"]: f for f in found}
+    p1s = next(m for m in (await client.get("/api/v1/printer-models", params={"plugin_id": "bambu"})).json() if m["model_id"] == "p1s")
+
+    assert by_ip["192.168.7.20"]["model_uuid"] == p1s["id"]         # "P1S" -> the one known Bambu P1S
+    assert by_ip["192.168.7.30"]["model_uuid"] is None              # unmatched: the UI shows the explicit custom path
+
+
+async def test_a_moonraker_host_is_offered_once_per_moonraker_provider_so_the_connection_path_is_the_users_explicit_choice(client, lan):
+    body = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()
+
+    moonraker_hits = sorted((f["plugin_id"], f["printer_type"]) for f in body["found"] if f["ip"] == "192.168.7.30")
+
+    assert moonraker_hits == [("moonraker", "moonraker"), ("snapmaker", "snapmaker_extended")]

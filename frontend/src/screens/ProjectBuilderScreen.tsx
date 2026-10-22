@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
-import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
-import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
+import { FilamentAskEditor } from '../components/FilamentAskEditor';
+import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
-import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
+import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   getProject, createProject, patchProject,
@@ -92,17 +92,19 @@ function FolderRow({
 // Local item row state (before saving)
 // ---------------------------------------------------------------------------
 
-interface LocalItem {
+interface LocalItem extends FilamentAsk {
   localId: string;
   serverId?: number;
   file_id: number;
   file_name: string;
   quantity: number;
-  filament_type: string;
-  filament_color: string;
-  filament_id: number | null;
   sort_order: number;
 }
+
+const askOf = (it: FilamentAsk): FilamentAsk => ({
+  filament_manufacturer: it.filament_manufacturer, filament_type: it.filament_type,
+  filament_subtype: it.filament_subtype, filament_color: it.filament_color,
+});
 
 interface LocalLink {
   localId: string;
@@ -162,10 +164,10 @@ export function ProjectBuilderScreen() {
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
-  // Spoolman integration
-  const { config: spoolmanConfig } = useSpoolmanConfig();
-  const spoolmanEnabled = spoolmanConfig?.enabled ?? false;
-  const spoolmanFilaments = useFilaments(spoolmanEnabled);
+  // Inventory catalog (materials), when a provider is active
+  const inventory = useInventory();
+  const catalogEnabled = !!inventory.plugin;
+  const materials = useMaterials(catalogEnabled);
 
   // Project header fields
   const [name, setName] = useState('');
@@ -249,7 +251,7 @@ export function ProjectBuilderScreen() {
       onHold: oh, dueDate: dd, notes: no, price: pr,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
-        ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
+        fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
       })),
       links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
       parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
@@ -294,9 +296,10 @@ export function ProjectBuilderScreen() {
         file_id: it.file_id,
         file_name: it.file_name,
         quantity: it.quantity,
+        filament_manufacturer: it.filament_manufacturer,
         filament_type: it.filament_type,
+        filament_subtype: it.filament_subtype,
         filament_color: it.filament_color,
-        filament_id: it.filament_id,
         sort_order: it.sort_order,
       }));
       const lks: LocalLink[] = (p.links ?? []).map(l => ({
@@ -338,9 +341,7 @@ export function ProjectBuilderScreen() {
           file_id: f.id,
           file_name: f.original_filename,
           quantity: 1,
-          filament_type: 'any',
-          filament_color: 'any',
-          filament_id: null,
+          ...NO_ASK,
           sort_order: prev.length,
         },
       ];
@@ -379,21 +380,12 @@ export function ProjectBuilderScreen() {
     scheduleUndoClear();
   }
 
-  function setItemFilament(localId: string, req: FilamentRequirement) {
-    updateItem(localId, {
-      filament_type: req.filament_type,
-      filament_color: req.filament_color,
-      filament_id: req.filament_id,
-    });
+  function setItemFilament(localId: string, req: FilamentAsk) {
+    updateItem(localId, askOf(req));
   }
 
-  function applyFilamentToAll(req: FilamentRequirement) {
-    setItems(prev => prev.map(it => ({
-      ...it,
-      filament_type: req.filament_type,
-      filament_color: req.filament_color,
-      filament_id: req.filament_id,
-    })));
+  function applyFilamentToAll(req: FilamentAsk) {
+    setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
   }
 
   async function saveProject(): Promise<number> {
@@ -415,9 +407,7 @@ export function ProjectBuilderScreen() {
       for (const it of existing) {
         await updateProjectItem(projectId, it.serverId!, {
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
+          ...askOf(it),
           sort_order: it.sort_order,
         });
       }
@@ -426,9 +416,7 @@ export function ProjectBuilderScreen() {
         await addProjectItem(projectId, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
+          ...askOf(it),
           sort_order: it.sort_order,
         });
       }
@@ -465,9 +453,7 @@ export function ProjectBuilderScreen() {
         await addProjectItem(proj.id, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
+          ...askOf(it),
           sort_order: i,
         });
       }
@@ -807,7 +793,7 @@ export function ProjectBuilderScreen() {
               {/* Column headers */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 64px 260px auto',
+                gridTemplateColumns: '1fr 64px 340px auto',
                 gap: 8, padding: '0 4px',
                 fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
                 textTransform: 'uppercase', letterSpacing: '0.05em',
@@ -820,7 +806,7 @@ export function ProjectBuilderScreen() {
               {items.map((it) => (
                 <div key={it.localId} style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 64px 260px auto',
+                  gridTemplateColumns: '1fr 64px 340px auto',
                   gap: 8, alignItems: 'start',
                 }}>
                   {/* File name + progress */}
@@ -854,11 +840,12 @@ export function ProjectBuilderScreen() {
                   />
 
                   {/* Filament requirement */}
-                  <FilamentRequirementPicker
-                    value={{ filament_type: it.filament_type, filament_color: it.filament_color, filament_id: it.filament_id }}
+                  <FilamentAskEditor
+                    id={`item-ask-${it.localId}`}
+                    value={askOf(it)}
                     onChange={req => setItemFilament(it.localId, req)}
-                    spoolmanFilaments={spoolmanFilaments}
-                    spoolmanEnabled={spoolmanEnabled}
+                    materials={materials}
+                    catalogEnabled={catalogEnabled}
                   />
 
                   {/* Apply to all + Remove */}
@@ -866,11 +853,7 @@ export function ProjectBuilderScreen() {
                     {items.length > 1 && (
                       <button
                         className="btn ghost icon sm"
-                        onClick={() => applyFilamentToAll({
-                          filament_type: it.filament_type,
-                          filament_color: it.filament_color,
-                          filament_id: it.filament_id,
-                        })}
+                        onClick={() => applyFilamentToAll(askOf(it))}
                         title="Apply this filament to every part"
                       >
                         {Icons.copy}
@@ -890,7 +873,7 @@ export function ProjectBuilderScreen() {
           )}
         </div>
 
-        {/* Printer picker (shown when Generate… is clicked) */}
+        {/* Printer picker (shown when Create… is clicked) */}
         {showPrinterPicker && !generating && !saving && (
           <div style={{
             border: '1px solid var(--border)', borderRadius: 8,
@@ -914,7 +897,7 @@ export function ProjectBuilderScreen() {
                   ? 'No printers selected — jobs will be created but not dispatched'
                   : undefined}
               >
-                {eligiblePrinterIds.length === 0 ? 'Generate without dispatch' : 'Generate'}
+                {eligiblePrinterIds.length === 0 ? 'Create without dispatch' : 'Create'}
               </button>
             </div>
           </div>
@@ -969,7 +952,7 @@ export function ProjectBuilderScreen() {
             disabled={!canSave || items.length === 0 || isDraft}
             title={isDraft ? 'Promote to planning before creating jobs' : undefined}
           >
-            {generating ? 'Generating…' : 'Generate…'}
+            {generating ? 'Creating…' : 'Create…'}
           </button>
         </div>
       </div>

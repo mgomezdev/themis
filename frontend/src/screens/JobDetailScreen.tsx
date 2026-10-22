@@ -7,7 +7,10 @@ import { SaveSliceControl, SliceCacheDebug, SliceCacheMarkers } from '../compone
 import { isPresliced } from '../lib/fileKind';
 import { getJobDetails, cancelJob, unblockJob, completeJobManually, setJobCost, setJobSchedule, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
+import { JobProjectControl } from '../components/JobProjectControl';
+import { getProject } from '../api/projects';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
+import { askIsUndefined, describeAsk } from '../lib/filamentAsk';
 
 const BADGE: Record<string, string> = {
   elegoo_centauri: 'ECC',
@@ -38,6 +41,18 @@ function LowStockStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
     <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Low filament</div>
       <div className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{cfg.low_stock_warning.message}</div>
+    </div>
+  );
+}
+
+/** Why this printer cannot take the job right now (the job stays queued; loading the right filament makes it claimable). */
+function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
+  const m = cfg.filament_match;
+  if (!m || m.eligible) return null;
+  return (
+    <div data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+      <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Filament doesn't match</div>
+      {m.reasons.map((r, i) => <div key={i} className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{r}</div>)}
     </div>
   );
 }
@@ -80,7 +95,9 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
               }} />
             )}
             <div className="col" style={{ minWidth: 0 }}>
-              <div className="small" style={{ color: 'var(--text-1)' }}>{cfg.filament_type || '—'}</div>
+              <div className="small" style={{ color: 'var(--text-1)' }}>
+                {askIsUndefined(cfg) ? 'Any loaded filament' : describeAsk(cfg)}
+              </div>
               {cfg.filament_profile && (
                 <div className="tiny muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {cfg.filament_profile}
@@ -92,6 +109,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
       </div>
 
       <SliceStatus cfg={cfg} />
+      <FilamentMatchStatus cfg={cfg} />
       <LowStockStatus cfg={cfg} />
     </div>
   );
@@ -116,6 +134,7 @@ export function JobDetailScreen() {
   const [startInput, setStartInput] = useState('');
   const [savingStart, setSavingStart] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -126,6 +145,14 @@ export function JobDetailScreen() {
       .catch(e => { if (alive) { setError(String(e)); setLoading(false); } });
     return () => { alive = false; };
   }, [jobId]);
+
+  const projectId = job?.project_id ?? null;
+  useEffect(() => {
+    if (projectId == null) { setProjectName(null); return; }
+    let alive = true;
+    getProject(projectId).then(p => { if (alive) setProjectName(p.name); }).catch(() => {});
+    return () => { alive = false; };
+  }, [projectId]);
 
   async function handleSaveCost() {
     if (!job || savingCost) return;
@@ -369,7 +396,7 @@ export function JobDetailScreen() {
             <div className="card" style={{ padding: 20 }} data-testid="model-targets">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Any printer of</div>
               <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-                {job.model_targets.map(t => <span key={t.machine_profile} className="elig on">{t.machine_profile}</span>)}
+                {job.model_targets.map(t => <span key={t.model_uuid} className="elig on">{t.model_label ?? t.model_uuid}</span>)}
               </div>
               {job.printer_configs.length === 0 && (
                 <div className="tiny muted" style={{ marginTop: 8 }}>No printer of this model is set up yet — the job waits for one.</div>
@@ -464,7 +491,9 @@ export function JobDetailScreen() {
               )}
               {job.deduction_skipped && (
                 <div style={{ marginTop: 10, color: 'var(--warn, #f59e0b)', fontWeight: 500, fontSize: 13 }}>
-                  Print was aborted — please manually update your Spoolman inventory.
+                  {job.deduction_note
+                    ? `Filament usage was not recorded: ${job.deduction_note}.`
+                    : 'Print was aborted — please manually update your filament inventory.'}
                 </div>
               )}
             </div>
@@ -540,6 +569,16 @@ export function JobDetailScreen() {
                 <StatusPill status={job.status as StatusKey} />
               </div>
             </div>
+          </div>
+
+          <div className="card" style={{ padding: 18 }}>
+            <div className="tag-key" style={{ marginBottom: 8 }}>Project</div>
+            <JobProjectControl
+              jobId={job.id}
+              projectId={projectId}
+              projectName={projectName}
+              onChanged={updated => setJob(prev => (prev ? { ...prev, project_id: updated.project_id, order_id: updated.order_id } : prev))}
+            />
           </div>
 
           {job.order_id != null && (

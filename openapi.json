@@ -1215,8 +1215,8 @@
         "tags": [
           "printers"
         ],
-        "summary": "List printer types",
-        "description": "Available printer driver types with display name and required connection config fields.",
+        "summary": "List printer models every plugin declares",
+        "description": "Available printer driver types with display name and required connection config fields. Each entry carries the\nregistry's stable `model_uuid` and whether the user has `model_enabled` it for setup (the add-printer flow offers only those).",
         "operationId": "list_printer_types_api_v1_printers_types_get",
         "responses": {
           "200": {
@@ -1576,7 +1576,7 @@
           "printers"
         ],
         "summary": "Update printer",
-        "description": "Update one or more printer fields. Omitted fields are left unchanged.\n`current_orca_printer_profile` supports explicit null to clear the preset.",
+        "description": "Update one or more printer fields. Omitted fields are left unchanged.\n`machine_profile_override` and `nozzle_variant` support explicit null to clear them.",
         "operationId": "update_printer_api_v1_printers__printer_id__patch",
         "parameters": [
           {
@@ -1667,6 +1667,54 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/slot-conflicts": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Slots whose bound spool differs from what the printer reports",
+        "description": "Indexes of the slots in conflict (a hardware-reported slot whose bound spool's material differs in a part known on both\nsides). A conflicting slot is skipped by the queue's filament matching; the UI flags it so the operator can rebind, correct or\nunbind the spool. Empty when no slot is bound or the inventory cannot be read.",
+        "operationId": "slot_conflicts_api_v1_printers__printer_id__slot_conflicts_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Slot Conflicts Api V1 Printers  Printer Id  Slot Conflicts Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [
@@ -1711,57 +1759,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v1/printers/{printer_id}/active-preset": {
-      "patch": {
-        "tags": [
-          "printers"
-        ],
-        "summary": "Switch active OrcaSlicer preset",
-        "description": "Change the active OrcaSlicer machine preset. The preset must already be in\nthe printer's `orca_printer_profiles` list.",
-        "operationId": "switch_active_preset_api_v1_printers__printer_id__active_preset_patch",
-        "parameters": [
-          {
-            "name": "printer_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Printer Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActivePresetUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Switch Active Preset Api V1 Printers  Printer Id  Active Preset Patch"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Printer not found"
-          },
-          "422": {
-            "description": "Preset not in this printer's configured profiles"
           }
         }
       }
@@ -2798,7 +2795,7 @@
           "printers"
         ],
         "summary": "Stream camera (MJPEG)",
-        "description": "MJPEG multipart stream from the printer camera. Supports both native MJPEG\nand RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on\nprinters that time out after 60 s of inactivity.",
+        "description": "MJPEG multipart stream from the printer camera. The printer's client produces the feed (native\nMJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on\nprinters that time out after 60 s of inactivity.",
         "operationId": "stream_camera_api_v1_printers__printer_id__camera_get",
         "parameters": [
           {
@@ -2824,7 +2821,7 @@
             "description": "Printer not found or has no camera"
           },
           "503": {
-            "description": "Printer not connected or ffmpeg unavailable for RTSP"
+            "description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"
           },
           "422": {
             "description": "Validation Error",
@@ -2872,6 +2869,417 @@
           },
           "503": {
             "description": "Printer not connected or camera unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List the printer-model registry",
+        "description": "Every known model with its stable UUID. `enabled` filters the user's subset; `usable` also drops dormant models\n(plugin removed/disabled, or no longer declared). Dormant models stay listed otherwise: printers and files reference them.",
+        "operationId": "list_printer_models_api_v1_printer_models_get",
+        "parameters": [
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
+            }
+          },
+          {
+            "name": "plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "usable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Usable"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Printer Models Api V1 Printer Models Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}": {
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Enable or disable a model for setup and eligibility pickers",
+        "operationId": "patch_printer_model_api_v1_printer_models__model_uuid__patch",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Printer Model Api V1 Printer Models  Model Uuid  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List a model's slicer profile mappings",
+        "operationId": "list_mappings_api_v1_printer_models__model_uuid__slicer_profiles_get",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Mappings Api V1 Printer Models  Model Uuid  Slicer Profiles Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Map a nozzle variant of a model to a slicer machine profile",
+        "description": "The first variant mapped for a (model, provider) becomes its default; `is_default` on a later one moves the default to it.",
+        "operationId": "create_mapping_api_v1_printer_models__model_uuid__slicer_profiles_post",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Mapping Api V1 Printer Models  Model Uuid  Slicer Profiles Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "409": {
+            "description": "That variant is already mapped"
+          },
+          "422": {
+            "description": "Not a slicing provider, or a bad variant/profile"
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles/{mapping_id}": {
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Change a mapping's machine profile or make it the default",
+        "operationId": "patch_mapping_api_v1_printer_models__model_uuid__slicer_profiles__mapping_id__patch",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "mapping_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mapping Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Mapping Api V1 Printer Models  Model Uuid  Slicer Profiles  Mapping Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown mapping"
+          },
+          "422": {
+            "description": "A default cannot be unset directly"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Remove a mapping",
+        "operationId": "delete_mapping_api_v1_printer_models__model_uuid__slicer_profiles__mapping_id__delete",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "mapping_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mapping Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown mapping"
+          },
+          "409": {
+            "description": "It is the default of a model with other variants, or a printer uses it"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles/suggestions": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Ask a slicing provider which profile and nozzle variants fit this model",
+        "description": "Never fails for an unavailable provider: `available` is false (manual entry still works) and `error` says why.",
+        "operationId": "suggestions_api_v1_printer_models__model_uuid__slicer_profiles_suggestions_get",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "provider_plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Suggestions Api V1 Printer Models  Model Uuid  Slicer Profiles Suggestions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
           },
           "422": {
             "description": "Validation Error",
@@ -3064,6 +3472,36 @@
               "default": "all",
               "title": "Kind"
             }
+          },
+          {
+            "name": "eligible_model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only pre-sliced files eligible for this printer-model UUID",
+              "title": "Eligible Model"
+            },
+            "description": "Only pre-sliced files eligible for this printer-model UUID"
+          },
+          {
+            "name": "include_unknown_eligibility",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "With eligible_model: also list pre-sliced files whose eligibility is unknown",
+              "default": false,
+              "title": "Include Unknown Eligibility"
+            },
+            "description": "With eligible_model: also list pre-sliced files whose eligibility is unknown"
           }
         ],
         "responses": {
@@ -3149,7 +3587,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.",
+        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.\nA pre-sliced file may carry `eligible_model_uuids` (printer-model registry ids it may be sent to); without them its machine\neligibility is unknown until set (BIZ-263).",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
@@ -3176,6 +3614,103 @@
           },
           "422": {
             "description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/eligibility": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Machine eligibility of a pre-sliced G-code file",
+        "description": "`{known, models: [{model_uuid, source, display_name, manufacturer_name}]}`. `known: false` = legacy/unknown: it is never\ntreated as a confirmed match, and a job for it needs explicit confirmation.",
+        "operationId": "get_eligibility_api_v1_files__file_id__eligibility_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Eligibility Api V1 Files  File Id  Eligibility Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Set the printer models a pre-sliced G-code file may be sent to",
+        "description": "Replace the file's eligibility with exactly these registry models. Queued jobs are re-checked at their next queue pull.",
+        "operationId": "put_eligibility_api_v1_files__file_id__eligibility_put",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EligibilityBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Put Eligibility Api V1 Files  File Id  Eligibility Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Not a pre-sliced file, or an unknown model"
           }
         }
       }
@@ -4093,6 +4628,76 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/detail-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get generic job detail fields",
+        "description": "The open-vocabulary details plugins wrote onto the job (debug/read-only). Each field answers `ok`, `unsupported`,\n`unavailable` or `unknown_field`; a bad name never fails the call. Distinct from `/{job_id}/details` (the job screen's shape).",
+        "operationId": "get_job_detail_fields_api_v1_jobs__job_id__detail_fields_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`",
+              "title": "Fields"
+            },
+            "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`"
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the value written by this origin (a plugin id or `core`)",
+              "title": "Origin"
+            },
+            "description": "Only the value written by this origin (a plugin id or `core`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Detail Fields Api V1 Jobs  Job Id  Detail Fields Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "No field names, or more than 50"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/details": {
       "get": {
         "tags": [
@@ -4389,7 +4994,7 @@
           "jobs"
         ],
         "summary": "Manually complete a job without printing it",
-        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts Spoolman\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
+        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts inventory\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
         "operationId": "complete_job_manually_api_v1_jobs__job_id__complete_manually_post",
         "parameters": [
           {
@@ -4535,6 +5140,67 @@
           },
           "409": {
             "description": "Job already started or finished"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/project": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Link or unlink a job's project",
+        "description": "Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it\nwith `project_id: null`. A job moves between projects only by being unlinked first. A project that has an\norder grouping replaces the job's own `order_id`; unlinking clears `order_id` only when it is that project's. While the project is not\nyet queued, the queue engine holds its queued/blocked jobs back (already sliced or running ones are unaffected).",
+        "operationId": "set_job_project_api_v1_jobs__job_id__project_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobProjectLink"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Project Api V1 Jobs  Job Id  Project Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job or project not found"
+          },
+          "409": {
+            "description": "The job already belongs to another project, or the project is still a draft"
           },
           "422": {
             "description": "Validation Error",
@@ -4715,6 +5381,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/job-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List job detail fields",
+        "description": "Every field an enabled plugin declares (or lists as unsupported), with its sources. Field names are not enforced: a plugin may\nalso write fields nobody declared; those answer `unknown_field` only when nothing is stored.",
+        "operationId": "list_job_fields_api_v1_job_fields_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Job Fields Api V1 Job Fields Get"
                 }
               }
             }
@@ -5635,51 +6328,58 @@
           "projects"
         ],
         "summary": "List projects",
-        "description": "All projects ordered by creation date descending, each with items, links,\njob counts, and aggregated filament/time estimates.",
+        "description": "All projects ordered by creation date descending, each with items, links,\njob counts, and aggregated filament/time estimates. `?source_app=&external_ref=` looks a project up by the\ncompanion app's own key.",
         "operationId": "list_projects_api_v1_projects_get",
+        "parameters": [
+          {
+            "name": "source_app",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only projects created by this source application",
+              "title": "Source App"
+            },
+            "description": "Only projects created by this source application"
+          },
+          {
+            "name": "external_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the project with this external ref (use with source_app)",
+              "title": "External Ref"
+            },
+            "description": "Only the project with this external ref (use with source_app)"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
                   "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "title": "Response List Projects Api V1 Projects Get"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Create project",
-        "operationId": "create_project_api_v1_projects_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProjectCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Create Project Api V1 Projects Post"
                 }
               }
             }
@@ -5693,6 +6393,67 @@
                 }
               }
             }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create project",
+        "description": "Create a project. Retry-safe for companion apps two ways: give it a `source_app` + `external_ref` (a second create with the same\npair returns the existing project, status 200, unchanged) and/or an `Idempotency-Key` header (a repeat returns the first response with\n`Idempotent-Replay: true`).",
+        "operationId": "create_project_api_v1_projects_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat-safe creation: a retry returns the first response",
+              "title": "Idempotency-Key"
+            },
+            "description": "Repeat-safe creation: a retry returns the first response"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Project Api V1 Projects Post"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "A project with this source_app + external_ref already exists: returned unchanged"
+          },
+          "409": {
+            "description": "Another request with this Idempotency-Key is still running"
+          },
+          "422": {
+            "description": "external_ref without source_app, or an Idempotency-Key reused for a different request"
           }
         }
       }
@@ -6820,7 +7581,7 @@
           "projects"
         ],
         "summary": "Pack STLs and queue jobs",
-        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.",
+        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.\nSend an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result\n(`Idempotent-Replay: true`) and creates no further files or jobs.",
         "operationId": "generate_project_api_v1_projects__project_id__generate_post",
         "parameters": [
           {
@@ -6831,6 +7592,24 @@
               "type": "integer",
               "title": "Project Id"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat-safe generation: a retry returns the first result",
+              "title": "Idempotency-Key"
+            },
+            "description": "Repeat-safe generation: a retry returns the first result"
           }
         ],
         "requestBody": {
@@ -6867,6 +7646,9 @@
           },
           "504": {
             "description": "Generation timed out"
+          },
+          "409": {
+            "description": "Project is a draft, or another request with this Idempotency-Key is still running"
           }
         }
       }
@@ -7328,115 +8110,13 @@
         }
       }
     },
-    "/api/v1/settings/spoolman": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Get Spoolman config",
-        "description": "Spoolman integration settings: enabled flag, base URL, and whether an API key is set.\nThe key itself never round-trips - omit `api_key` on PUT to leave it unchanged.",
-        "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpoolmanConfigOut"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Update Spoolman config",
-        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it.",
-        "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SpoolmanConfigIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpoolmanConfigOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/settings/spoolman/test": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Test Spoolman connection",
-        "description": "Verify connectivity to Spoolman. Uses the supplied URL/key if provided,\nfalling back to the saved config. Returns `{ok, version}` or `{ok, message}`.\nIf the catalog is warm and stale UUIDs are detected in Spoolman filaments,\nreturns `{status: \"pending_remaps\", ...}` instead.",
-        "operationId": "test_spoolman_connection_api_v1_settings_spoolman_test_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SpoolmanConfigIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/settings/webhook": {
       "get": {
         "tags": [
           "settings"
         ],
         "summary": "Get webhook config",
-        "description": "Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed\nevent types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged.",
+        "description": "The `default` outbound webhook (see `/api/v1/webhooks` for any number of destinations): endpoint URL, whether an HMAC secret is\nset, and subscribed event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged.",
         "operationId": "get_webhook_config_api_v1_settings_webhook_get",
         "responses": {
           "200": {
@@ -7476,108 +8156,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/WebhookConfigOut"
                 }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/settings/notifications": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Get notification config",
-        "description": "Built-in notification channel settings (ntfy, Discord, email). All three\nchannels are always present in the response, even when unconfigured.",
-        "operationId": "get_notification_config_api_v1_settings_notifications_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotificationConfigOut"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Update notification config",
-        "description": "Update notification channel settings. A channel key omitted from the request\nbody leaves that channel's stored config unchanged; a channel key present\nreplaces that whole channel's config.",
-        "operationId": "update_notification_config_api_v1_settings_notifications_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotificationConfigIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotificationConfigOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/settings/notifications/test": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Send a test notification",
-        "description": "Send a test notification for one channel using the supplied (unsaved) config,\nwithout requiring it be saved first. Returns `{ok, message}` \u2014 including for a\nmissing required field, which is reported this way rather than as a 4xx.",
-        "operationId": "test_notification_config_api_v1_settings_notifications_test_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotificationTestIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             }
           },
@@ -7667,6 +8245,2264 @@
           },
           "400": {
             "description": "Invalid or unsupported backup file"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "List materials of the active inventory provider (last-known data when it is unreachable)",
+        "operationId": "list_materials_api_v1_inventory_materials_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No inventory provider is active"
+          },
+          "503": {
+            "description": "Provider unreachable and nothing cached"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Create a material",
+        "operationId": "create_material_api_v1_inventory_materials_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "List spools of the active inventory provider (last-known data when it is unreachable)",
+        "description": "`remaining_g` is the *effective* weight: the newest queued (unsynced) write replaces what the provider reported, and `unsynced` says so.",
+        "operationId": "list_spools_api_v1_inventory_spools_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No inventory provider is active"
+          },
+          "503": {
+            "description": "Provider unreachable and nothing cached"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Create a spool",
+        "operationId": "create_spool_api_v1_inventory_spools_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/sync-now": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Refresh from the provider now",
+        "operationId": "sync_now_api_v1_inventory_sync_now_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No provider, or it is not a remote one"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/sync-status": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Provider health and sync status (never fails)",
+        "operationId": "sync_status_api_v1_inventory_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update a material",
+        "operationId": "update_material_api_v1_inventory_materials__ref__patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}/archive": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Archive (or restore) a material",
+        "operationId": "archive_material_api_v1_inventory_materials__ref__archive_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ArchiveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update a spool's label / storage location",
+        "operationId": "update_spool_api_v1_inventory_spools__ref__patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}/archive": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Archive (or restore) a spool",
+        "operationId": "archive_spool_api_v1_inventory_spools__ref__archive_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ArchiveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}/remaining": {
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set a spool's remaining weight (absolute grams)",
+        "operationId": "set_remaining_api_v1_inventory_spools__ref__remaining_put",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemainingBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}/resume-tracking": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resume usage tracking after correcting a spool's weight",
+        "description": "With `remaining_g` the weight is written first (needs WRITE_WEIGHT); without it the spool's current weight is confirmed as correct. Clears the suspension and queued writes for the spool.",
+        "operationId": "resume_tracking_api_v1_inventory_spools__ref__resume_tracking_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumeBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/tracking": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Spools whose usage tracking is suspended",
+        "operationId": "tracking_api_v1_inventory_tracking_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Weight updates not yet applied to the provider (status `pending`, or `conflict` = held)",
+        "operationId": "pending_writes_api_v1_inventory_pending_writes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/flush": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Send pending weight updates now",
+        "operationId": "flush_pending_writes_api_v1_inventory_pending_writes_flush_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/discard": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Drop a pending weight update",
+        "operationId": "discard_pending_write_api_v1_inventory_pending_writes__write_id__discard_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending write"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/resolve": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Retry a pending weight update, optionally with a corrected target",
+        "operationId": "resolve_pending_write_api_v1_inventory_pending_writes__write_id__resolve_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResolveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending write"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/resolve-conflict": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resolve a held weight update (the provider's weight changed during the print)",
+        "operationId": "resolve_conflict_api_v1_inventory_pending_writes__write_id__resolve_conflict_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/resolve-label": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resolve scanned label text to a spool",
+        "operationId": "resolve_label_api_v1_inventory_resolve_label_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider cannot scan labels"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}/profile-links": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set a material's Orca preset links",
+        "operationId": "set_profile_links_api_v1_inventory_materials__ref__profile_links_patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinksBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider cannot store profile links"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/settings": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Inventory settings (deduct on completion, low-stock thresholds)",
+        "operationId": "get_settings_api_v1_inventory_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update inventory settings; omitted fields are unchanged",
+        "operationId": "put_settings_api_v1_inventory_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "Low-stock thresholds need a provider that tracks weight"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Install a plugin from an uploaded .zip/.tar.gz/.tgz (preview=true stages only)",
+        "operationId": "install_upload_api_v1_plugins_install_post",
+        "parameters": [
+          {
+            "name": "preview",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Preview"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_install_upload_api_v1_plugins_install_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install-from-github": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Install a plugin from a public GitHub repo (ref resolved to a commit)",
+        "operationId": "install_github_api_v1_plugins_install_from_github_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install/{token}/commit": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Commit a previewed (staged) install or upgrade",
+        "operationId": "commit_staged_api_v1_plugins_install__token__commit_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install/{token}": {
+      "delete": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Discard a previewed (staged) install",
+        "operationId": "discard_staged_api_v1_plugins_install__token__delete",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/updates": {
+      "get": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Check a GitHub-installed plugin for a newer commit",
+        "operationId": "check_updates_api_v1_plugins__plugin_id__updates_get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/upgrade": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Upgrade a GitHub-installed plugin to the latest commit of its ref",
+        "operationId": "upgrade_api_v1_plugins__plugin_id__upgrade_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/UpgradeBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/rollback": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Go back to the previous version at the next restart",
+        "operationId": "rollback_api_v1_plugins__plugin_id__rollback_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}": {
+      "delete": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Uninstall at the next restart (data is kept unless remove_data=true)",
+        "operationId": "uninstall_api_v1_plugins__plugin_id__delete",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "remove_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Remove Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "One plugin: settings (secrets as set/unset), schema and state",
+        "operationId": "get_plugin_detail_api_v1_plugins__plugin_id__get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Update a plugin's settings / enabled flag",
+        "operationId": "update_plugin_api_v1_plugins__plugin_id__put",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/restart": {
+      "get": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "What a restart would apply, and whether anything is printing",
+        "operationId": "restart_status_api_v1_system_restart_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Restart Themis (applies every pending plugin change); warns if printing",
+        "operationId": "restart_api_v1_system_restart_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RestartBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List plugins (manifests, UI contributions, capabilities, enabled/active)",
+        "operationId": "list_plugins_api_v1_plugins_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/ui/{tab_id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "The schema a `schema` tab is rendered from",
+        "operationId": "get_tab_schema_api_v1_plugins__plugin_id__ui__tab_id__get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown plugin, or the tab is not a schema tab"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/test": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Test a connection with the saved or the supplied (unsaved) settings",
+        "operationId": "test_plugin_api_v1_plugins__plugin_id__test_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginTest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Every known capability, its providers and the selected one",
+        "operationId": "list_capabilities_api_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/capabilities/{cap}/provider": {
+      "put": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Choose the provider of a capability (null = none)",
+        "operationId": "set_provider_api_v1_capabilities__cap__provider_put",
+        "parameters": [
+          {
+            "name": "cap",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cap"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/catalog": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Catalog",
+        "description": "Every event class: name, schema version, durability, and who defines it (\"core\" or a plugin id).",
+        "operationId": "catalog_api_v1_events_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Catalog Api V1 Events Catalog Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/subscribers": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Subscribers",
+        "description": "Per-subscriber counters since startup (delivered/failed/timed out/dropped/skipped), lane depth and the last redacted error,\nplus the durable backlog (`pending`, `dead`) from the outbox.",
+        "operationId": "subscribers_api_v1_events_subscribers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Subscribers Api V1 Events Subscribers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/deliveries": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Deliveries",
+        "description": "Durable deliveries, newest first, with the event's entity references. `status` is pending | delivered | dead (default dead:\nwhat needs attention). Filter by `subscriber`, event `name`, `event_id`, `dedup_key` or `entity` (one `<key>:<id>`), e.g.\n`?status=delivered&entity=job_id:42` answers \"did job 42's completion reach everyone?\".",
+        "operationId": "deliveries_api_v1_events_deliveries_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "dead",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "subscriber",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subscriber"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "dedup_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dedup Key"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`<key>:<id>`, e.g. `job_id:42`",
+              "title": "Entity"
+            },
+            "description": "`<key>:<id>`, e.g. `job_id:42`"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Deliveries Api V1 Events Deliveries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/deliveries/{delivery_id}/retry": {
+      "post": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Retry Delivery",
+        "operationId": "retry_delivery_api_v1_events_deliveries__delivery_id__retry_post",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Delivery Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Retry Delivery Api V1 Events Deliveries  Delivery Id  Retry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List webhook destinations",
+        "operationId": "list_destinations_api_v1_webhooks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Destinations Api V1 Webhooks Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Create a webhook destination",
+        "operationId": "create_destination_api_v1_webhooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Destination Api V1 Webhooks Post"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A destination with this name exists"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{destination_id}": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Get a webhook destination",
+        "operationId": "get_destination_api_v1_webhooks__destination_id__get",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Destination Api V1 Webhooks  Destination Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Update a webhook destination",
+        "operationId": "patch_destination_api_v1_webhooks__destination_id__patch",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Destination Api V1 Webhooks  Destination Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Name already used"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete a webhook destination",
+        "operationId": "delete_destination_api_v1_webhooks__destination_id__delete",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{destination_id}/test": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Send a test event to a destination",
+        "description": "One signed `webhook.test` POST (no retries), whatever the destination's filter or enabled flag. Returns what the receiver said.",
+        "operationId": "test_destination_api_v1_webhooks__destination_id__test_post",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Destination Api V1 Webhooks  Destination Id  Test Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "The destination has no URL"
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/local_inventory/weight-log": {
+      "get": {
+        "tags": [
+          "local_inventory"
+        ],
+        "summary": "Audit log of spool weight changes (newest first)",
+        "operationId": "weight_log_api_v1_plugins_local_inventory_weight_log_get",
+        "parameters": [
+          {
+            "name": "spool_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Spool Ref"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/local_inventory/low-stock": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Low-inventory alert thresholds of the active provider",
+        "operationId": "get_low_stock_api_v1_plugins_local_inventory_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set the low-inventory alert thresholds of the active provider",
+        "description": "Takes effect at the next sync. Raising a threshold alerts spools now below it; lowering one re-arms spools that are no\nlonger below it.",
+        "operationId": "put_low_stock_api_v1_plugins_local_inventory_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStock"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Low-inventory alert thresholds of the active provider",
+        "operationId": "get_low_stock_api_v1_plugins_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set the low-inventory alert thresholds of the active provider",
+        "description": "Takes effect at the next sync. Raising a threshold alerts spools now below it; lowering one re-arms spools that are no\nlonger below it.",
+        "operationId": "put_low_stock_api_v1_plugins_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStock"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -7871,6 +10707,108 @@
                 "schema": {
                   "$ref": "#/components/schemas/LowStockConfig"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Spoolman config",
+        "description": "Spoolman integration settings: enabled flag, base URL, and whether an API key is set.\nThe key itself never round-trips - omit `api_key` on PUT to leave it unchanged.",
+        "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Spoolman config",
+        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it. Enabling Spoolman makes it the active inventory provider.",
+        "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test Spoolman connection",
+        "description": "Verify connectivity to Spoolman. Uses the supplied URL/key if provided,\nfalling back to the saved config. Returns `{ok, version}` or `{ok, message}`.\nIf the catalog is warm and stale UUIDs are detected in Spoolman filaments,\nreturns `{status: \"pending_remaps\", ...}` instead.",
+        "operationId": "test_spoolman_connection_api_v1_settings_spoolman_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -8108,19 +11046,6 @@
         "type": "object",
         "title": "AccountPatch"
       },
-      "ActivePresetUpdate": {
-        "properties": {
-          "preset": {
-            "type": "string",
-            "title": "Preset"
-          }
-        },
-        "type": "object",
-        "required": [
-          "preset"
-        ],
-        "title": "ActivePresetUpdate"
-      },
       "AlarmSettings": {
         "properties": {
           "min_severity": {
@@ -8166,6 +11091,17 @@
         ],
         "title": "ApiKeyCreate"
       },
+      "ArchiveBody": {
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ArchiveBody"
+      },
       "BedTempBody": {
         "properties": {
           "celsius": {
@@ -8193,6 +11129,20 @@
         ],
         "title": "Body_fleet_import_api_v1_settings_fleet_import_post"
       },
+      "Body_install_upload_api_v1_plugins_install_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_install_upload_api_v1_plugins_install_post"
+      },
       "Body_upload_file_api_v1_files_upload_post": {
         "properties": {
           "file": {
@@ -8204,6 +11154,14 @@
             "type": "string",
             "title": "Folder",
             "default": "/Job Uploads"
+          },
+          "eligible_model_uuids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eligible Model Uuids",
+            "default": []
           }
         },
         "type": "object",
@@ -8289,6 +11247,25 @@
           "resolutions"
         ],
         "title": "ConfirmRemapBody"
+      },
+      "ConflictChoice": {
+        "properties": {
+          "choice": {
+            "type": "string",
+            "enum": [
+              "themis",
+              "provider",
+              "subtract"
+            ],
+            "title": "Choice",
+            "description": "`themis`: write the value computed from the print-start weight. `provider`: keep the weight now in the provider and drop this deduction. `subtract`: write the provider's current weight minus the grams the job used."
+          }
+        },
+        "type": "object",
+        "required": [
+          "choice"
+        ],
+        "title": "ConflictChoice"
       },
       "CostConfigModel": {
         "properties": {
@@ -8456,14 +11433,15 @@
         "type": "object",
         "title": "CustomerPatch"
       },
-      "DiscordChannelConfig": {
+      "DestinationIn": {
         "properties": {
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled",
-            "default": false
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
           },
-          "webhook_url": {
+          "url": {
             "anyOf": [
               {
                 "type": "string"
@@ -8472,7 +11450,19 @@
                 "type": "null"
               }
             ],
-            "title": "Webhook Url"
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
           },
           "events": {
             "items": {
@@ -8481,10 +11471,85 @@
             "type": "array",
             "title": "Events",
             "default": []
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
           }
         },
         "type": "object",
-        "title": "DiscordChannelConfig"
+        "required": [
+          "name"
+        ],
+        "title": "DestinationIn"
+      },
+      "DestinationPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "title": "DestinationPatch"
       },
       "DiscoverRequest": {
         "properties": {
@@ -8552,87 +11617,21 @@
         "type": "object",
         "title": "DraftPatch"
       },
-      "EmailChannelConfig": {
+      "EligibilityBody": {
         "properties": {
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled",
-            "default": false
-          },
-          "host": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Host"
-          },
-          "port": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Port"
-          },
-          "username": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Username"
-          },
-          "password": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Password"
-          },
-          "from_addr": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "From Addr"
-          },
-          "to_addrs": {
+          "model_uuids": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "To Addrs",
-            "default": []
-          },
-          "events": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Events",
-            "default": []
+            "title": "Model Uuids"
           }
         },
         "type": "object",
-        "title": "EmailChannelConfig"
+        "required": [
+          "model_uuids"
+        ],
+        "title": "EligibilityBody"
       },
       "FanBody": {
         "properties": {
@@ -8774,12 +11773,12 @@
             ],
             "title": "Process Preset"
           },
-          "eligible_machine_profiles": {
+          "eligible_model_uuids": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Eligible Machine Profiles",
+            "title": "Eligible Model Uuids",
             "default": []
           },
           "save_slice": {
@@ -8795,6 +11794,46 @@
         },
         "type": "object",
         "title": "GenerateRequest"
+      },
+      "GithubBody": {
+        "properties": {
+          "repo_url": {
+            "type": "string",
+            "title": "Repo Url"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "subdir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subdir"
+          },
+          "preview": {
+            "type": "boolean",
+            "title": "Preview",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "repo_url"
+        ],
+        "title": "GithubBody"
       },
       "HTTPValidationError": {
         "properties": {
@@ -8826,6 +11865,35 @@
         "type": "object",
         "title": "HomeBody"
       },
+      "InventoryResolutionEntry": {
+        "properties": {
+          "printer_preset": {
+            "type": "string",
+            "title": "Printer Preset"
+          },
+          "stale_name": {
+            "type": "string",
+            "title": "Stale Name"
+          },
+          "new_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_preset",
+          "stale_name"
+        ],
+        "title": "InventoryResolutionEntry"
+      },
       "JobConfigsUpdate": {
         "properties": {
           "printer_configs": {
@@ -8855,6 +11923,17 @@
               }
             ],
             "title": "Overrides"
+          },
+          "confirm_unknown_eligibility": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Unknown Eligibility"
           }
         },
         "type": "object",
@@ -8898,6 +11977,17 @@
               }
             ],
             "title": "Order Id"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "printer_configs": {
             "items": {
@@ -8954,6 +12044,11 @@
               }
             ],
             "title": "Save Slice Name"
+          },
+          "confirm_unknown_eligibility": {
+            "type": "boolean",
+            "title": "Confirm Unknown Eligibility",
+            "default": false
           }
         },
         "type": "object",
@@ -8961,6 +12056,23 @@
           "uploaded_file_id"
         ],
         "title": "JobCreate"
+      },
+      "JobProjectLink": {
+        "properties": {
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "title": "JobProjectLink"
       },
       "JobSaveSlicePatch": {
         "properties": {
@@ -9042,6 +12154,20 @@
         ],
         "title": "JogZBody"
       },
+      "LabelBody": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "LabelBody"
+      },
       "LaborCreate": {
         "properties": {
           "minutes": {
@@ -9110,6 +12236,25 @@
         ],
         "title": "LinkProjectsBody"
       },
+      "LinksBody": {
+        "properties": {
+          "links": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Links"
+          }
+        },
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "title": "LinksBody"
+      },
       "LoginBody": {
         "properties": {
           "email": {
@@ -9127,6 +12272,33 @@
           "password"
         ],
         "title": "LoginBody"
+      },
+      "LowStock": {
+        "properties": {
+          "default_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default G"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "title": "LowStock",
+        "description": "Grams below which a spool raises `spool.low`. `overrides` maps a material ref (of the active provider) to its own\nthreshold and wins over `default_g`; with neither set nothing alerts."
       },
       "LowStockConfig": {
         "properties": {
@@ -9286,11 +12458,313 @@
         "type": "object",
         "title": "MaintenanceItemPatch"
       },
-      "ModelTargetInput": {
+      "MappingCreate": {
         "properties": {
+          "provider_plugin_id": {
+            "type": "string",
+            "title": "Provider Plugin Id"
+          },
+          "nozzle_diameter_mm": {
+            "type": "number",
+            "maximum": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Nozzle Diameter Mm"
+          },
+          "flow": {
+            "type": "string",
+            "title": "Flow",
+            "default": "standard"
+          },
           "machine_profile": {
             "type": "string",
             "title": "Machine Profile"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider_plugin_id",
+          "nozzle_diameter_mm",
+          "machine_profile"
+        ],
+        "title": "MappingCreate"
+      },
+      "MappingPatch": {
+        "properties": {
+          "machine_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Profile"
+          },
+          "is_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "title": "MappingPatch"
+      },
+      "MaterialIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
+          },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
+          "color_hex": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#?[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Hex"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density"
+          },
+          "diameter": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diameter"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MaterialIn"
+      },
+      "MaterialPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
+          },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
+          "color_hex": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#?[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Hex"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density"
+          },
+          "diameter": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diameter"
+          }
+        },
+        "type": "object",
+        "title": "MaterialPatch",
+        "description": "Partial update: only the fields sent change; `null` clears an optional one."
+      },
+      "ModelPatch": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ModelPatch"
+      },
+      "ModelTargetInput": {
+        "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
+          "model_uuid": {
+            "type": "string",
+            "title": "Model Uuid"
           },
           "print_profile": {
             "type": "string",
@@ -9307,27 +12781,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
           },
           "filament_map": {
             "anyOf": [
@@ -9347,90 +12800,10 @@
         },
         "type": "object",
         "required": [
-          "machine_profile"
+          "model_uuid"
         ],
         "title": "ModelTargetInput",
-        "description": "Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
-      },
-      "NotificationConfigIn": {
-        "properties": {
-          "ntfy": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NtfyChannelConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "discord": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/DiscordChannelConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "email": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EmailChannelConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object",
-        "title": "NotificationConfigIn"
-      },
-      "NotificationConfigOut": {
-        "properties": {
-          "ntfy": {
-            "$ref": "#/components/schemas/NtfyChannelConfig"
-          },
-          "discord": {
-            "$ref": "#/components/schemas/DiscordChannelConfig"
-          },
-          "email": {
-            "$ref": "#/components/schemas/EmailChannelConfig"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ntfy",
-          "discord",
-          "email"
-        ],
-        "title": "NotificationConfigOut"
-      },
-      "NotificationTestIn": {
-        "properties": {
-          "channel": {
-            "type": "string",
-            "enum": [
-              "ntfy",
-              "discord",
-              "email"
-            ],
-            "title": "Channel"
-          },
-          "config": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Config"
-          }
-        },
-        "type": "object",
-        "required": [
-          "channel",
-          "config"
-        ],
-        "title": "NotificationTestIn"
+        "description": "Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
       },
       "NozzleTempBody": {
         "properties": {
@@ -9446,58 +12819,6 @@
           "celsius"
         ],
         "title": "NozzleTempBody"
-      },
-      "NtfyChannelConfig": {
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "title": "Enabled",
-            "default": false
-          },
-          "server_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Server Url"
-          },
-          "topic": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topic"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority"
-          },
-          "events": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Events",
-            "default": []
-          }
-        },
-        "type": "object",
-        "title": "NtfyChannelConfig"
       },
       "OrderCreate": {
         "properties": {
@@ -9570,6 +12891,50 @@
       },
       "OrderPartIn": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "id": {
             "anyOf": [
               {
@@ -9599,28 +12964,6 @@
             "type": "integer",
             "title": "Est Minutes",
             "default": 0
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "filament_color": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Color"
           }
         },
         "type": "object",
@@ -9939,6 +13282,81 @@
         "type": "object",
         "title": "PaymentPatch"
       },
+      "PluginTest": {
+        "properties": {
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          }
+        },
+        "type": "object",
+        "title": "PluginTest"
+      },
+      "PluginUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          }
+        },
+        "type": "object",
+        "title": "PluginUpdate"
+      },
       "PositionUpdate": {
         "properties": {
           "job_id": {
@@ -9959,6 +13377,50 @@
       },
       "PrinterConfigInput": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "printer_id": {
             "type": "integer",
             "title": "Printer Id"
@@ -9978,25 +13440,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color"
           },
           "tool_index": {
             "anyOf": [
@@ -10027,9 +13470,7 @@
         },
         "type": "object",
         "required": [
-          "printer_id",
-          "filament_type",
-          "filament_color"
+          "printer_id"
         ],
         "title": "PrinterConfigInput"
       },
@@ -10039,8 +13480,59 @@
             "type": "string",
             "title": "Name"
           },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          },
+          "manufacturer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Id"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Uuid"
+          },
           "printer_type": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Printer Type"
           },
           "connection_config": {
@@ -10056,7 +13548,7 @@
             "title": "Orca Printer Profiles",
             "default": []
           },
-          "current_orca_printer_profile": {
+          "machine_profile_override": {
             "anyOf": [
               {
                 "type": "string"
@@ -10065,7 +13557,19 @@
                 "type": "null"
               }
             ],
-            "title": "Current Orca Printer Profile"
+            "title": "Machine Profile Override"
+          },
+          "nozzle_variant": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nozzle Variant"
           },
           "loaded_filaments": {
             "items": {
@@ -10093,14 +13597,28 @@
             "default": false
           },
           "bed_x_mm": {
-            "type": "number",
-            "title": "Bed X Mm",
-            "default": 256.0
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed X Mm"
           },
           "bed_y_mm": {
-            "type": "number",
-            "title": "Bed Y Mm",
-            "default": 256.0
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Y Mm"
           },
           "machine_rate_per_hour": {
             "anyOf": [
@@ -10119,7 +13637,6 @@
         "type": "object",
         "required": [
           "name",
-          "printer_type",
           "connection_config"
         ],
         "title": "PrinterCreate"
@@ -10136,6 +13653,28 @@
               }
             ],
             "title": "Name"
+          },
+          "manufacturer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Id"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
           },
           "connection_config": {
             "anyOf": [
@@ -10163,7 +13702,7 @@
             ],
             "title": "Orca Printer Profiles"
           },
-          "current_orca_printer_profile": {
+          "machine_profile_override": {
             "anyOf": [
               {
                 "type": "string"
@@ -10172,7 +13711,19 @@
                 "type": "null"
               }
             ],
-            "title": "Current Orca Printer Profile"
+            "title": "Machine Profile Override"
+          },
+          "nozzle_variant": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nozzle Variant"
           },
           "enabled": {
             "anyOf": [
@@ -10236,7 +13787,8 @@
           "bed_x_mm": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -10247,7 +13799,8 @@
           "bed_y_mm": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -10289,6 +13842,17 @@
               }
             ],
             "title": "Quiet End"
+          },
+          "preferred_slicer_plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Slicer Plugin Id"
           }
         },
         "type": "object",
@@ -10370,6 +13934,19 @@
             ],
             "title": "Source Layout Id"
           },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
           "amount_paid": {
             "anyOf": [
               {
@@ -10422,6 +13999,50 @@
       },
       "ProjectItemCreate": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "file_id": {
             "type": "integer",
             "title": "File Id"
@@ -10430,27 +14051,6 @@
             "type": "integer",
             "title": "Quantity",
             "default": 1
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
           },
           "sort_order": {
             "type": "integer",
@@ -10477,6 +14077,17 @@
             ],
             "title": "Quantity"
           },
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
           "filament_type": {
             "anyOf": [
               {
@@ -10488,6 +14099,17 @@
             ],
             "title": "Filament Type"
           },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
           "filament_color": {
             "anyOf": [
               {
@@ -10498,17 +14120,6 @@
               }
             ],
             "title": "Filament Color"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
           },
           "sort_order": {
             "anyOf": [
@@ -10523,7 +14134,8 @@
           }
         },
         "type": "object",
-        "title": "ProjectItemUpdate"
+        "title": "ProjectItemUpdate",
+        "description": "A PATCH: only the fields sent change. The resulting ask must still be valid (a type needs a subtype)."
       },
       "ProjectLink": {
         "properties": {
@@ -10890,6 +14502,23 @@
         ],
         "title": "ProjectShareOut"
       },
+      "ProviderBody": {
+        "properties": {
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "type": "object",
+        "title": "ProviderBody"
+      },
       "QueueConfigIn": {
         "properties": {
           "check_interval_minutes": {
@@ -10902,6 +14531,19 @@
               }
             ],
             "title": "Check Interval Minutes"
+          },
+          "printer_dead_after_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printer Dead After Minutes"
           },
           "operator_name": {
             "anyOf": [
@@ -10957,6 +14599,10 @@
             "type": "integer",
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "type": "integer",
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -10984,6 +14630,7 @@
         "type": "object",
         "required": [
           "check_interval_minutes",
+          "printer_dead_after_minutes",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",
@@ -11008,6 +14655,21 @@
           "password"
         ],
         "title": "RecoverConfirm"
+      },
+      "RemainingBody": {
+        "properties": {
+          "remaining_g": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "required": [
+          "remaining_g"
+        ],
+        "title": "RemainingBody"
       },
       "RemapResolutionEntry": {
         "properties": {
@@ -11056,12 +14718,12 @@
             "title": "Jobs",
             "default": []
           },
-          "spoolman_filaments": {
+          "inventory_filaments": {
             "items": {
-              "$ref": "#/components/schemas/SpoolmanResolutionEntry"
+              "$ref": "#/components/schemas/InventoryResolutionEntry"
             },
             "type": "array",
-            "title": "Spoolman Filaments",
+            "title": "Inventory Filaments",
             "default": []
           }
         },
@@ -11114,6 +14776,176 @@
           "positions"
         ],
         "title": "ReorderRequest"
+      },
+      "ResolveBody": {
+        "properties": {
+          "target_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target G"
+          }
+        },
+        "type": "object",
+        "title": "ResolveBody"
+      },
+      "RestartBody": {
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "RestartBody"
+      },
+      "ResumeBody": {
+        "properties": {
+          "remaining_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "title": "ResumeBody"
+      },
+      "SettingsIn": {
+        "properties": {
+          "deduct_on_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduct On Complete"
+          },
+          "low_stock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LowStock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "SettingsIn"
+      },
+      "SpoolIn": {
+        "properties": {
+          "material_ref": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Material Ref"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "initial_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial G"
+          },
+          "remaining_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_ref"
+        ],
+        "title": "SpoolIn"
+      },
+      "SpoolPatch": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          }
+        },
+        "type": "object",
+        "title": "SpoolPatch"
       },
       "SpoolmanConfigIn": {
         "properties": {
@@ -11199,35 +15031,6 @@
           "sync_interval_minutes"
         ],
         "title": "SpoolmanConfigOut"
-      },
-      "SpoolmanResolutionEntry": {
-        "properties": {
-          "printer_preset": {
-            "type": "string",
-            "title": "Printer Preset"
-          },
-          "stale_name": {
-            "type": "string",
-            "title": "Stale Name"
-          },
-          "new_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "New Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "printer_preset",
-          "stale_name"
-        ],
-        "title": "SpoolmanResolutionEntry"
       },
       "SyncStatusResponse": {
         "properties": {
@@ -11433,6 +15236,17 @@
           "triggers"
         ],
         "title": "TriggersReplace"
+      },
+      "UpgradeBody": {
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "title": "Preview",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "UpgradeBody"
       },
       "ValidationError": {
         "properties": {

@@ -13,9 +13,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logging.getLogger("app").setLevel(logging.INFO)
+# httpx logs every request URL at INFO, and a Discord webhook URL / ntfy topic URL carries a token: keep them out of the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
@@ -29,24 +32,33 @@ from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.job_fields import router as job_fields_router
 from .api.routes.alarms import router as alarms_router
 from .api.routes.labor import router as labor_router
 from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
+from .api.routes.printer_models import router as printer_models_router
+from .api.routes.printer_model_slicer_profiles import router as printer_model_slicer_profiles_router
 from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
 from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
-from .api.routes.spoolman import router as spoolman_router
+from .api.routes.inventory import router as inventory_router
+from .api.routes.plugins import router as plugins_router
+from .api.routes import capabilities as capabilities_mod
+from .api.routes.capabilities import router as capabilities_router
+from .api.routes.events import router as events_router
+from .api.routes.webhooks import router as webhooks_router
+from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
 from .services.slicer_service import SlicerService
-from .services.spoolman_sync import spoolman_sync_loop
+from .services.inventory.sync import inventory_sync_loop
 from .version import get_git_sha, get_version
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
@@ -76,6 +88,11 @@ async def _remove_placeholder_printer_from_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        from .plugins import loader as _loader, migrations as _plugin_migrations
+        await _loader.reconcile(SessionLocal, _loader.last_report, dict(_plugin_migrations.failed))
+    except Exception:
+        logging.getLogger("app").exception("Could not record installed-plugin status; continuing")
 
     await _remove_placeholder_printer_from_db()
 
@@ -87,7 +104,9 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as _s:
         await migrate_legacy_uploads(
             _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
-        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
+        from .services.library_store import get_filecache_store, get_library_store
+        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir(),
+                             library_store=get_library_store(), filecache_store=get_filecache_store()).scan()
 
     try:                                   # bound the alarm history (resolved alarms older than 90 days)
         from .services import alarms as _alarms
@@ -102,8 +121,17 @@ async def lifespan(app: FastAPI):
     printer_manager.set_loop(loop)
     printer_manager.set_broadcast_callback(connection_manager.broadcast)
     printer_manager.set_session_factory(SessionLocal)
+    printer_manager.subscribe_events()
     await printer_manager.load_awaiting_plate_clear_from_db()
     await printer_manager.connect_all_enabled_printers(SessionLocal)
+
+    # Plugins first: the Laminus URL lives in plugin settings, so the queue must not run (and try to slice) before the host loads them.
+    from .plugins.host import plugin_host
+    plugin_host.configure(SessionLocal)
+    try:
+        await plugin_host.start()
+    except Exception:
+        logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
 
     # Initialise and wire queue engine
     QueueEngine.__init__(
@@ -114,10 +142,21 @@ async def lifespan(app: FastAPI):
         broadcast_cb=connection_manager.broadcast,
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
+    printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
     await queue_engine.start()
 
-    spoolman_sync_loop.configure(SessionLocal)
-    await spoolman_sync_loop.start()
+    try:
+        from .services.printer_model_registry import sync_registry
+        async with SessionLocal() as session:
+            await sync_registry(session)
+            await session.commit()
+    except Exception:
+        logging.getLogger("app").exception("Printer-model registry sync failed; continuing")
+
+    from .eventing.hub import hub as event_hub
+    await event_hub.start(SessionLocal)
+    inventory_sync_loop.configure(SessionLocal)
+    await inventory_sync_loop.start()
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
@@ -137,7 +176,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    await spoolman_sync_loop.stop()
+    await inventory_sync_loop.stop()
+    await event_hub.stop()
+    from .services import webhook_service as _webhooks
+    await _webhooks.cancel_all()
+    await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
         printer_manager.disconnect_printer(pid)
@@ -175,9 +218,12 @@ app.include_router(customer_portal_router)
 app.include_router(session_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
+app.include_router(printer_models_router)
+app.include_router(printer_model_slicer_profiles_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(job_fields_router)
 app.include_router(alarms_router)
 app.include_router(labor_router)
 app.include_router(laminus_router)
@@ -187,7 +233,43 @@ app.include_router(payments_router)
 app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
-app.include_router(spoolman_router)
+app.include_router(inventory_router)
+app.include_router(plugin_install_router)
+app.include_router(plugins_router)
+app.include_router(capabilities_router)
+app.include_router(events_router)
+app.include_router(webhooks_router)
+
+# Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
+from .plugins import load_bundled, registered_plugins  # noqa: E402
+from .services.inventory.provider import CapabilityUnavailable  # noqa: E402
+
+load_bundled()
+from . import config as _cfg  # noqa: E402
+from .database import _data_dir as _data_dir_for_plugins  # noqa: E402
+from .plugins.loader import load_installed  # noqa: E402
+
+load_installed(_cfg.get_plugins_dir(), Path(_data_dir_for_plugins) / "themis.db")      # installed packages; failures are contained
+for _manifest in registered_plugins():
+    capabilities_mod.mount_plugin(app, _manifest)
+
+
+@app.middleware("http")
+async def _cap_plugin_upload(request: Request, call_next):
+    """The multipart body of a plugin upload is parsed before authentication runs, so refuse an oversized or length-less one
+    up front (the installer enforces the exact cap again while streaming)."""
+    if request.method == "POST" and request.url.path == "/api/v1/plugins/install":
+        from .plugins import installer as _installer
+        length = request.headers.get("content-length", "")
+        if not length.isdigit() or int(length) > _installer.MAX_ARCHIVE_BYTES + 1024 * 1024:
+            return JSONResponse(status_code=413, content={"detail": "Plugin archive is too large (or has no Content-Length)"})
+    return await call_next(request)
+
+
+@app.exception_handler(CapabilityUnavailable)
+async def _capability_unavailable(_: Request, exc: CapabilityUnavailable) -> JSONResponse:
+    """A feature needs a plugin kind/capability that is not available: 409 with a machine-readable body."""
+    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "capability": exc.capability_id, "feature": exc.feature})
 app.include_router(tags_router)
 
 

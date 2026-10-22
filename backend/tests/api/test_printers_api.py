@@ -10,9 +10,9 @@ async def test_get_printer_types(client):
     assert response.status_code == 200
     types = response.json()
     assert isinstance(types, list)
-    printer_type_names = [t["printer_type"] for t in types]
-    assert "bambu" in printer_type_names
-    assert "elegoo_centauri" in printer_type_names
+    plugin_ids = {t["plugin_id"] for t in types}
+    assert "bambu" in plugin_ids
+    assert "elegoo_centauri" in plugin_ids
 
 
 async def test_list_printers_empty(client):
@@ -27,7 +27,7 @@ async def test_create_printer(client):
         "printer_type": "bambu",
         "connection_config": {"ip_address": "192.168.1.10", "serial_number": "ABC", "access_code": "secret"},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+        "machine_profile_override": "Bambu Lab P1S 0.4",
     }
     response = await client.post("/api/v1/printers", json=payload)
     assert response.status_code == 201
@@ -41,7 +41,7 @@ async def test_get_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {"ip_address": "1.2.3.4", "serial_number": "X", "access_code": "Y"},
-        "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     response = await client.get(f"/api/v1/printers/{printer_id}")
@@ -57,7 +57,7 @@ async def test_get_printer_not_found(client):
 async def test_update_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Old Name", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     response = await client.patch(f"/api/v1/printers/{printer_id}", json={"name": "New Name"})
@@ -69,23 +69,23 @@ async def test_patch_can_clear_and_omit_current_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P", "printer_type": "bambu", "connection_config": {},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+        "machine_profile_override": "Bambu Lab P1S 0.4",
     })
     pid = create.json()["id"]
     # Explicit null clears the preset.
-    r = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": None})
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": None})
     assert r.status_code == 200
-    assert r.json()["current_orca_printer_profile"] is None
+    assert r.json()["machine_profile_override"] is None
     # Set it again, then a PATCH that omits the key leaves it unchanged.
-    await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Bambu Lab P1S 0.4"})
+    await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": "Bambu Lab P1S 0.4"})
     r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "P2"})
-    assert r.json()["current_orca_printer_profile"] == "Bambu Lab P1S 0.4"
+    assert r.json()["machine_profile_override"] == "Bambu Lab P1S 0.4"
 
 
 async def test_delete_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Temp", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     response = await client.delete(f"/api/v1/printers/{printer_id}")
@@ -101,7 +101,7 @@ async def test_delete_printer_refuses_with_active_job(client, session_factory, c
 
     create = await client.post("/api/v1/printers", json={
         "name": "Busy", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -127,7 +127,7 @@ async def test_delete_printer_disconnects_live_client(client):
 
     create = await client.post("/api/v1/printers", json={
         "name": "Live", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
 
@@ -148,7 +148,7 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_
 
     create = await client.post("/api/v1/printers", json={
         "name": "P", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -172,7 +172,7 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, session_fac
 
     create = await client.post("/api/v1/printers", json={
         "name": "OnlyOne", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -192,7 +192,7 @@ async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(c
 
     printer_id = (await client.post("/api/v1/printers", json={
         "name": "Doomed", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })).json()["id"]
     job_id = await create_job(printer_id=printer_id)
     async with session_factory() as session:
@@ -204,37 +204,6 @@ async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(c
 
     async with session_factory() as session:
         assert (await session.get(Job, job_id)).printed_on_printer_id is None
-
-
-async def test_switch_active_preset(client):
-    create = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": ["Bambu Lab P1S 0.4", "Bambu Lab P1S 0.2"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
-    })
-    printer_id = create.json()["id"]
-    response = await client.patch(
-        f"/api/v1/printers/{printer_id}/active-preset",
-        json={"preset": "Bambu Lab P1S 0.2"},
-    )
-    assert response.status_code == 200
-    assert response.json()["current_orca_printer_profile"] == "Bambu Lab P1S 0.2"
-
-
-async def test_switch_active_preset_invalid(client):
-    create = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
-    })
-    printer_id = create.json()["id"]
-    response = await client.patch(
-        f"/api/v1/printers/{printer_id}/active-preset",
-        json={"preset": "Not A Real Preset"},
-    )
-    assert response.status_code == 422
 
 
 import pytest
@@ -324,10 +293,11 @@ async def test_loaded_filaments_round_trip_on_create_including_null_filament_id(
     ]
     created = await client.post("/api/v1/printers", json=_bambu("SN2", loaded_filaments=slots))
     assert created.status_code == 201
-    assert created.json()["loaded_filaments"] == slots
+    stored = [{**s, "subtype": "standard", "manufacturer": None} for s in slots]          # every stored slot carries the tuple
+    assert created.json()["loaded_filaments"] == stored
 
     fetched = (await client.get(f"/api/v1/printers/{created.json()['id']}")).json()
-    assert fetched["loaded_filaments"] == slots
+    assert fetched["loaded_filaments"] == stored
     assert fetched["loaded_filaments"][0]["filament_id"] is None
 
 
@@ -338,5 +308,55 @@ async def test_patch_loaded_filaments_replaces_and_persists(client):
 
     resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"loaded_filaments": slots})
     assert resp.status_code == 200
-    assert resp.json()["loaded_filaments"] == slots
-    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == slots
+    stored = [{**slots[0], "subtype": "standard", "manufacturer": None}]
+    assert resp.json()["loaded_filaments"] == stored
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == stored
+
+
+async def _printer_for_slicer(client):
+    r = await client.post("/api/v1/printers", json={
+        "name": "S", "printer_type": "bambu", "connection_config": {}, "orca_printer_profiles": [],
+        "machine_profile_override": None})
+    return r.json()["id"]
+
+
+async def test_preferred_slicer_defaults_to_null_and_is_set_cleared_and_kept(client):
+    pid = await _printer_for_slicer(client)
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] is None
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": "laminus"})
+    assert r.status_code == 200 and r.json()["preferred_slicer_plugin_id"] == "laminus"
+    # Persisted: re-read the row, not just the PATCH response.
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] == "laminus"
+    # A PATCH that omits the key leaves it alone; an explicit null (or empty string) clears it.
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "S2"})
+    assert r.json()["preferred_slicer_plugin_id"] == "laminus"
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": None})
+    assert r.json()["preferred_slicer_plugin_id"] is None
+    await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": "laminus"})
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": ""})
+    assert r.json()["preferred_slicer_plugin_id"] is None
+
+
+async def test_preferred_slicer_must_be_a_gcode_produce_plugin(client):
+    pid = await _printer_for_slicer(client)
+    for bad in ("nope", "bambu"):                      # unknown id; a plugin that does not provide gcode.produce
+        r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": bad})
+        assert r.status_code == 422 and "gcode.produce" in r.text
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] is None
+
+
+async def test_the_legacy_current_orca_printer_profile_key_is_still_accepted_as_the_machine_profile_override(client):
+    """BIZ-294 renamed the field, but external API clients (the e2e suite, scripts) still send the old key on create and edit."""
+    created = await client.post("/api/v1/printers", json={"name": "Old client", "printer_type": "bambu", "connection_config": {},
+                                                          "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle"})
+    assert created.status_code == 201, created.text
+    assert created.json()["machine_profile_override"] == "Bambu Lab P1S 0.4 nozzle"
+    assert created.json()["machine_profile"] == "Bambu Lab P1S 0.4 nozzle"
+
+    pid = created.json()["id"]
+    patched = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Other"})
+    assert patched.json()["machine_profile_override"] == "Other"
+    cleared = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": None})
+    assert cleared.json()["machine_profile_override"] is None
+    omitted = await client.patch(f"/api/v1/printers/{pid}", json={"name": "Renamed"})
+    assert omitted.json()["machine_profile_override"] is None and omitted.json()["name"] == "Renamed"

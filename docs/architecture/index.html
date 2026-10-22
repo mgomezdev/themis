@@ -280,7 +280,8 @@ erDiagram
     json connection_config "vendor creds"
     bool awaiting_plate_clear
     json orca_printer_profiles "preset names"
-    string current_orca_printer_profile "active machine"
+    string machine_profile_override "raw override (advanced)"
+    json nozzle_variant "model variant, null = default"
     bool enabled
     bool queue_on "pull from queue?"
     json loaded_filaments "slot/type/color/orca filament profile"
@@ -512,86 +513,52 @@ compatible printer can still rescue it later. A post-slice <b>upload/start</b> f
 
 <!-- ============================================================ -->
 <h2 id="slicing">Slicing pipeline</h2>
-<p>This is the hardest-won part of Themis. The goal: run the workshop's <i>real</i> native OrcaSlicer headlessly, with the
-user's own presets, producing a gcode artifact for one specific machine — no GUI, no profile sync.</p>
-
-<div class="warn"><b>The core constraint.</b> OrcaSlicer's <code>--load-settings</code> does <i>not</i> work for these presets:
-user presets are inheritance <i>diffs</i>, and even fully resolved, <code>--load-settings</code> never registers the machine
-as the <i>active printer</i>, so Orca rejects the process ("process not compatible with printer"). The only path that works
-is slicing a <b>3MF with an embedded <code>Metadata/project_settings.config</code></b>, which establishes the active printer
-by identity. Themis therefore <i>becomes the GUI's "export"</i>: it generates that 3MF itself.</p></div>
+<p>Slicing is delegated to the <b>Laminus sidecar</b>, a separate process that wraps the real native OrcaSlicer. Themis never
+invokes OrcaSlicer locally: it resolves the chosen machine/process/filament preset names to IDs against the sidecar's cached
+preset catalog and hands the whole slice (3MF preparation, profile resolution, gcode generation) to the sidecar over HTTP,
+behind the <code>SlicingProvider</code> interface.</p>
 
 <div class="mermaid">
 flowchart LR
-  A["machine + process +\nfilament preset names"] --> B
-  subgraph R["PresetResolver"]
-    B["walk inherits chain\ndeep-merge child-over-parent"]
-  end
-  B --> C["build_project_config()\nbaseline 609-key real config,\noverride only known keys,\ncoerce types · per-slot arrays"]
-  SRC[/"source 3MF / STL"/] --> D
-  C --> D{source type?}
-  D -->|".stl"| E["stl_to_3mf()\nmesh + embedded config"]
-  D -->|".3mf"| F["build_sliceable_3mf()\nkeep 3D/ geometry + model_settings,\nswap project_settings"]
-  E --> G
-  F --> G["_run(): orcaslicer --slice N\n--outputdir … {export_args}"]
-  G -->|ok| H["artifact:\nraw .gcode  or  .gcode.3mf"]
-  G -->|fail| I["recovery: build_sliceable_3mf\ngeometry_only=True\n(drop file settings) → re-slice"]
-  I --> H
+  A["machine + process +\nfilament preset names"] --> B["catalog_service\nresolve names → preset IDs"]
+  SRC[/"source 3MF"/] --> C
+  B --> C["SlicerService.slice()\njob-scoped copy + prepare_hook"]
+  C --> D["SlicingProvider.slice()\nLaminus adapter:\nslice_start → poll_status → download"]
+  D -->|ok| E["artifact:\nraw .gcode  or  .gcode.3mf"]
+  D -->|fail| F["sidecar retries\ngeometry-only"]
+  F --> E
 </div>
 
 <h4>Stage by stage</h4>
 <ol>
-  <li><b>PresetResolver</b> — indexes every preset by name across <code>system/</code> and signed-in <code>user/*</code>
-    folders (skips <code>user_backup-*</code>), walks each preset's <code>inherits</code> chain and deep-merges into one
-    flat, self-contained config. Fixes <code>printer_settings_id</code> to the leaf preset name so the active-printer
-    identity matches. <span class="src">preset_resolver.py</span></li>
-  <li><b>build_project_config()</b> — a sparse hand-merge segfaults Orca, so this baselines a <i>complete</i> real exported
-    config (~609 keys, <code>orca_reference/project_settings_reference.json</code>) and overrides only keys present in it,
-    coercing to the reference type. Filament fields are parallel <b>per-slot arrays</b> (one entry per AMS/tool slot);
-    <code>single_extruder_multi_material=1</code> for AMS. <span class="src">project_config_builder.py</span></li>
-  <li><b>mesh_3mf_builder</b> — wraps the model. For a <code>.3mf</code>, <code>build_sliceable_3mf()</code> preserves
-    <code>3D/*</code> geometry + <code>model_settings.config</code> (per-object overrides, paint, the per-part
-    <code>extruder</code> = colour-slot mapping) and swaps in the generated <code>project_settings.config</code>. For a bare
-    <code>.stl</code>, <code>stl_to_3mf()</code> parses the mesh and emits a fresh 3MF with the embedded config.
-    <span class="src">mesh_3mf_builder.py</span></li>
-  <li><b>_run()</b> — <code>orcaslicer --slice N --outputdir &lt;dir&gt; {export_args} prepared.3mf</code>. Orca always writes
-    raw <code>plate_N.gcode</code> to <code>--outputdir</code>; <code>--export-3mf &lt;name&gt;</code> (Bambu) additionally emits
-    the archive. Returns the requested artifact. 10-minute timeout. <span class="src">slicer_service.py:88–114</span></li>
-  <li><b>Recovery tier</b> — mirrors the GUI's "import geometry only": if the primary slice fails (e.g. bad embedded
-    settings), rebuild the 3MF dropping the file's own settings/overrides and re-slice with our fresh config.
-    <span class="src">slicer_service.py:69–76</span></li>
+  <li><b>Catalog</b> — the sidecar's preset catalog is cached in-process; preset names are resolved to IDs against it.
+    <span class="src">catalog_service.py</span></li>
+  <li><b>Job-scoped copy</b> — the source 3MF is copied into the job's output directory so the optional
+    <code>prepare_hook</code> (filament/tool mapping) never mutates the shared library file.
+    <span class="src">slicer_service.py</span></li>
+  <li><b>Laminus adapter</b> — starts the slice, polls status, downloads the artifact (raw gcode or <code>.gcode.3mf</code>).
+    <span class="src">providers/laminus/adapter.py</span></li>
+  <li><b>Recovery tier</b> — on failure the sidecar itself retries geometry-only (dropping the file's own settings).</li>
 </ol>
 
 <div class="note"><b>Override inspection at job creation.</b> A 3MF can carry global settings that the chosen preset would
-override. Rather than silently drop or re-apply them, <code>override_inspector.inspect_overrides()</code> diffs the uploaded
-<code>project_settings.config</code> against the generated config over a curated set of intent keys (supports, brim, raft,
+override. Rather than silently drop or re-apply them, the format provider's <code>inspect_overrides()</code> diffs the uploaded
+<code>project_settings.config</code> against the merged preset config over a curated set of intent keys (supports, brim, raft,
 infill, wall/shell layers, layer height, ironing) and checks slot capacity, so the New-Job UI can warn the user and let
-them choose. <span class="src">override_inspector.py</span></p></div>
+them choose. <span class="src">providers/laminus/overrides.py</span></div>
 
-<h3 id="profiles">Profile resolution &amp; the compatibility index</h3>
-<p>The New-Job process/filament dropdowns must show only presets valid for the chosen machine. <b>ProfileIndex</b> resolves
-inheritance once and builds two maps: machine-preset-name → <code>(printer_model, nozzle)</code>, and
-<code>(printer_model, nozzle)</code> → compatible <code>{process, filament}</code> preset names. Keying on
-<i>(model, nozzle)</i> instead of machine name sidesteps the leaf-vs-system naming mismatch. It's cached and rebuilt on a
-user-preset mtime signature; <code>POST /printers/rescan-profiles</code> forces a rebuild.
-<span class="src">profile_index.py</span></p>
-
-<p>Compatibility is matched two ways, mirroring OrcaSlicer's own dropdown logic:</p>
-<table>
-<tr><th>Mechanism</th><th>Rule</th></tr>
-<tr><td><b>Name-list</b></td><td>A preset's resolved <code>compatible_printers</code> is mapped through the machine map to <code>(model, nozzle)</code>.</td></tr>
-<tr><td><b>Universal</b></td><td>A <i>selectable</i> preset (raw leaf <code>instantiation</code> ≠ "false") with empty <code>compatible_printers</code> <b>and</b> empty <code>compatible_printers_condition</code> is compatible with <i>every</i> printer — this is how the OrcaFilamentLibrary <code>Generic *@System</code> filaments ship. Abstract <code>@base</code> presets are excluded.</td></tr>
-</table>
-<div class="note"><b>On <code>compatible_printers_condition</code>.</b> An expression evaluator was scoped but found
-unnecessary: the installed config has <i>zero</i> non-empty conditions (the key exists but every value is <code>""</code>),
-and every conditioned preset also carries a name-list. Non-empty conditions only appear in <i>exported project 3MFs</i>,
-which Themis slices directly rather than looking up. It will be revisited only if a real conditioned-without-name-list
-preset appears.</p></div>
+<h3 id="profiles">Preset compatibility</h3>
+<p>The New-Job process/filament dropdowns show only presets valid for the chosen machine. Compatibility comes from the
+sidecar catalog: a preset's <code>compatible_printers</code> is matched against the printer's
+machine profile (its model's slicer profile for the printer's nozzle variant, or the raw override) (<code>SlicingProvider.compatible_presets</code>). A preset with an empty
+<code>compatible_printers</code> is compatible with every printer, which is how the generic system filaments ship.
+<code>POST /printers/rescan-profiles</code> refreshes the cached catalog.
+<span class="src">catalog_service.py</span></p>
 
 <figure>
   <img src="img/screen-settings-printdefaults.png" alt="Print defaults settings page">
   <figcaption><b>Print defaults &amp; the profile cache.</b> The queue check interval, the <b>Rescan profiles</b> button
-  (rebuilds the ProfileIndex to pick up newly-added presets), and per-job slicing behaviour live here.</figcaption>
+  (refreshes the preset catalog to pick up newly-added presets), and per-job slicing behaviour live here.</figcaption>
 </figure>
 
 <!-- ============================================================ -->
@@ -717,7 +684,6 @@ encapsulate fetch + WebSocket-merge so screens stay declarative.</p>
 <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
 <tr><td><code>THEMIS_DATA_DIR</code></td><td><code>/data</code></td><td>SQLite DB, uploads, gcode cache root <span class="src">config.py:7</span></td></tr>
 <tr><td><code>ORCA_CONFIG_DIR</code></td><td><code>/root/.config/OrcaSlicer</code></td><td>System + user preset directory (bind-mounted) <span class="src">config.py:11</span></td></tr>
-<tr><td><code>ORCA_EXECUTABLE</code></td><td><code>orcaslicer</code></td><td>OrcaSlicer CLI path <span class="src">config.py:15</span></td></tr>
 <tr><td><code>FFMPEG_EXECUTABLE</code></td><td><code>ffmpeg</code></td><td>RTSP→MJPEG transcode <span class="src">config.py:19</span></td></tr>
 <tr><td><code>THEMIS_STATIC_DIR</code></td><td><code>../frontend/dist</code></td><td>Built SPA assets (prod) <span class="src">main.py:24–25</span></td></tr>
 </table>
@@ -729,8 +695,6 @@ or the resolver finds no presets (it defaults to the in-container path). The dev
 <div class="grid2">
   <div class="card"><h4>Embedded-config 3MF slicing</h4><p><code>--load-settings</code> can't establish the active printer; only an embedded <code>project_settings.config</code> does. Themis generates that 3MF rather than driving the GUI. Headless, no profile sync.</p></div>
   <div class="card"><h4>No <code>--export-gcode</code></h4><p>That flag is "Invalid option". Raw <code>plate_N.gcode</code> is the default <code>--outputdir</code> output; <code>--export-3mf &lt;name&gt;</code> is additive and needs a <i>relative</i> filename (absolute path double-joins and crashes).</p></div>
-  <div class="card"><h4>Complete baseline config</h4><p>A sparse hand-merged <code>project_settings.config</code> segfaults Orca. Baseline a full ~609-key real config and override only known keys with coerced types.</p></div>
-  <div class="card"><h4>Universal-compat filaments</h4><p>Generic filaments ship with no <code>compatible_printers</code> = compatible with all. ProfileIndex must add them to every machine, or the most-used filaments vanish from the dropdown.</p></div>
   <div class="card"><h4>Blocked ≠ failed</h4><p>Filament/slice issues are transient and stay in the queue for retry; only post-slice upload/start errors are terminal. Head-of-line: a blocked job stops that printer's search.</p></div>
   <div class="card"><h4>Capability discipline</h4><p>No <code>printer_type</code> comparisons in the UI or queue logic — everything keys off capability flags and the client ABC, so new vendors slot in cleanly.</p></div>
 </div>

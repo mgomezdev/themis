@@ -77,3 +77,18 @@ def elegoo_cfg():
     if not host:
         pytest.skip("set THEMIS_VERIFY_ELEGOO_HOST")
     return {"host": host, "port": int(_env("THEMIS_VERIFY_ELEGOO_PORT") or 3030)}
+
+
+@pytest.fixture(scope="session")
+def spoolman():
+    """A Spoolman instance plus the id of a TEST spool: `.http` (httpx.Client with base_url) and `.spool_id`.
+    The write checks overwrite that spool's weight (and restore it) — never point this at a spool you care about."""
+    import httpx
+    from types import SimpleNamespace
+    url, spool_id = _env("THEMIS_VERIFY_SPOOLMAN_URL"), _env("THEMIS_VERIFY_SPOOLMAN_SPOOL_ID")
+    if not (url and spool_id):
+        pytest.skip("set THEMIS_VERIFY_SPOOLMAN_URL (e.g. http://spoolman:7912) and THEMIS_VERIFY_SPOOLMAN_SPOOL_ID "
+                    "(a spool with a filament weight set; the write checks modify and then restore it)")
+    key = _env("THEMIS_VERIFY_SPOOLMAN_API_KEY")
+    with httpx.Client(base_url=url.rstrip("/"), headers={"X-API-Key": key} if key else {}, timeout=15) as http:
+        yield SimpleNamespace(http=http, spool_id=int(spool_id))

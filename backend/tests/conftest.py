@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import zipfile
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
@@ -9,12 +10,14 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.main import app
+# The mock printer plugin is off in production; the suite (and local dev) turn it on before the app modules import.
+os.environ.setdefault("THEMIS_MOCK_PRINTERS", "1")
+
+from app.main import app  # noqa: E402
 from sqlalchemy import event
 from app.database import Base, get_session, _set_sqlite_pragmas
 from app.auth import SCOPES
 from app.models import ApiKey
-from app.services import thumbnail_regen
 from app.services.printer_manager import printer_manager
 from app.services.api_key_service import generate_key, hash_key
 
@@ -26,8 +29,12 @@ def _schema_template(tmp_path_factory):
 
     async def build():
         engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+        from app.plugins import load_bundled
+        from app.plugins.migrations import run_plugin_migrations
+        load_bundled()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await run_plugin_migrations(conn)                  # bundled plugins' own tables (e.g. Local inventory's)
         await engine.dispose()
 
     asyncio.run(build())
@@ -47,9 +54,36 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     shutil.copyfile(_schema_template, db_file)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
     event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
+    # The plugin host is a process-wide singleton: point it at THIS test's database with a clean in-memory state.
+    from app import plugins as plugins_registry
+    from app.plugins import load_bundled
+    from app.plugins.host import plugin_host
+    load_bundled()
+    registry_before = dict(plugins_registry._REGISTRY)         # tests may register fake providers; undo that afterwards
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    plugin_host._reset()
+    plugin_host.configure(factory)
+    from app.eventing.hub import hub as event_hub
+    event_hub.configure(factory)                            # core event handlers open sessions on THIS test's database
+    from app.services import webhook_service as _wh
+    saved_delays, _wh.RETRY_DELAYS_S = _wh.RETRY_DELAYS_S, (0.0, 0.0)     # retries are instant under test
     try:
-        yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        yield factory
     finally:
+        from app.services import webhook_service
+        from app.services.inventory import tasks as inventory_tasks
+        try:
+            await event_hub.drain(timeout=10)               # best-effort lanes and deliveries must not outlive the test DB
+        except Exception:
+            pass
+        await event_hub.stop()
+        _wh.RETRY_DELAYS_S = saved_delays
+        await webhook_service.cancel_all()                   # a delivery waiting to retry must not outlive the test DB
+        await inventory_tasks.drain()                       # background snapshot/flush tasks must not outlive the test DB
+        await plugin_host.stop()
+        plugin_host._reset()
+        plugins_registry._REGISTRY.clear()
+        plugins_registry._REGISTRY.update(registry_before)
         await engine.dispose()
 
 
@@ -62,9 +96,6 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
             yield s
 
     app.dependency_overrides[get_session] = override_get_session
-
-    original_thumbnail_factory = thumbnail_regen._session_factory
-    thumbnail_regen.set_session_factory(factory)
 
     try:
         # Seed a full-scope API key so every call site has a credential
@@ -85,7 +116,26 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
             yield c
     finally:
         app.dependency_overrides.clear()
-        thumbnail_regen.set_session_factory(original_thumbnail_factory)
+
+
+@pytest.fixture(autouse=True)
+def _laminus_unconfigured_by_default(request, monkeypatch):
+    """The shipped Laminus default URL (http://orca:5000) would make every test "configured". Blank it unless the test opts in
+    with `@pytest.mark.shipped_defaults`; tests that exercise precedence set their own values."""
+    if request.node.get_closest_marker("shipped_defaults"):
+        return
+    import dataclasses
+    from app.plugins import defaults, host as host_module
+    real = defaults.defaults_of
+
+    def fake(plugin_id):
+        d = real(plugin_id)
+        if plugin_id == "laminus":
+            d = dataclasses.replace(d, settings={k: v for k, v in d.settings.items() if k != "url"})
+        return d
+
+    monkeypatch.setattr(defaults, "defaults_of", fake)
+    monkeypatch.setattr(host_module, "defaults_of", fake)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -120,6 +170,23 @@ async def _isolate_printer_manager():
 # Shared factories for API tests (previously copy-pasted per test file)
 # ---------------------------------------------------------------------------
 
+def slice_info_xml(plates=((1, 60, 5.0),)) -> str:
+    """`Metadata/slice_info.config` in the real OrcaSlicer/Bambu layout (XML), for (index, seconds, grams) plates.
+    Mirrors a sliced project written by Orca: header, then per-plate metadata + objects + one <filament> per slot."""
+    body = "".join(
+        f'  <plate>\n    <metadata key="index" value="{n}"/>\n    <metadata key="printer_model_id" value="C12"/>\n'
+        f'    <metadata key="nozzle_diameters" value="0.4"/>\n    <metadata key="timelapse_type" value="0"/>\n'
+        f'    <metadata key="prediction" value="{secs}"/>\n    <metadata key="weight" value="{grams}"/>\n'
+        f'    <metadata key="outside" value="false"/>\n    <metadata key="support_used" value="false"/>\n'
+        f'    <metadata key="label_object_enabled" value="true"/>\n'
+        f'    <object identify_id="1" name="Cube" skipped="false"/>\n'
+        f'    <filament id="1" tray_info_idx="GFL99" type="PLA" color="#FFFFFF" used_m="1.0" used_g="{grams}"/>\n'
+        f'  </plate>\n' for n, secs, grams in plates)
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <header>\n'
+            '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
+            '    <header_item key="X-BBL-Client-Version" value=""/>\n  </header>\n' + body + '</config>\n')
+
+
 def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = False) -> bytes:
     """A Bambu-style sliced archive (.gcode.3mf, BIZ-190): `Metadata/plate_N.gcode` per (plate, grams, minutes), a
     thumbnail for plate 1 and — with `slice_info` — a `Metadata/slice_info.config` carrying the same estimates. Deflated
@@ -133,10 +200,7 @@ def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = 
                 f"; filament used [g] = {grams}\n; estimated printing time (normal mode) = {mins}m 0s\nG28\n")
         put("Metadata/plate_1.png", b"\x89PNG-archive")
         if slice_info:
-            body = "".join(
-                f'<plate><metadata key="index" value="{n}"/><metadata key="prediction" value="{m * 60}"/>'
-                f'<metadata key="weight" value="{g}"/></plate>' for n, g, m in plates)
-            put("Metadata/slice_info.config", f'<?xml version="1.0" encoding="UTF-8"?><config>{body}</config>')
+            put("Metadata/slice_info.config", slice_info_xml([(n, m * 60, g) for n, g, m in plates]))
     return buf.getvalue()
 
 
@@ -148,7 +212,7 @@ def make_3mf_bytes() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in (
-            ("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]})),
+            ("Metadata/slice_info.config", slice_info_xml([(1, 60, 5.0)])),
             ("Metadata/plate_1.png", b"\x89PNG"),
         ):
             zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)
@@ -178,6 +242,14 @@ async def upload_3mf(client, tmp_path):
 
 
 @pytest_asyncio.fixture
+async def model_uuid_of(client):
+    """`await model_uuid_of(printer_id)` -> the registry model UUID of that printer (what a model target is keyed by, BIZ-294)."""
+    async def _uuid(printer_id: int) -> str:
+        return (await client.get(f"/api/v1/printers/{printer_id}")).json()["model_uuid"]
+    return _uuid
+
+
+@pytest_asyncio.fixture
 async def create_printer(client):
     """`await create_printer(**overrides)` -> printer id (a Bambu with an active OrcaSlicer preset)."""
     async def _create(**overrides) -> int:
@@ -185,7 +257,7 @@ async def create_printer(client):
             "name": "P1S", "printer_type": "bambu",
             "connection_config": {},
             "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-            "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+            "machine_profile_override": "Bambu Lab P1S 0.4",
         }
         body.update(overrides)
         resp = await client.post("/api/v1/printers", json=body)
@@ -204,7 +276,6 @@ async def create_job(client, upload_3mf, create_printer):
         printer_id = printer_id if printer_id is not None else await create_printer()
         config = {
             "printer_id": printer_id, "print_profile": "0.20mm",
-            "filament_type": "any", "filament_color": "any",
         }
         config.update(config_overrides)
         body = {"uploaded_file_id": file_id, "plate_number": 1, "printer_configs": [config]}
@@ -242,8 +313,21 @@ def spoolman_upstream():
         hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.providers.spoolman.service.httpx.AsyncClient", _factory):
+    with patch("app.plugins.spoolman.client.httpx.AsyncClient", _factory):
         yield up
+
+
+@pytest.fixture(autouse=True)
+def _restore_spoolman_mock_state():
+    """tests/spoolman_mock.py keeps module-level state that write endpoints mutate; no test may leak it to the next one."""
+    import copy
+    from tests import spoolman_mock
+    state = {k: v for k, v in vars(spoolman_mock).items() if k.startswith("_") and not k.startswith("__") and isinstance(v, (list, dict))}
+    saved = {k: copy.deepcopy(v) for k, v in state.items()}
+    yield
+    for k, v in state.items():                      # every module-level list/dict, so a new global cannot leak either
+        v.clear()
+        v.update(saved[k]) if isinstance(v, dict) else v.extend(saved[k])
 
 
 @pytest.fixture(autouse=True)

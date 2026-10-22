@@ -1,0 +1,149 @@
+# Events: contract and delivery (BIZ-249)
+
+Current reference for the versioned event contract used by core and plugins. Code: `backend/app/eventing/` (`envelope`, `registry`,
+`hub`, `redaction`, `definitions`), routes `app/api/routes/events.py`, tables `event_outbox` / `event_deliveries` (migration v045).
+The event hub and durable outbox are active. Print completion publishes `job.complete`; subscribers handle inventory deduction,
+maintenance accrual, and completion notices. Other core events include printer alarms, blocked/failed jobs, and low inventory.
+
+The separate `services/events.py` bus carries typed in-process callbacks between printer clients and `PrinterManager`; it is not
+the versioned domain-event hub described below.
+
+## Envelope
+
+Every event, core or plugin, is an `EventEnvelope` (frozen, `extra=forbid`):
+
+| Field | Meaning |
+|---|---|
+| `id` | unique per publication (uuid hex). Stable across redelivery: **the idempotency key for a handler**. |
+| `name` | event class, dotted lower-case: `job.complete`, `acme_ntfy.sent`. |
+| `schema_version` | integer ≥ 1; must equal the class's current version at publication. |
+| `occurred_at` | UTC ISO-8601, when the transition committed. |
+| `source` | `core` or the publishing plugin's id (the event class's owner). |
+| `origin` | optional: who caused the event. `core` when core acted itself (a manual completion, the queue), or the id of the plugin whose report core is publishing (a printer plugin reporting a job). A plugin publishing directly can only name itself; `None` on envelopes stored before v2. |
+| `entities` | references to what the event is about: `job_id`, `project_id`, `printer_id`, `order_id`, `customer_id`, `file_id`, `spool_ref` (int or str). Other keys are rejected. |
+| `dedup_key` | logical identity (`job.complete:42`). Two publications with one key are one event. |
+| `correlation_id` | optional, ties events of one request/flow together. |
+| `payload` | JSON object ≤ 16 KiB, validated by the class's `payload_model` when it has one. Big data travels by id. |
+
+Publication is validated against the **catalog** (`registry.event_catalog()` = `CORE_EVENTS` + every registered plugin's
+`defines_events`): the event must exist, `source` must be its owner, the publisher must *be* that owner (a plugin cannot publish a
+core event or another plugin's), the schema version must be current and the payload valid. A violation raises `EventError` to the
+**publisher** (a programming error); nothing a subscriber does can ever raise into a publisher.
+
+Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.failed`,
+`job.blocked`, `printer.alarm`, `spool.low` (best-effort). `job.started`, `job.complete`, `job.failed` and `job.blocked` are at **version 2**
+(v2 adds `origin`); a stored v1 envelope has no `origin` and is delivered unchanged with `origin=None`, only new publications must carry the
+current version.
+
+`job.failed` and `job.blocked` (best-effort) carry a free-form payload `{reason, phase}`: `phase` is `queue` (a block the queue made: slicing failure, no printer in the fleet
+could take the job, a cache gate lost) or `print` (a started print: a printer-reported failure or halt, or a printer declared dead — then `origin` is `core`). Printer
+plugins cause them through `ctx.job_reporter` (`docs/printer-interface.md`); core publishes with the plugin as `origin`, so `job.started|complete|failed|blocked`
+always say who reported them. The webhook/notification for a plugin's report reads `<origin>: <message>`.
+
+Plugin events: `PluginManifest.defines_events=(EventDef("acme_x.ready", version=1, durability=…, payload_model=…),)`; names must
+start `<plugin id>.`. Subscriptions: `PluginManifest.subscribes=(EventSubscription("job.complete", "on_complete", timeout=, queue_size=),)`
+where `on_complete` is an `async def on_complete(self, envelope)` on the plugin instance. Neither is part of `themis-plugin.toml`
+(only the manifest), and a plugin that only subscribes or defines events is still built when enabled. A publisher calls
+`hub.publish(envelope, as_plugin="acme_x")` / `hub.enqueue_durable(session, envelope, as_plugin="acme_x")`; a disabled plugin
+cannot publish.
+
+## Decisions
+
+**1. Which events are durable.** Per class, declared with the class. `durable` = at-least-once, stored in the publisher's
+transaction. Only `job.started` and `job.complete` are durable among core events, because its consumers (filament deduction, maintenance accrual)
+are state that must not be lost; every other core event is a notice whose loss costs a message, never data. A plugin chooses for
+its own events. Durable events must be published with `enqueue_durable`, best-effort ones with `publish`; the wrong call raises,
+so a durable event can never be sent by a path that forgets the transaction.
+
+**2. Ordering.** *Best-effort*: each subscriber has its own FIFO lane processed one event at a time, so a subscriber sees events
+in the order `publish()` returned for them; there is no ordering across subscribers or across event classes. *Durable*: first
+attempts to one subscriber run in outbox order (`event_outbox.id`, assigned inside the publisher's transaction, so it is
+commit-order only approximately under concurrent publishers). A retried event can arrive **after** later ones: a failing delivery
+never blocks the subscriber's queue (no poison-pill head-of-line blocking). Handlers must not depend on order; they re-read
+current state by `entities` and use `occurred_at`/`id` to ignore stale work.
+
+**3. Backpressure.** The publisher never waits. Best-effort lanes are bounded (`queue_size`, default 1000): a full lane drops the
+*new* event, counts it (`dropped`) and logs (first, then every 100th). Durable events are never dropped: the backlog lives in the
+database (`durable_pending` is exposed; a warning threshold exists); durable classes are low-volume by definition (job completions).
+A slow subscriber only fills its own lane / its own pending rows; the dispatcher picks due deliveries per subscriber, so a large backlog never crowds out another subscriber. A warning is logged (checked hourly) when one subscriber has more than 10 000 undelivered durable events.
+
+**4. Retries and idempotency.** Best-effort: no retry. Durable: delivery is retried with exponential backoff (5 s · 2^(n-1), cap
+15 min) up to 8 attempts, then `dead` until an operator retries it (`POST /events/deliveries/{id}/retry`; retrying a delivery that is being delivered right now can run the handler twice, which at-least-once already allows). The attempt counter is
+committed **before** the handler runs, so a handler that crashes the process cannot loop forever across restarts. An unexpected failure outside the handler (unreadable stored envelope → `dead`; database error → backed off a minute) never hot-loops. Delivery is
+at-least-once: a crash after the side effect but before the acknowledgement redelivers, so **handlers must be idempotent**, keyed
+on `envelope.id` (or `dedup_key`). Publisher-side duplicates are collapsed: best-effort by `dedup_key`/`id` (in-memory, 10 000
+remembered); durable by a unique `dedup_key` on the outbox (`INSERT … ON CONFLICT DO NOTHING`; remembered only while the outbox row exists, i.e. 7–30 days; the second publication stores
+nothing and returns `False` without disturbing the caller's transaction). Making the *publisher* emit one logical event for
+duplicate printer callbacks is the publisher's job (BIZ-269 keeps the existing atomic completion claim and uses `job.complete:<id>`).
+
+**5. Atomicity of durable handoff.** `enqueue_durable(session, envelope)` adds the outbox row and one `event_deliveries` row per
+current subscriber to the **caller's session**; they commit or roll back with the state change. The caller then calls
+`hub.wake()`. Subscribers are fixed at enqueue time: a plugin enabled later does not receive past events (no replay).
+
+**6. Plugin-defined events and optional dependencies.** A subscription may name any valid event name, including one defined by a
+plugin that is not installed or is disabled: it is simply dormant (nothing is ever published; no error). Disabling or uninstalling
+a *subscriber* stops delivery at once (subscribers are resolved from the plugin host at delivery time, nothing is unregistered).
+Best-effort events queued for it are skipped (`skipped_inactive`). A durable delivery already created for it stays `pending`,
+costs no attempt, is re-checked every minute and resumes when the plugin is enabled again; after 7 days unavailable it goes `dead`
+(outbox rows are purged hourly: 7 days after creation once every delivery succeeded, 30 days when one is `dead` so an operator can still retry it; a pending one is never purged). A disabled *definer* cannot publish. A plugin cannot define a core name.
+
+**7. Containment and redaction.** Every handler runs with a timeout (`EventSubscription.timeout`, core default 10 s). A plugin
+handler goes through `PluginHost._contained` like any provider call (timeout, exceptions caught, recorded in the plugin's state);
+a core handler through `asyncio.wait_for`. Failure text is passed through `redact_error`: the plugin's secret values, URL
+credentials and `password=`/`token=`-style pairs are masked, and it is capped at 300 characters. Raw exceptions are never stored.
+One failing, hanging or slow subscriber affects only itself: separate lanes (best-effort) and separate delivery tasks (durable).
+
+**8. Operator visibility.** `GET /api/v1/events/catalog`, `GET /api/v1/events/subscribers` (per subscriber since startup:
+`delivered/failed/timed_out/dropped/skipped_inactive`, `queue_depth`, redacted `last_error`, `last_ok_at`, and from the outbox
+`durable_pending`/`durable_dead`; also lists a plugin handler that is missing or not `async`), `GET /api/v1/events/deliveries?status=dead|pending|delivered` (+ filters `entity=job_id:42`, `event_id`, `dedup_key`, `name`, `subscriber`; rows carry `entities` and `correlation_id`),
+`POST /api/v1/events/deliveries/{id}/retry`. Scopes `settings:read` / `settings:write`. A plugin's handler failures also show as the
+plugin's `last_error` (and its successes as `last_ok_at`). Counters are in-memory (reset on restart); the outbox is the durable record. A queryable log/UI, retention
+settings, replay and external sinks are **out of scope**: decided in `docs/event-diagnostics-decision.md` (BIZ-270).
+
+## Delivery guarantees at a glance
+
+| | best_effort | durable |
+|---|---|---|
+| Stored | no | outbox row in the publisher's transaction |
+| Lost on crash | yes | no |
+| Duplicates possible | no (deduplicated at publish) | yes (at-least-once; handler must be idempotent) |
+| Retries | no | backoff, 8 attempts, then `dead` (operator retry) |
+| Order | FIFO per subscriber | first attempts in outbox order; retries may reorder |
+| Full / slow subscriber | new events dropped and counted | backlog in the database |
+| Publisher blocked by subscribers | never | never |
+
+SSE / WebSocket live updates are **not** part of this contract and make no delivery promise: a reconnecting client re-fetches
+state. They may subscribe as best-effort consumers later (BIZ-269).
+
+
+## First consumer: print completion (BIZ-269)
+
+`queue_engine.handle_print_complete` (a real print) and `POST /jobs/{id}/complete-manually` (an admin completing a job without
+printing it) each write a durable `job.complete` event **inside the job's completion transaction** (`completion_events.enqueue_job_complete`,
+then `hub.wake()` after the commit). The state change, the printer's `awaiting_plate_clear`, the gcode cleanup and the atomic
+completion claim (`UPDATE jobs … WHERE status='printing'`, whose loser returns without publishing) stay in that transaction; the
+event's `dedup_key` is `job.complete:<job id>`, so duplicate printer callbacks, a reconciliation pass and a manual completion racing a real one
+yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `loaded_filaments` (the printer's filament slots at completion, because they may change once the print is over). The publisher names no consumer and resolves no spool: observers work out what they need. (`inventory` / `deduction_notes` are the legacy payload of an event written before inventory subscribed on its own; the handler still honours them.)
+
+`job.started` is published the same way, in the transaction that marks a job `printing` (`completion_events.enqueue_job_started`; `dedup_key = job.started:<job>:<printer>:<updated_at>`, so a restart after a failed attempt is a new event). Payload: `loaded_filaments`.
+
+Inventory's two observers decide at **delivery** time, not publication time: whether the active provider can track and write weight and whether deduction is on are read when the event is handled, so changing either during a print (or while a delivery is in backoff) changes the outcome. `job.started` and `job.complete` are separate lanes with no ordering: a start snapshot handled after the job ended, or after its deduction was planned, is skipped (the completion already took the deferred read). Each subscriber is serial, so a hung provider delays later snapshots behind it (30 s handler timeout, then retry).
+
+Subscribers (`app/services/completion_events.py`, registered on import, all idempotent on the job id):
+
+| Subscriber | Effect | Idempotency key |
+|---|---|---|
+| `job_complete.maintenance` | `printer.lifetime_job_count += 1`, `lifetime_print_seconds += job.actual_seconds` | `UPDATE jobs SET maintenance_accrued=1 WHERE id=? AND status='complete' AND maintenance_accrued=0` in the **same transaction** as the counters (migration v046; already-complete jobs are backfilled as accrued) |
+| `job_started.inventory` (`services/inventory/subscribers.py`, BIZ-308) | snapshots the weight of each spool bound to a slot the print uses (`snapshots.take`); nothing unless the active provider tracks and writes weight and deduction is on | unique `(job, provider, spool)` snapshot row |
+| `job_complete.inventory` (same module) | resolves the spool(s) the print used from the job's config and `loaded_filaments`, then `plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
+| `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none: the senders swallow their own errors and each step is attempted independently, so a send failure is logged, not retried or propagated. A hub-level timeout/crash/shutdown mid-handler redelivers the event and can repeat a notice (at-least-once) |
+
+Crash boundaries (each covered by `tests/services/test_completion_events.py`): *before commit* — job and event roll back together, the
+retry completes it once; *after commit, before handler* — the event and its delivery rows are durable, the dispatcher applies the
+effects after restart; *during a handler* — flag and counters are one transaction, so they roll back together and the delivery is
+retried with backoff (visible in `/events/subscribers` and `/events/deliveries`); *after the side effect, before the acknowledgement* —
+the redelivered event finds the idempotency key and does nothing. The deferred-weight deduction (a job with no start snapshot, and every manual completion) now runs *inside* the handler, so the event is
+acknowledged only after its outbox row exists; a crash or provider error before that redelivers it, and the outbox-row check keeps the retry from deducting twice.
+
+Tests that assert on these effects call `tests.waiting.settle_events(factory)` (it runs the dispatcher inline); production delivers
+from the dispatcher loop within milliseconds of the commit.

@@ -80,7 +80,7 @@ async def test_unnamed_printers_get_a_placeholder_name_and_optional_fields_defau
     (p,) = await _fleet(client)
     assert p["name"] == "Unnamed Printer"
     assert (p["enabled"], p["queue_on"], p["loaded_filaments"]) == (True, True, [])
-    assert p["orca_printer_profiles"] == [] and p["current_orca_printer_profile"] is None
+    assert p["orca_printer_profiles"] == [] and p["machine_profile_override"] is None
 
 
 async def test_duplicate_names_are_imported_as_is_and_importing_twice_doubles_the_fleet(client):
@@ -100,7 +100,7 @@ async def test_unknown_orca_profiles_warn_and_known_ones_do_not(client):
     resp = await _import(client, _backup(_printer(
         "Warned",
         orca_printer_profiles=["Known Machine", "Ghost Machine"],
-        current_orca_printer_profile="Ghost Active",
+        machine_profile_override="Ghost Active",
         loaded_filaments=[{"slot": 0, "filament_profile": "Known Filament"},
                           {"slot": 2, "filament_profile": "Ghost Filament"},
                           {"slot": 3}],
@@ -113,12 +113,12 @@ async def test_unknown_orca_profiles_warn_and_known_ones_do_not(client):
         "'Warned' slot 2: filament profile 'Ghost Filament' not found in catalog",
     ]
     (p,) = await _fleet(client)  # warnings never block the import, and names are kept verbatim
-    assert p["current_orca_printer_profile"] == "Ghost Active"
+    assert p["machine_profile_override"] == "Ghost Active"
 
 
 async def test_profile_names_are_not_checked_when_the_catalog_is_unavailable(client):
     resp = await _import(client, _backup(_printer(
-        "Offline", orca_printer_profiles=["Ghost Machine"], current_orca_printer_profile="Ghost Active")),
+        "Offline", orca_printer_profiles=["Ghost Machine"], machine_profile_override="Ghost Active")),
         catalog=RuntimeError("sidecar down"))
 
     assert resp.status_code == 200
@@ -133,7 +133,7 @@ async def test_backup_then_import_round_trips_the_operator_facing_fields(client)
     filaments = [{"slot": 0, "type": "PETG", "color": "#00FF00", "name": "Generic PETG", "spoolman_spool_id": "7"}]
     created = (await client.post("/api/v1/printers", json={
         "name": "Forge", "printer_type": "elegoo_centauri", "connection_config": {"ip_address": "10.0.0.9"},
-        "orca_printer_profiles": ["Known Machine"], "current_orca_printer_profile": "Known Machine",
+        "orca_printer_profiles": ["Known Machine"], "machine_profile_override": "Known Machine",
         "loaded_filaments": filaments, "build_plate_type": "Textured PEI"})).json()
     await client.patch(f"/api/v1/printers/{created['id']}", json={"enabled": False, "queue_on": False})
     backup = (await client.get("/api/v1/settings/fleet-backup", params={"include_credentials": "true"})).json()
@@ -145,8 +145,11 @@ async def test_backup_then_import_round_trips_the_operator_facing_fields(client)
     assert resp.json() == {"imported": 1, "skipped": 0, "warnings": []}
     (p,) = await _fleet(client)
     assert (p["name"], p["printer_type"], p["connection_config"]) == ("Forge", "elegoo_centauri", {"ip_address": "10.0.0.9"})
-    assert (p["orca_printer_profiles"], p["current_orca_printer_profile"]) == (["Known Machine"], "Known Machine")
-    assert (p["loaded_filaments"], p["build_plate_type"]) == (filaments, "Textured PEI")
+    assert (p["orca_printer_profiles"], p["machine_profile_override"]) == (["Known Machine"], "Known Machine")
+    # the stored slot also carries the provider-namespaced binding (dual-write); it survives backup + import
+    assert p["loaded_filaments"] == [
+        {**filaments[0], "subtype": "standard", "manufacturer": None, "inventory": {"provider": "spoolman", "spool_ref": "7"}}]
+    assert p["build_plate_type"] == "Textured PEI"
     assert (p["enabled"], p["queue_on"]) == (False, False)
 
 
@@ -162,3 +165,20 @@ async def test_imported_printers_are_registered_with_the_manager_and_a_broken_cl
     assert (resp.status_code, resp.json()["imported"]) == (200, 1)  # imported, just not connected
     assert printer_manager._clients == {}
     assert "C" in [p["name"] for p in await _fleet(client)]
+
+
+async def test_a_backed_up_moonraker_printer_with_its_identity_imports_bound_to_that_provider(client):
+    resp = await _import(client, _backup({**_printer("Voron", "moonraker"), "plugin_id": "moonraker", "manufacturer_id": "voron",
+                                          "model_id": "v2_4_300"}))
+
+    assert resp.status_code == 200 and resp.json()["imported"] == 1
+    printer = next(p for p in (await client.get("/api/v1/printers")).json() if p["name"] == "Voron")
+    assert (printer["plugin_id"], printer["manufacturer_id"], printer["model_id"]) == ("moonraker", "voron", "v2_4_300")
+
+
+async def test_an_old_backup_entry_whose_legacy_type_merely_matches_a_plugin_id_is_not_adopted_by_that_plugin(client):
+    """`printer_type: moonraker` has no legacy mapping: with no identity it must be skipped, not silently bound to a provider."""
+    resp = await _import(client, _backup(_printer("Old Klipper", "moonraker")))
+
+    assert resp.json()["imported"] == 0 and resp.json()["skipped"] == 1
+    assert [p for p in (await client.get("/api/v1/printers")).json() if p["name"] == "Old Klipper"] == []

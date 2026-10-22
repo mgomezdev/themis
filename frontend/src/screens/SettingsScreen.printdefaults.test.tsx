@@ -5,13 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SettingsScreen } from './SettingsScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
 
-const CONFIG = { check_interval_minutes: 5, snapshot_interval_seconds: 2, operator_name: 'Workshop Lead', estimates_enabled: false };
+const CONFIG = { check_interval_minutes: 5, printer_dead_after_minutes: 30, snapshot_interval_seconds: 2, operator_name: 'Workshop Lead', estimates_enabled: false };
 const QUEUE = 'PUT /api/v1/settings/queue';
 
 function open(over: Record<string, unknown> = {}) {
   const api = stubFetch({
     'GET /api/v1/settings/queue': CONFIG,
-    'GET /api/v1/settings/spoolman': { enabled: false, url: null, has_api_key: false },
+    'GET /api/v1/plugins': { plugins: [], selections: {} },
     'GET /api/v1/laminus/catalog/status': { laminus_configured: false, laminus: null, cached: false, cached_bytes: 0 },
     [QUEUE]: CONFIG,
     ...over,
@@ -26,6 +26,7 @@ function open(over: Record<string, unknown> = {}) {
 const puts = (api: ReturnType<typeof stubFetch>) => api.to('PUT', '/api/v1/settings/queue').map(c => c.body);
 const interval = () => screen.getAllByRole('spinbutton')[0] as HTMLInputElement;
 const snapshot = () => screen.getAllByRole('spinbutton')[1] as HTMLInputElement;
+const deadAfter = () => screen.getAllByRole('spinbutton')[2] as HTMLInputElement;
 const nameBox = () => screen.getByPlaceholderText('e.g. Workshop Lead') as HTMLInputElement;
 const estimates = () => screen.getByRole('switch') as HTMLButtonElement;
 const alertText = () => screen.queryByRole('alert')?.textContent ?? null;
@@ -297,5 +298,43 @@ describe('Print defaults - slicing cache policy (BIZ-194)', () => {
 
     await waitFor(() => expect(alertText()).toBe("Couldn't save the slicer-settings policy: 500 db locked"));
     expect(box().checked).toBe(true);
+  });
+});
+
+
+describe('Print defaults - printer offline limit', () => {
+  it('shows the stored limit, defaulting to 30 minutes when the server omits it', async () => {
+    open({ 'GET /api/v1/settings/queue': { ...CONFIG, printer_dead_after_minutes: 45 } });
+    await waitFor(() => expect(deadAfter().value).toBe('45'));
+  });
+
+  it('saves on blur, rounded and kept between 0 (never) and 1440', async () => {
+    const api = open();
+    await waitFor(() => expect(deadAfter().value).toBe('30'));
+
+    fireEvent.change(deadAfter(), { target: { value: '12.4' } });
+    fireEvent.blur(deadAfter());
+    await waitFor(() => expect(puts(api)).toEqual([{ printer_dead_after_minutes: 12 }]));
+
+    fireEvent.change(deadAfter(), { target: { value: '0' } });
+    fireEvent.blur(deadAfter());
+    await waitFor(() => expect(puts(api)).toEqual([{ printer_dead_after_minutes: 12 }, { printer_dead_after_minutes: 0 }]));
+    expect(deadAfter().value).toBe('0');
+
+    fireEvent.change(deadAfter(), { target: { value: '99999' } });
+    fireEvent.blur(deadAfter());
+    await waitFor(() => expect(puts(api)[puts(api).length - 1]).toEqual({ printer_dead_after_minutes: 1440 }));
+    expect(deadAfter().value).toBe('1440');
+  });
+
+  it('puts the previous value back and says so when the save is refused', async () => {
+    open({ [QUEUE]: new Reply(500, { detail: 'nope' }) });
+    await waitFor(() => expect(deadAfter().value).toBe('30'));
+
+    fireEvent.change(deadAfter(), { target: { value: '60' } });
+    fireEvent.blur(deadAfter());
+
+    await waitFor(() => expect(alertText()).toContain("Couldn't save the printer offline limit"));
+    expect(deadAfter().value).toBe('30');
   });
 });

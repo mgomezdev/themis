@@ -1,0 +1,243 @@
+"""Plugin manifest (design spec §3.1, §3.7). A plugin is an in-process package exporting a `PluginManifest`;
+bundled plugins and (later) installed ones use the same shape. `host_api` is a public contract: the host refuses a
+plugin that targets a different version."""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from types import ModuleType
+from typing import Any, Callable, Literal
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from ..eventing.definitions import EVENT_NAME_RE, EventDef, EventSubscription
+from .capabilities import CORE
+from .capabilities.definition import CAP_ID_RE, CapabilityDef
+
+HOST_API = 1
+ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
+RENDERERS = ("default", "schema", "component")
+
+
+class PluginError(Exception):
+    """A plugin is malformed or incompatible with this host."""
+
+
+@dataclass(frozen=True)
+class UiTab:
+    id: str
+    label: str
+    # default   -> the shared default plugin page; schema -> a generic form/table from a schema the plugin serves at
+    # GET /api/v1/plugins/{id}/ui/{tab_id}; component -> a React component compiled into Themis (bundled plugins only)
+    renderer: Literal["default", "schema", "component"] = "default"
+    # component tabs only: the key of the compiled-in React component (frontend `plugins/registry.ts`) and the capability
+    # feature flag the plugin must declare for the tab to exist. Core names no plugin id; the plugin declares both.
+    component: str | None = None
+    requires: str | None = None
+
+
+@dataclass(frozen=True)
+class UiContribution:
+    # "section": a collapsible section on Settings -> Plugins; "page": its own sidebar entry with tabs.
+    mode: Literal["section", "page"] = "section"
+    nav_label: str | None = None
+    nav_placement: Literal["settings", "main"] = "settings"
+    nav_icon: str | None = None
+    tabs: tuple[UiTab, ...] = ()
+    # (old absolute app URL, tab id): the frontend redirects the old URL to /plugins/{id}/{tab}
+    redirects: tuple[tuple[str, str], ...] = ()
+    # True: the settings page probes `POST /plugins/{id}/test` on load and shows the named `state` (unconfigured / unavailable /
+    # healthy) as a persistent pill. Only for plugins whose test is cheap and read-only.
+    connection_status: bool = False
+
+
+_MODEL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class PrinterModel:
+    """A printer model a plugin supports (BIZ-262). `id` is stable: printers store it."""
+    id: str
+    name: str
+    bed_mm: tuple[int, int] = (256, 256)
+    toolheads: int = 1
+    # Ids of OTHER models of this plugin that run the same G-code (BIZ-263), e.g. a rebrand or a bed-size variant. Symmetric:
+    # declaring it on one side is enough. Only these explicit declarations ever widen a G-code file's machine eligibility.
+    equivalents: tuple[str, ...] = ()
+    # True for a generic/user-defined model: its bed size (and any capability the plugin lets the user state) is the user's input
+    # when the printer is added, not a vendor fact. The add-printer flow asks for it; it is stored on the printer row.
+    custom: bool = False
+
+
+@dataclass(frozen=True)
+class Manufacturer:
+    id: str
+    name: str
+    models: tuple[PrinterModel, ...] = ()
+
+
+JOB_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")      # `print_end_time`, `filament.cost`
+
+
+@dataclass(frozen=True)
+class JobFieldDef:
+    """A job-detail field a plugin produces (see `services/job_details.py`). Names and value shapes are not enforced by code;
+    `type_hint` (`iso8601`, `seconds`, `grams`, ...) is documentation for consumers."""
+    name: str
+    description: str = ""
+    type_hint: str = ""
+
+
+@dataclass(frozen=True)
+class Provide:
+    """How a plugin serves one capability. `attr` names the attribute of the plugin's instance that serves it (None = the
+    instance itself); `features` are the capability's feature flags this provider supports; `routers` are mounted under
+    /api/v1/plugins/{id}/... AND dispatched at /api/v1/capabilities/{cap}/... to whichever plugin is active."""
+    version: int = 1
+    attr: str | None = None
+    features: frozenset[str] = frozenset()
+    routers: tuple[APIRouter, ...] = ()
+
+
+@dataclass(frozen=True)
+class Requirement:
+    capability: str
+    min_version: int = 1
+
+    @classmethod
+    def parse(cls, text: str) -> "Requirement":
+        cap, _, ver = text.partition("@")
+        if not CAP_ID_RE.match(cap):
+            raise PluginError(f"{text!r}: not a capability id")
+        if "@" in text:
+            if not ver.isdigit() or int(ver) < 1:
+                raise PluginError(f"{text!r}: the minimum version after '@' must be a positive integer")
+            return cls(cap, int(ver))
+        return cls(cap, 1)
+
+
+@dataclass(frozen=True)
+class PluginManifest:
+    id: str                                   # stable, persisted, never renamed
+    name: str
+    version: str
+    host_api: int
+    settings_model: type[BaseModel]           # validation + generated settings form (JSON schema)
+    factory: Callable[[BaseModel], Any]       # settings -> provider instance
+    provides: dict[str, Provide] = field(default_factory=dict)       # capability id -> how this plugin serves it
+    requires: tuple[Requirement, ...] = ()                            # unmet => the plugin waits and offers nothing
+    optional: tuple[Requirement, ...] = ()                            # resolved at call time
+    defines: tuple[CapabilityDef, ...] = ()                           # capabilities this plugin introduces (ids start "<id>.")
+    secret_fields: frozenset[str] = frozenset()   # write-only; never returned by any API
+    ui: UiContribution = field(default_factory=UiContribution)
+    # `schema` tabs: tab id -> the JSON the frontend renders (forms and tables over the plugin's own routes); None = no such tab
+    ui_schema: Callable[[str], dict | None] | None = None
+    routers: tuple[APIRouter, ...] = ()       # mounted under /api/v1/plugins/{id}/...
+    alias_routers: tuple[APIRouter, ...] = () # deprecated aliases that keep their historical ABSOLUTE paths (mounted as-is)
+    migrations: tuple[ModuleType, ...] = ()   # plugin-owned tables, see plugins/migrations.py
+    table_prefix: str | None = None           # plugin-owned tables must start with this (default "<id>_")
+    description: str = ""
+    docs_url: str | None = None
+    permissions: tuple[str, ...] = ()         # reserved (BIZ-200): parsed, never enforced
+    manufacturers: tuple[Manufacturer, ...] = ()   # printer models this plugin supports (new-printer dropdowns)
+    # Enabled when no config row exists yet (bundled printer vendors: their printers must not go dormant on upgrade).
+    default_enabled: bool = False
+    # Events (BIZ-249, docs/events.md). `defines_events`: event classes this plugin publishes (names start "<id>."); `subscribes`:
+    # handlers (`async def name(self, envelope)` on the instance) for core or other plugins' events. Not part of themis-plugin.toml.
+    defines_events: tuple[EventDef, ...] = ()
+    subscribes: tuple[EventSubscription, ...] = ()
+    # Job details (docs/printer-interface.md): the fields this plugin writes onto jobs, and standard fields it knows it cannot
+    # provide (e.g. a printer that cannot report actual filament used). Core builds the field catalog from enabled plugins.
+    job_fields: tuple[JobFieldDef, ...] = ()
+    unsupported_job_fields: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not ID_RE.match(self.id):
+            raise PluginError(f"plugin id {self.id!r} must match {ID_RE.pattern}")
+        if self.host_api != HOST_API:
+            raise PluginError(f"plugin {self.id!r} targets host_api {self.host_api}; this Themis provides {HOST_API}")
+        if not callable(self.factory):
+            raise PluginError(f"plugin {self.id!r}: factory must be callable")
+        unknown = self.secret_fields - set(self.settings_model.model_fields)
+        if unknown:
+            raise PluginError(f"plugin {self.id!r}: secret_fields {sorted(unknown)} are not in its settings model")
+        for tab in self.ui.tabs:
+            if tab.renderer not in RENDERERS:
+                raise PluginError(f"plugin {self.id!r}: tab {tab.id!r} has unknown renderer {tab.renderer!r}")
+            if tab.renderer == "schema" and self.ui_schema is None:
+                raise PluginError(f"plugin {self.id!r}: schema tab {tab.id!r} needs a ui_schema provider")
+        for cap, p in self.provides.items():
+            if not CAP_ID_RE.match(cap):
+                raise PluginError(f"plugin {self.id!r}: provides {cap!r}, which is not a capability id")
+            if p.version < 1:
+                raise PluginError(f"plugin {self.id!r}: provides {cap!r} with version {p.version}; versions start at 1")
+        seen: set[str] = set()
+        for d in self.defines:
+            if d.id in CORE:
+                raise PluginError(f"plugin {self.id!r}: cannot redefine the core capability {d.id!r}")
+            if not d.id.startswith(f"{self.id}."):
+                raise PluginError(f"plugin {self.id!r}: defined capability {d.id!r} must start with '{self.id}.'")
+            if not CAP_ID_RE.match(d.id) or d.version < 1 or d.id in seen:
+                raise PluginError(f"plugin {self.id!r}: bad or duplicate defined capability {d.id!r}")
+            seen.add(d.id)
+        from ..eventing.registry import CORE_EVENTS
+        defined: set[str] = set()
+        for e in self.defines_events:
+            if e.name in CORE_EVENTS:
+                raise PluginError(f"plugin {self.id!r}: cannot redefine the core event {e.name!r}")
+            if not e.name.startswith(f"{self.id}.") or not EVENT_NAME_RE.match(e.name) or e.name in defined or e.version < 1:
+                raise PluginError(f"plugin {self.id!r}: defined event {e.name!r} must be a unique name starting '{self.id}.' "
+                                  "(lower-case letters, digits and underscores in dotted segments) with a version >= 1")
+            if e.durability not in ("best_effort", "durable"):
+                raise PluginError(f"plugin {self.id!r}: event {e.name!r} has unknown durability {e.durability!r}")
+            defined.add(e.name)
+        declared: set[str] = set()
+        for jf in self.job_fields:
+            if not JOB_FIELD_RE.match(jf.name) or len(jf.name) > 64 or jf.name in declared:
+                raise PluginError(f"plugin {self.id!r}: job field {jf.name!r} must be unique, lower-case dotted/underscored and <= 64 characters")
+            declared.add(jf.name)
+        for name in self.unsupported_job_fields:
+            if not JOB_FIELD_RE.match(name) or len(name) > 64:
+                raise PluginError(f"plugin {self.id!r}: unsupported job field {name!r} is not a valid field name")
+            if name in declared:
+                raise PluginError(f"plugin {self.id!r}: job field {name!r} is both declared and marked unsupported")
+        seen_subs: set[tuple[str, str]] = set()
+        for sub in self.subscribes:
+            if not EVENT_NAME_RE.match(sub.event) or not sub.handler.isidentifier() or (sub.event, sub.handler) in seen_subs:
+                raise PluginError(f"plugin {self.id!r}: bad or duplicate subscription {sub.event!r} -> {sub.handler!r}")
+            if sub.timeout <= 0 or sub.queue_size < 1:
+                raise PluginError(f"plugin {self.id!r}: subscription {sub.event!r} needs a positive timeout and queue_size")
+            seen_subs.add((sub.event, sub.handler))
+        for r in (*self.requires, *self.optional):
+            if r.capability in self.provides:
+                raise PluginError(f"plugin {self.id!r}: lists {r.capability!r} as required or optional, which it provides itself")
+        mfr_ids: set[str] = set()
+        model_ids: set[str] = set()          # unique across the whole plugin, not per manufacturer
+        for mfr in self.manufacturers:
+            if not _MODEL_ID_RE.match(mfr.id) or mfr.id in mfr_ids:
+                raise PluginError(f"plugin {self.id!r}: manufacturer id {mfr.id!r} is invalid or duplicated")
+            mfr_ids.add(mfr.id)
+            for model in mfr.models:
+                if not _MODEL_ID_RE.match(model.id) or model.id in model_ids:
+                    raise PluginError(f"plugin {self.id!r}: model id {model.id!r} is invalid or duplicated")
+                model_ids.add(model.id)
+                if min(model.bed_mm) <= 0 or model.toolheads < 1:
+                    raise PluginError(f"plugin {self.id!r}: model {model.id!r} needs a positive bed and at least one toolhead")
+        for mfr in self.manufacturers:
+            for model in mfr.models:
+                for eq in model.equivalents:
+                    if eq == model.id or eq not in model_ids:
+                        raise PluginError(f"plugin {self.id!r}: model {model.id!r} lists equivalent {eq!r}, which is itself or "
+                                          "not a model of this plugin")
+        for mod in self.migrations:
+            for attr in ("version", "name", "up", "down"):
+                if not hasattr(mod, attr):
+                    raise PluginError(f"plugin {self.id!r}: migration {mod.__name__} lacks `{attr}` (down() is required)")
+        versions = [mod.version for mod in self.migrations]
+        if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in versions) or len(versions) != len(set(versions)):
+            raise PluginError(f"plugin {self.id!r}: migration versions must be unique positive integers, got {versions}")
+
+    @property
+    def prefix(self) -> str:
+        return self.table_prefix or f"{self.id}_"

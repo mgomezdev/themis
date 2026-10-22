@@ -4,6 +4,8 @@ import { FleetScreen } from './FleetScreen';
 import type { FleetPrinter } from '../api/fleet';
 import type { MaintenanceStatusRow } from '../api/maintenance';
 import * as printersApi from '../api/printers';
+import { mkPlugin, mkSpool, pluginsBody } from '../test/inventoryFixtures';
+import { resetPluginStore } from '../api/plugins';
 
 // ── Mock WebSocket ──────────────────────────────────────────────────────────
 class MockWS {
@@ -20,6 +22,7 @@ const PRINTER_1: FleetPrinter = {
   id: 1,
   name: 'Forge',
   printer_type: 'elegoo_centauri',
+  plugin_id: 'elegoo_centauri',
   enabled: true,
   queue_on: true,
   connected: true,
@@ -43,6 +46,7 @@ const PRINTER_CONTROLS: FleetPrinter = {
   id: 1,
   name: 'Forge',
   printer_type: 'elegoo_centauri',
+  plugin_id: 'elegoo_centauri',
   enabled: true,
   queue_on: true,
   connected: true,
@@ -248,13 +252,13 @@ describe('FleetScreen', () => {
       // which populates the form's own vendor/model dropdown options. This is a
       // SEPARATE call from the singular per-printer fetch below (used directly by
       // the modal to resolve THIS printer's pre-fill) — both must be stubbed with
-      // real current_orca_printer_profile data, or the dropdown has no options
+      // real machine_profile data, or the dropdown has no options
       // even once pre-fill resolves.
       if (url === '/api/v1/printers') {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve([
-            { id: PRINTER_1.id, current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+            { id: PRINTER_1.id, machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
           ]),
         });
       }
@@ -267,7 +271,7 @@ describe('FleetScreen', () => {
           json: () => Promise.resolve({
             id: PRINTER_1.id, name: PRINTER_1.name, printer_type: PRINTER_1.printer_type,
             enabled: true, no_snapshots_while_idle: false,
-            current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle',
+            machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle',
             orca_printer_profiles: [], connection_config: {},
             loaded_filaments: [],
           }),
@@ -314,6 +318,7 @@ const SPOOL_INTEGRATION: FleetPrinter = {
   id: 2,
   name: 'Atlas',
   printer_type: 'elegoo_centauri',
+  plugin_id: 'elegoo_centauri',
   enabled: true,
   queue_on: true,
   connected: true,
@@ -333,17 +338,15 @@ const SPOOL_INTEGRATION: FleetPrinter = {
   fan_box: 0,
 };
 
-const MOCK_SPOOL = {
-  id: 3,
-  remaining_weight: 500,
-  used_weight: 0,
-  filament: { id: 20, vendor: { name: 'ELEGOO' }, name: 'Space Grey PLA', material: 'PLA', color_hex: 'AAAAAA' },
-};
+const MOCK_SPOOL = mkSpool('3', {
+  remaining_g: 500,
+  material: { vendor: 'ELEGOO', name: 'Space Grey PLA', material: 'PLA', color_hex: '#AAAAAA' },
+});
 
 const MOCK_API_PRINTER = {
   id: 2, name: 'Atlas', printer_type: 'elegoo_centauri', enabled: true,
   queue_on: false, awaiting_plate_clear: false, no_snapshots_while_idle: false, connected: true,
-  current_orca_printer_profile: null,
+  machine_profile_override: null,
   orca_printer_profiles: [],
   connection_config: { host: '10.0.0.1' },
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
@@ -358,17 +361,15 @@ function makeIntegrationFetch(
     if (url === '/api/v1/fleet') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
     }
-    // Spoolman config
-    if (url === '/api/v1/settings/spoolman') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', has_api_key: false }) });
+    // The active inventory provider, its spools and materials
+    if (url === '/api/v1/plugins') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(pluginsBody(mkPlugin({ id: 'spoolman' }))) });
     }
-    // Spoolman spools
-    if (url === '/api/v1/spoolman/spools') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([MOCK_SPOOL]) });
+    if (url === '/api/v1/inventory/spools') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [MOCK_SPOOL] }) });
     }
-    // Spoolman filaments
-    if (url === '/api/v1/spoolman/filaments') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    if (url === '/api/v1/inventory/materials') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [] }) });
     }
     // Printer types
     if (url.includes('/api/v1/printers/types')) {
@@ -398,6 +399,7 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
   let calls: Array<[string, RequestInit | undefined]>;
 
   beforeEach(() => {
+    resetPluginStore();
     calls = [];
     MockWS.instances = [];
     vi.stubGlobal('WebSocket', MockWS);
@@ -435,7 +437,7 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
     expect(patchCall).toBeTruthy();
     const body = JSON.parse(patchCall![1]!.body as string);
     const slot = body.loaded_filaments[0];
-    expect(slot.spoolman_spool_id).toBe('3');
+    expect(slot.inventory).toEqual({ provider: 'spoolman', spool_ref: '3' });
     expect(slot.type).toBe('PLA');
     expect(slot.color).toBe('#AAAAAA');
   });
@@ -620,5 +622,212 @@ describe('FleetScreen — ready-for-work gate and reconnect', () => {
     render(<FleetScreen />);
     fireEvent.click(await screen.findByText('Forge'));
     expect(screen.queryByRole('button', { name: /reconnect/i })).toBeNull();
+  });
+});
+
+describe('FleetScreen — inventory capability gating', () => {
+  afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  function boot(plugins: ReturnType<typeof mkPlugin>[], slot: string | null) {
+    resetPluginStore();
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const reply = (body: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+      if (url === '/api/v1/fleet') return reply([SPOOL_INTEGRATION]);
+      if (url === '/api/v1/plugins') return reply({ plugins, selections: { 'inventory.filament': slot } });
+      if (url === '/api/v1/inventory/spools') return reply({ provider: 'p', stale: false, as_of: 'x', items: [MOCK_SPOOL] });
+      if (url === '/api/v1/inventory/materials') return reply({ provider: 'p', stale: false, as_of: 'x', items: [] });
+      if (url.includes('types') || url.includes('catalog')) return reply([]);
+      if (url.match(/\/api\/v1\/printers\/\d+\/profiles/)) return reply({ print_profiles: [], filament_profiles: [] });
+      if (url.match(/\/api\/v1\/printers\/\d+$/)) return reply(MOCK_API_PRINTER);
+      return reply({});
+    }));
+    render(<FleetScreen />);
+  }
+
+  it('no provider: no Scan spool button', async () => {
+    boot([], null);
+    await screen.findByText('Atlas');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /scan spool/i })).toBeNull());
+  });
+
+  it('a provider without LABEL_SCAN: no Scan spool button', async () => {
+    boot([mkPlugin({ id: 'p', capabilities: ['TRACKS_WEIGHT'] })], 'p');
+    await screen.findByText('Atlas');
+    await new Promise(r => setTimeout(r, 30));
+    expect(screen.queryByRole('button', { name: /scan spool/i })).toBeNull();
+  });
+
+  it('a provider with LABEL_SCAN: the button is offered', async () => {
+    boot([mkPlugin({ id: 'p', capabilities: ['LABEL_SCAN'] })], 'p');
+    expect(await screen.findByRole('button', { name: /scan spool/i })).toBeTruthy();
+  });
+
+  it('no provider: the slot editor offers only manual type/colour, no spool picker', async () => {
+    boot([], null);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByRole('button', { name: /change/i }));
+    expect(await screen.findByPlaceholderText('Type (e.g. PLA)')).toBeTruthy();
+    expect(screen.queryByPlaceholderText('Search spools…')).toBeNull();
+  });
+});
+
+describe('FleetScreen — edit printer slicer preference (BIZ-291)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const plugin = (id: string, name: string, enabled = true, cap = 'gcode.produce') =>
+    ({ id, name, enabled, provides: [{ capability: cap }] });
+
+  async function openEdit(apiPrinter: object, plugins: object[]) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (url === '/api/v1/plugins') return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins, selections: {} }) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPrinter) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+  const patchBody = (calls: Array<[string, RequestInit | undefined]>) =>
+    JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+  const save = async () => {
+    const btn = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+  };
+
+  it('hides the choice while only one slicer is enabled and never sends the field', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER }, [plugin('laminus', 'Laminus')]);
+    await screen.findByLabelText('Quiet hours start');
+    expect(screen.queryByLabelText(/slice jobs for this printer with/i)).toBeNull();
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('preferred_slicer_plugin_id' in patchBody(calls)).toBe(false);
+  });
+
+  it('offers only enabled gcode.produce plugins and saves the chosen one', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: null },
+      [plugin('laminus', 'Laminus'), plugin('other', 'Other Slicer'), plugin('off', 'Off Slicer', false), plugin('bambu', 'Bambu', true, 'printer.client')]);
+    const select = await screen.findByLabelText(/slice jobs for this printer with/i) as HTMLSelectElement;
+    expect([...select.options].map(o => o.value)).toEqual(['', 'laminus', 'other']);
+    fireEvent.change(select, { target: { value: 'other' } });
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).preferred_slicer_plugin_id).toBe('other');
+  });
+
+  it('shows a stored preference whose plugin is gone, and choosing the default clears it with null', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: 'gone' }, [plugin('laminus', 'Laminus')]);
+    const select = await screen.findByLabelText(/slice jobs for this printer with/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('gone'));
+    expect(screen.getByRole('option', { name: /gone \(disabled or removed\)/ })).toBeTruthy();
+    fireEvent.change(select, { target: { value: '' } });
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).preferred_slicer_plugin_id).toBeNull();
+  });
+
+  it('leaves a stored preference alone when the user does not touch it', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: 'laminus' },
+      [plugin('laminus', 'Laminus'), plugin('other', 'Other')]);
+    await screen.findByLabelText(/slice jobs for this printer with/i);
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('preferred_slicer_plugin_id' in patchBody(calls)).toBe(false);
+  });
+});
+
+// ── Edit printer: the nozzle variant replaces the per-printer slicer profile picker (BIZ-294) ───
+describe('FleetScreen — edit printer nozzle variant', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const MODEL = 'model-ecc';
+  const row = (id: number, d: number, flow: string, profile: string, is_default = false) =>
+    ({ id, model_uuid: MODEL, provider_plugin_id: 'laminus', nozzle_diameter_mm: d, flow, machine_profile: profile, is_default });
+  const MAPPED = [row(1, 0.4, 'standard', 'ECC 0.4', true), row(2, 0.6, 'standard', 'ECC 0.6'), row(3, 0.4, 'high_flow', 'ECC 0.4 HF')];
+  const SLICING = { machine_profile: 'ECC 0.4', machine_profile_reason: null, model_uuid: MODEL, model_label: 'Elegoo Centauri Carbon', nozzle_variant: null };
+
+  async function openEdit(apiPrinter: object, mappings: object[] = MAPPED) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (url === `/api/v1/printer-models/${MODEL}/slicer-profiles`) return Promise.resolve({ ok: true, json: () => Promise.resolve(mappings) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPrinter) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+  const patchBody = (calls: Array<[string, RequestInit | undefined]>) =>
+    JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+  const save = async () => {
+    const btn = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+  };
+
+  it('no longer offers a per-printer Orca make/model picker, and saving never touches the printer\'s profile override', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, machine_profile_override: 'Custom preset' });
+    await screen.findByLabelText('Nozzle fitted');
+    expect(screen.queryByLabelText('Make')).toBeNull();
+    expect(screen.queryByText('Slicer profile')).toBeNull();
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('machine_profile_override' in patchBody(calls)).toBe(false);
+  });
+
+  it('lists only the variants the printer\'s model has a profile for, the default first, and saves the chosen nozzle', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING });
+    const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(
+      ['Model default (0.4mm)', '0.4mm', '0.4mm high-flow', '0.6mm']));
+    expect(screen.getByText('ECC 0.4')).toBeInTheDocument();                 // what it slices with now
+
+    fireEvent.change(select, { target: { value: '0.6|standard' } });
+    await save();
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toEqual({ diameter_mm: 0.6, flow: 'standard' });
+  });
+
+  it('shows a stored variant, and going back to the model default saves null', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, nozzle_variant: { diameter_mm: 0.4, flow: 'high_flow' }, machine_profile: 'ECC 0.4 HF' });
+    const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('0.4|high_flow'));
+
+    fireEvent.change(select, { target: { value: '' } });
+    await save();
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toBeNull();
+  });
+
+  it('sends the stored variant back unchanged when it is not touched', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, nozzle_variant: { diameter_mm: 0.6, flow: 'standard' } });
+    await waitFor(() => expect((screen.getByLabelText('Nozzle fitted') as HTMLSelectElement).value).toBe('0.6|standard'));
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toEqual({ diameter_mm: 0.6, flow: 'standard' });
+  });
+
+  it('says where to set the profile when the model has none', async () => {
+    await openEdit({ ...MOCK_API_PRINTER, ...SLICING, machine_profile: null, machine_profile_reason: 'no machine profile for Centauri Carbon default nozzle' }, []);
+    expect(await screen.findByText(/no machine profile for Centauri Carbon default nozzle/)).toBeInTheDocument();
+    expect(screen.getByText(/Settings → Printer models/)).toBeInTheDocument();
+  });
+
+  it('has no nozzle choice for a printer without a registered model', async () => {
+    await openEdit({ ...MOCK_API_PRINTER, ...SLICING, model_uuid: null, model_label: null });
+    expect(await screen.findByText(/no registered model/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Nozzle fitted')).toBeNull();
   });
 });

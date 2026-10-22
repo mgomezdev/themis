@@ -1,0 +1,47 @@
+{
+  "ok": {
+    "body": [
+      {
+        "color_hex": "FFFFFF",
+        "density": 1.24,
+        "diameter": 1.75,
+        "extra": {},
+        "id": 1,
+        "material": "PLA",
+        "name": "PLA White",
+        "registered": "2024-01-01T00:00:00Z",
+        "spool_weight": 250.0,
+        "vendor": {
+          "id": 1,
+          "name": "Elegoo",
+          "registered": "2024-01-01T00:00:00Z"
+        },
+        "weight": 1000.0
+      },
+      {
+        "color_hex": "000000",
+        "density": 1.24,
+        "diameter": 1.75,
+        "extra": {},
+        "id": 2,
+        "material": "PLA",
+        "name": "PLA Black",
+        "registered": "2024-01-01T00:00:00Z",
+        "spool_weight": 250.0,
+        "vendor": {
+          "id": 1,
+          "name": "Elegoo",
+          "registered": "2024-01-01T00:00:00Z"
+        },
+        "weight": 1000.0
+      }
+    ],
+    "status": 200
+  },
+  "unconfigured": {
+    "body": {
+      "detail": "Spoolman not configured or disabled"
+    },
+    "status": 503
+  }
+}

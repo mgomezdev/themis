@@ -20,12 +20,14 @@ dev = [
     "pytest-asyncio>=0.23.0,<1.0",
     "pytest-mock>=3.12",
     "pytest-cov>=5.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
+    "shipped_defaults: keep the real plugin defaults.toml (the suite blanks the Laminus URL default so slicing is unconfigured unless a test configures it)",
     "real_protocol: manual checks against a real printer (backend/protocol_verification); never part of the normal gates",
 ]
 
@@ -36,12 +38,12 @@ branch = true
 source = ["app"]
 concurrency = ["greenlet", "thread"]
 
-# fail_under is a ratchet: measured 89.8% (line+branch, 2026-10-04 after the provider-interface epic), floor left ~2 points below for
+# fail_under is a ratchet: measured 92.9% (line+branch, 2026-10-15 after BIZ-294 model slicer profiles), floor left ~1 point below for
 # interpreter/version noise. Raise it as coverage grows; never lower it to make a change pass.
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 88
+fail_under = 92
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -50,3 +52,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["plugins/*/themis-plugin.toml", "plugins/*/defaults.toml"]

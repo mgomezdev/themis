@@ -2,18 +2,20 @@
 import asyncio
 import os
 import pytest
-from tests.fake_providers import FakeSlicingProvider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
+from tests.slicing_env import slicing_provider
+from app.services.providers.contract import PlateEstimate
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import select, text
 
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
-from tests.waiting import settle_background_tasks, wait_until
+from tests.waiting import settle_background_tasks, settle_events, wait_until
 
 
 @pytest_asyncio.fixture
@@ -56,12 +58,13 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
                 connection_config={},
-                current_orca_printer_profile="Test Machine Preset",
+                machine_profile_override="Test Machine Preset",
             ))
             await session.flush()
         f = UploadedFile(
             original_filename="test.3mf",
             stored_path="/data/uploads/x/model.3mf",
+            relative_path="test.3mf",
             plates=[],
             uploaded_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -180,6 +183,7 @@ async def test_handle_print_complete_transitions_job(db):
         await session.commit()
 
     await qe.handle_print_complete(1)
+    await settle_events(db)
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -191,14 +195,15 @@ async def _set_filament(db, job_id, printer_id, req_type, req_color, loaded):
         cfg = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job_id,
             JobPrinterConfig.printer_id == printer_id))).scalar_one()
-        cfg.filament_type = req_type
-        cfg.filament_color = req_color
+        cfg.ask_type, cfg.ask_subtype, cfg.ask_color = req_type, "standard", req_color
         (await session.get(Printer, printer_id)).loaded_filaments = loaded
         await session.commit()
 
 
 @pytest.mark.asyncio
-async def test_filament_mismatch_blocks_job(db):
+async def test_filament_mismatch_keeps_the_job_queued_never_blocked(db):
+    """On the claim path a printer whose loaded filament does not fit skips the job: that alone never blocks it. (Only when NO printer in
+    the fleet could take it does the unmatched-job sweep block it; this manager cannot report liveness, so the sweep stays out.)"""
     mgr = _make_mock_printer_manager([1])
     qe = QueueEngine(db, mgr, MagicMock())
     job_id = await _seed_job(db, printer_id=1)
@@ -209,8 +214,7 @@ async def test_filament_mismatch_blocks_job(db):
 
     async with db() as session:
         job = await session.get(Job, job_id)
-        assert job.status == "blocked"
-        assert "filament" in (job.block_reason or "").lower()
+        assert (job.status, job.block_reason) == ("queued", None)
 
 
 @pytest.mark.asyncio
@@ -230,6 +234,80 @@ async def test_filament_match_allows_claim(db, tmp_path):
 
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_claim_stores_the_chosen_slots_as_the_configs_plan(db, tmp_path):
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [
+        {"slot": 0, "type": "PLA", "subtype": "silk", "color": "#FF0000"},
+        {"slot": 1, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+
+    await qe._process_queue()
+    await settle_background_tasks()
+
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert (await session.get(Job, job_id)).status == "printing"
+        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]          # the ask says standard: T0 (silk) is not it
+
+
+@pytest.mark.asyncio
+async def test_a_conflicting_slot_is_not_used_but_the_printers_other_slot_prints(db, tmp_path):
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
+    silk = InvMaterial(ref="m1", name="x", material="PLA", subtype="silk", color_hex="#FF0000", vendor="Acme")
+    await use_provider(FakeInventoryProvider(spools=[InvSpool(ref="9", material_ref="m1", material=silk)]), plugin_id="spoolman")
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    inv = {"provider": "spoolman", "spool_ref": "9"}
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [
+        # the printer reports plain PLA but the bound spool is silk: a conflict -> skipped
+        {"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "reported": True, "inventory": inv},
+        {"slot": 1, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+
+    await qe._process_queue()
+    await settle_background_tasks()
+
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]
+
+
+@pytest.mark.asyncio
+async def test_a_filament_removed_after_the_claim_is_a_slice_failure_that_blocks(db):
+    """Not a mismatch (which keeps the job queued): the check passed, then the slot emptied before slicing."""
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [{"slot": 0, "type": "", "color": "", "empty": True}])
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        cfg.slot_plan = [{"model_filament": None, "slot": 0}]                  # what the claim recorded while PLA was there
+        await session.commit()
+
+    await qe._run_slice_and_print(job_id, 1, 1)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert job.status == "blocked" and "removed" in (job.block_reason or "")
+        assert cfg.slice_failed is True
+    mock_slicer.slice.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -286,7 +364,7 @@ async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
+async def test_queued_job_is_claimed_once_the_right_filament_is_loaded(db, tmp_path):
     mgr = _make_mock_printer_manager([1])
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
@@ -299,7 +377,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     await qe._process_queue()
     await settle_background_tasks()
     async with db() as session:
-        assert (await session.get(Job, job_id)).status == "blocked"
+        assert (await session.get(Job, job_id)).status == "queued"
 
     # load the matching filament, then re-check
     async with db() as session:
@@ -583,7 +661,7 @@ async def test_actual_values_captured_at_slice_time(db):
     # Set up a printer with filament profile
     async with db() as session:
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -638,7 +716,7 @@ async def test_run_slice_and_print_removes_gcode_when_cancelled_during_slice(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -692,7 +770,7 @@ async def test_run_estimate_sets_done_with_fields(db):
         await session.commit()
 
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -714,6 +792,9 @@ async def test_run_estimate_sets_done_with_fields(db):
 
     with patch.object(slicer, "slice", return_value=fake_gcode):
         await engine.run_estimate(job_id)
+        req = slicer.slice.call_args.args[0]   # the estimate slice reads the model through its library key, not a path
+    assert (req.source_key, req.source_3mf) == ("test.3mf", "")
+
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -728,7 +809,7 @@ async def test_run_estimate_sets_done_with_fields(db):
 
 @pytest.mark.asyncio
 async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(db):
-    """The estimate on the job comes from SlicingProvider.parse_estimates, not from a gcode parser baked into the
+    """The estimate on the job comes from FormatProvider.parse_estimates, not from a gcode parser baked into the
     queue: the artifact's own text says 10 g / 30 min, the fake provider says otherwise, and the fake wins."""
     import tempfile, os
     from unittest.mock import patch, MagicMock
@@ -743,7 +824,7 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
         job.estimate_status = "pending"
         job.estimate_token = 1
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -759,8 +840,8 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
         await coro
 
     engine._slice_queue.put = inline_put
-    fake = FakeSlicingProvider()
-    fake.estimates = (77.5, 4242, [77.5])
+    fake = FakeFormatProvider()
+    fake.estimate = PlateEstimate(77.5, 4242, (77.5,))
     with patch.object(slicer, "slice", return_value=artifact), \
          patch("app.services.queue_engine.get_format_provider", return_value=fake):
         await engine.run_estimate(job_id)
@@ -859,7 +940,7 @@ async def test_run_estimate_conditional_update_guards_against_cancel(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -912,7 +993,7 @@ async def test_run_estimate_failure_sets_failed(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -960,7 +1041,7 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -982,7 +1063,7 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
     # Simulate an unexpected error in a step that has no existing try/except of
     # its own (Step 4 gcode parsing), rather than the already-handled slice
     # failure path.
-    broken = FakeSlicingProvider()
+    broken = FakeFormatProvider()
     broken.parse_estimates = MagicMock(side_effect=RuntimeError("boom"))
     with patch.object(slicer, "slice", return_value=fake_gcode), \
          patch("app.services.queue_engine.get_format_provider", return_value=broken):
@@ -1013,7 +1094,7 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
         job.estimate_token = 1  # original token
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -1050,44 +1131,47 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
 
 
 @pytest.mark.asyncio
-async def test_handle_print_complete_fires_spoolman_deduction(db):
-    """On completion, deducts actual_filament_grams from Spoolman using slot's spool_id."""
-    from unittest.mock import patch, AsyncMock, MagicMock
-    from app.models import Job, GcodeFile, SpoolmanConfig
-    from app.services.queue_engine import QueueEngine
-    from app.services.slicer_service import SlicerService
+async def test_handle_print_complete_writes_the_snapshot_minus_grams(db):
+    """The absolute target is `start-of-print weight - spent`, taken from the job's snapshot; the row remembers that start
+    weight (the conflict guard compares the provider against it) and the unchanged spool receives the write."""
+    from app.services.inventory import tasks as inventory_tasks
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
 
-    printer_id = 1
-    job_id = await _seed_job(db, printer_id, status="printing")
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 300.0)])
+    await use_provider(fake)
+    await _snapshot(db, job_id, 300.0)
 
-    async with db() as session:
-        printer = await session.get(Printer, printer_id)
-        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
-                                      "spoolman_spool_id": 42}]
-        job = await session.get(Job, job_id)
-        job.status = "printing"
-        job.assigned_printer_id = printer_id
-        job.actual_filament_grams = 17.5
-        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
-        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
-        await session.commit()
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
 
-    mgr = _make_mock_printer_manager([printer_id])
-    slicer = MagicMock(spec=SlicerService)
-    slicer._data_dir = Path("/tmp")
-    engine = QueueEngine(db, mgr, slicer)
+    assert fake.writes == [("42", pytest.approx(282.5))]
+    rows = await _outbox_rows(db)
+    assert [(r.spool_ref, r.status, r.pre_weight_g) for r in rows] == [("42", "applied", 300.0)]
 
-    deduction_calls = []
 
-    async def fake_deduct(provider, spool_id, grams):
-        deduction_calls.append({"spool_id": spool_id, "grams": grams})
+@pytest.mark.asyncio
+async def test_handle_print_complete_holds_the_write_when_the_spool_was_changed_during_the_print(db):
+    """The live reading (500) is not the start-of-print weight (300): someone changed the spool mid-print, so the deduction is
+    held for the user instead of overwriting that change (BIZ-198)."""
+    from app.services.inventory import tasks as inventory_tasks
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
 
-    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
-        await engine.handle_print_complete(printer_id)
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+    await _snapshot(db, job_id, 300.0)
 
-    assert len(deduction_calls) == 1
-    assert deduction_calls[0]["spool_id"] == 42
-    assert deduction_calls[0]["grams"] == pytest.approx(17.5)
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+
+    assert fake.writes == []
+    rows = await _outbox_rows(db)
+    assert [(r.spool_ref, r.status, r.conflict_current_g) for r in rows] == [("42", "conflict", 500.0)]
 
 
 async def _seed_completing_job(db, grams=17.5):
@@ -1112,60 +1196,177 @@ async def _seed_completing_job(db, grams=17.5):
     return QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer), printer_id, job_id
 
 
+async def _outbox_rows(db):
+    from sqlalchemy import select
+    from app.models import InventoryPendingWrite
+    async with db() as session:
+        return list((await session.execute(select(InventoryPendingWrite).order_by(InventoryPendingWrite.id))).scalars())
+
+
+async def _snapshot(db, job_id, pre, ref="42", provider="spoolman"):
+    from app.models import JobSpoolSnapshot
+    async with db() as session:
+        session.add(JobSpoolSnapshot(job_id=job_id, printer_id=1, provider=provider, spool_ref=ref, pre_weight_g=pre,
+                                     source="live" if pre is not None else "missing", taken_at="2026-01-01T00:00:00+00:00"))
+        await session.commit()
+
+
 @pytest.mark.asyncio
-async def test_completion_records_usage_through_the_inventory_provider(db):
-    """The deduction goes through FilamentInventoryProvider.record_usage with the slot's spool ref."""
-    from unittest.mock import patch, AsyncMock
-    from app.models import Job
+async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the_provider_on_the_loop(db):
+    """The queue never touches inventory: starting a print only publishes `job.started` (inventory snapshots when it handles that),
+    and with `tasks.spawn` intercepted (coroutines collected, never run) completing a print touches no provider method, yet the
+    outbox row is already durable."""
+    from app.models import JobSpoolSnapshot
+    from sqlalchemy import select
     from tests.fake_providers import FakeInventoryProvider
-    from tests.waiting import wait_until
+    from tests.inventory_helpers import spool, use_provider
 
     engine, printer_id, job_id = await _seed_completing_job(db)
-    fake = FakeInventoryProvider()
-    fake.spools = {"42": __import__("app.services.providers.filament_inventory", fromlist=["Spool"]).Spool(ref="42", remaining_weight=500.0)}
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+    spawned = []
 
-    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
+    def spy(coro, name=None):
+        spawned.append((name, coro))
+
+    gcode = "/tmp/guard.gcode"
+    open(gcode, "w").write("G28\n")
+    with patch("app.services.inventory.tasks.spawn", spy):
+        await engine._do_upload_and_print(job_id, printer_id, gcode, 1, None)
+        assert spawned == [] and fake.calls == []                         # the queue scheduled and ran nothing of inventory's
+        await settle_events(db)                                           # inventory reacts to `job.started`
+        async with db() as session:
+            snap = (await session.execute(select(JobSpoolSnapshot))).scalar_one()
+        assert (snap.pre_weight_g, snap.source, snap.spool_ref) == (500.0, "live", "42")
+
+        fake.calls.clear()
+        spawned.clear()
         await engine.handle_print_complete(printer_id)
-        await wait_until(lambda: fake.usage, what="usage recorded")
+        await settle_events(db)
+        assert fake.calls == [] and fake.writes == []                     # completion called no provider method
+        rows = await _outbox_rows(db)
+        assert [(r.spool_ref, r.target_g, r.status) for r in rows] == [("42", pytest.approx(482.5), "pending")]
+        assert [n for n, _ in spawned] == ["inventory-outbox-flush"]
+        for _, c in spawned:
+            c.close()                                                     # never awaited: avoid the un-awaited warning
+    os.unlink(gcode)
 
-    assert fake.usage == [("42", pytest.approx(17.5))]
+
+@pytest.mark.asyncio
+async def test_print_start_schedules_no_snapshot_when_deduction_cannot_apply(db):
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    await use_provider(FakeInventoryProvider(spools=[spool("42", 500.0)], capabilities=frozenset({"TRACKS_WEIGHT"})))
+    spawned = []
+    gcode = "/tmp/guard2.gcode"
+    open(gcode, "w").write("G28\n")
+    with patch("app.services.inventory.tasks.spawn", lambda coro, name=None: spawned.append(coro)):
+        await engine._do_upload_and_print(job_id, printer_id, gcode, 1, None)
+    assert spawned == []
+    os.unlink(gcode)
+
+
+@pytest.mark.asyncio
+async def test_completion_sets_the_spool_weight_through_the_inventory_provider(db):
+    """No start snapshot (the job was already printing at upgrade): the weight is taken at completion, then written."""
+    from app.models import Job
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+    from app.services.inventory import tasks as inventory_tasks
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+
+    assert fake.writes == [("42", pytest.approx(482.5))]
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "complete"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("records_usage", [None, False])   # None: no provider configured at all
-async def test_completion_skips_deduction_when_provider_cannot_record_usage_or_is_absent(db, records_usage):
-    from unittest.mock import patch, AsyncMock
+@pytest.mark.parametrize("caps", [None, frozenset({"TRACKS_WEIGHT"}), frozenset({"WRITE_WEIGHT"})])   # None: no provider at all
+async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabilities_or_is_absent(db, caps):
+    from unittest.mock import AsyncMock, patch
     from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
 
     engine, printer_id, _ = await _seed_completing_job(db)
-    provider = None
-    if records_usage is not None:
-        provider = FakeInventoryProvider()
-        provider.RECORDS_USAGE = records_usage
-    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=provider)):
-        await engine.handle_print_complete(printer_id)
-    await asyncio.sleep(0.05)
-    if provider is not None:
-        assert provider.calls == []
+    fake = None
+    if caps is not None:
+        fake = FakeInventoryProvider(spools=[spool("42", 500.0)], capabilities=caps)
+        await use_provider(fake)
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+    assert await _outbox_rows(db) == []
+    if fake is not None:
+        assert fake.calls == [] and fake.writes == []
+
+
+@pytest.mark.asyncio
+async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
+    from unittest.mock import AsyncMock, patch
+    from app.models import InventoryConfig
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    engine, printer_id, _ = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+    async with db() as session:
+        session.add(InventoryConfig(id=1, deduct_on_complete=False, low_stock_overrides={}, low_stock_alerted=[]))
+        await session.commit()
+
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+
+    assert await _outbox_rows(db) == []
+    assert fake.calls == [] and fake.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provider_is_active(db):
+    """The slot's `spoolman_spool_id` is a Spoolman id: applying it to a different provider would hit an unrelated spool."""
+    from unittest.mock import AsyncMock, patch
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    engine, printer_id, _ = await _seed_completing_job(db)
+    other = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(other, plugin_id="other_inventory")
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+    assert await _outbox_rows(db) == []
+    assert other.calls == [] and other.writes == []
 
 
 @pytest.mark.asyncio
 async def test_a_failing_provider_never_breaks_completion(db):
-    from unittest.mock import patch, AsyncMock
     from app.models import Job
-    from app.services.providers.filament_inventory import InventoryProviderError
+    from app.plugins.capabilities.filament_inventory import InventoryProviderError
     from tests.fake_providers import FakeInventoryProvider
-    from tests.waiting import wait_until
+    from tests.inventory_helpers import spool, use_provider
+    from app.services.inventory import tasks as inventory_tasks
 
     engine, printer_id, job_id = await _seed_completing_job(db)
-    fake = FakeInventoryProvider()
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
     fake.fail_with = InventoryProviderError("down", code="503", status=503)
+    await use_provider(fake)
 
-    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
-        await engine.handle_print_complete(printer_id)
-        await wait_until(lambda: "record_usage" in fake.calls, what="deduction attempted")
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    await inventory_tasks.drain()
+    assert "get_spool" in fake.calls
 
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "complete"
@@ -1175,7 +1376,7 @@ async def test_a_failing_provider_never_breaks_completion(db):
 async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     """Deduction is skipped when actual_filament_grams is None."""
     from unittest.mock import patch, MagicMock
-    from app.models import Job, GcodeFile, SpoolmanConfig
+    from app.models import Job, GcodeFile
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
@@ -1190,7 +1391,6 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
         job.assigned_printer_id = printer_id
         job.actual_filament_grams = None  # not captured
         session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
-        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
         await session.commit()
 
     mgr = _make_mock_printer_manager([printer_id])
@@ -1198,14 +1398,17 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     slicer._data_dir = Path("/tmp")
     engine = QueueEngine(db, mgr, slicer)
 
-    deduction_calls = []
-    async def fake_deduct(*a, **kw):
-        deduction_calls.append(a)
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    fake = FakeInventoryProvider()
+    await use_provider(fake)
 
-    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
-        await engine.handle_print_complete(printer_id)
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
 
-    assert deduction_calls == []
+    assert await _outbox_rows(db) == [] and fake.calls == []
 
 
 @pytest.mark.asyncio
@@ -1215,7 +1418,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     caller that wins the conditional-UPDATE claim should deduct the Spoolman spool
     and bump lifetime counters; the loser must be a no-op."""
     from unittest.mock import patch, MagicMock
-    from app.models import Job, GcodeFile, SpoolmanConfig
+    from app.models import Job, GcodeFile
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
@@ -1231,7 +1434,6 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
         job.assigned_printer_id = printer_id
         job.actual_filament_grams = 17.5
         session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
-        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
         await session.commit()
 
     mgr = _make_mock_printer_manager([printer_id])
@@ -1239,10 +1441,10 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     slicer._data_dir = Path("/tmp")
     engine = QueueEngine(db, mgr, slicer)
 
-    deduction_calls = []
-
-    async def fake_deduct(provider, spool_id, grams):
-        deduction_calls.append({"spool_id": spool_id, "grams": grams})
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+    await use_provider(FakeInventoryProvider(spools=[spool("42", 500.0)]))
+    await _snapshot(db, job_id, 500.0)
 
     # Force the interleave that the old code let happen implicitly: right after the
     # OUTER call's initial read finds the job "printing", run a full SECOND
@@ -1262,6 +1464,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
                 if not state["second_ran"]:
                     state["second_ran"] = True
                     await engine.handle_print_complete(printer_id)
+                    await settle_events(db)
                 return result
 
             session.execute = spy_execute
@@ -1269,10 +1472,10 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
 
     engine._factory = wrapped_factory
 
-    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
-        await engine.handle_print_complete(printer_id)
+    await engine.handle_print_complete(printer_id)
+    await settle_events(db)
 
-    assert len(deduction_calls) == 1
+    assert len(await _outbox_rows(db)) == 1
     async with db() as session:
         printer = await session.get(Printer, printer_id)
         assert printer.lifetime_job_count == 1
@@ -1370,7 +1573,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
 
     probe = FakeSlicingProvider()
     probe.health = lambda timeout=None: cancel_during_probe()
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
+    with slicing_provider(probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1408,7 +1611,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
 
     probe = FakeSlicingProvider()
     probe.health = lambda timeout=None: cancel_then_fail_probe()
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
+    with slicing_provider(probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1440,7 +1643,7 @@ async def test_an_unusable_slicing_provider_blocks_the_job_with_a_specific_reaso
         provider = FakeSlicingProvider()
         provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if scenario == "not_ready"
                                       else SlicingProviderError("health check request failed: refused"))
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=provider):
+    with slicing_provider(provider):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1514,6 +1717,7 @@ async def test_handle_print_complete_accrues_lifetime_counters(db):
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
@@ -1536,6 +1740,7 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
@@ -1545,132 +1750,79 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
 
 # --- Notification dispatch wiring -------------------------------------------------
 
+def _channels(active):
+    """Pretend these notification channel plugins are enabled (the engine skips building a message when none is)."""
+    from unittest.mock import patch
+    return patch("app.services.queue_engine.plugin_host.active_providers", return_value=list(active))
+
+
 @pytest.mark.asyncio
-async def test_fire_notifications_dispatches_when_channel_enabled_and_event_matches(db):
+async def test_fire_notifications_sends_a_neutral_message_when_a_channel_is_active(db):
     from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
 
     job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
-            ntfy_topic="themis", ntfy_events=["job.complete"],
-        ))
-        await session.commit()
-
     qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
 
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
+        await qe._fire_notifications(job_id, "job.complete", printer_id=1, event_id="evt-1")
+        await asyncio.sleep(0)                              # notify runs as a background task (fire-and-forget)
+
+    mock_notify.assert_awaited_once()
+    event, job_id_arg, title, message = mock_notify.call_args.args
+    assert (event, job_id_arg) == ("job.complete", job_id) and "test.3mf" in message
+    assert mock_notify.call_args.kwargs == {"message_id": "evt-1"}
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_does_not_block_on_a_slow_channel(db):
+    """_fire_notifications must return without waiting for channel delivery: it is awaited from _reconcile_printing_jobs, which
+    runs before new jobs are claimed each _process_queue iteration, so a slow ntfy/Discord/SMTP call must not stall claiming."""
+    from unittest.mock import patch
+
+    job_id = await _seed_job(db, printer_id=1)
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+    started, may_finish = asyncio.Event(), asyncio.Event()
+
+    async def slow_notify(*args, **kwargs):
+        started.set()
+        await may_finish.wait()
+
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", side_effect=slow_notify):
+        await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    may_finish.set()                                        # let the background task finish cleanly
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_builds_nothing_when_no_channel_is_active(db):
+    from unittest.mock import patch, AsyncMock
+
+    job_id = await _seed_job(db, printer_id=1)
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with _channels([]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
         await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
         await asyncio.sleep(0)
 
-    mock_dispatch.assert_awaited_once()
-    args = mock_dispatch.call_args[0]
-    cfg_arg, event_arg, job_id_arg, title_arg, message_arg = args
-    assert event_arg == "job.complete"
-    assert job_id_arg == job_id
-    assert "test.3mf" in message_arg
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_does_not_block_on_slow_dispatch(db):
-    """_fire_notifications must return without waiting for channel delivery to
-    finish — it's awaited from _reconcile_printing_jobs, which runs before new
-    jobs are claimed each _process_queue iteration, so a slow ntfy/Discord/SMTP
-    call must not stall claiming work onto idle printers."""
-    from unittest.mock import patch
-    from app.models import NotificationConfig
-
-    job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
-            ntfy_topic="themis", ntfy_events=["job.complete"],
-        ))
-        await session.commit()
-
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    dispatch_started = asyncio.Event()
-    dispatch_may_finish = asyncio.Event()
-
-    async def slow_dispatch(*args, **kwargs):
-        dispatch_started.set()
-        await dispatch_may_finish.wait()
-
-    with patch("app.services.queue_engine.notification_service.dispatch", side_effect=slow_dispatch):
-        # If _fire_notifications blocked on dispatch, this would hang until the
-        # timeout since dispatch_may_finish is never set beforehand.
-        await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
-        await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
-
-    dispatch_may_finish.set()  # let the background task finish cleanly
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_noop_when_all_channels_disabled(db):
-    from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
-
-    job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(id=1))  # all channels default disabled
-        await session.commit()
-
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
-        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-
-    mock_dispatch.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_noop_when_no_config_row(db):
-    from unittest.mock import patch, AsyncMock
-
-    job_id = await _seed_job(db, printer_id=1)
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
-        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-
-    mock_dispatch.assert_not_awaited()
+    mock_notify.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_fail_job_post_slice_fires_notifications(db):
-    """Integration-style: the real _fail_job_post_slice call site actually
-    triggers _fire_notifications when the job reaches 'failed'."""
+    """Integration-style: the real _fail_job_post_slice call site actually triggers _fire_notifications when the job fails."""
     from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
 
     job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, email_enabled=True, email_host="smtp.example.com", email_port=587,
-            email_from_addr="themis@example.com", email_to_addrs=["me@example.com"],
-            email_events=["job.failed"],
-        ))
-        await session.commit()
-
     qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
 
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
         await qe._fail_job_post_slice(job_id, 1, "printer disconnected")
-        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
         await asyncio.sleep(0)
 
-    mock_dispatch.assert_awaited_once()
-    args = mock_dispatch.call_args[0]
-    assert args[1] == "job.failed"
-    assert args[2] == job_id
-    assert "printer disconnected" in args[4]
+    mock_notify.assert_awaited_once()
+    event, job_id_arg, _title, message = mock_notify.call_args.args
+    assert (event, job_id_arg) == ("job.failed", job_id) and "printer disconnected" in message
 
 
 @pytest.mark.asyncio

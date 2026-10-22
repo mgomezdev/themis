@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
@@ -10,10 +10,20 @@ class Printer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     printer_type: Mapped[str] = mapped_column(String(50))
+    # Plugin-declared identity (BIZ-251/262): which plugin serves this printer and which of its models it is.
+    plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manufacturer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The core registry's stable UUID for this model (BIZ-262); survives plugin upgrade/removal. Set on create from the identity.
+    model_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     connection_config: Mapped[dict] = mapped_column(JSON)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
-    current_orca_printer_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Advanced per-printer escape hatch (BIZ-294): a raw slicer machine profile that wins over the model mapping, for custom presets
+    # and printers with no registered model. Normally NULL: the profile comes from `printer_model_slicer_profiles` + `nozzle_variant`.
+    machine_profile_override: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # The physical nozzle, {"diameter_mm": 0.6, "flow": "standard"|"high_flow"}; NULL = the model's default variant (BIZ-294).
+    nozzle_variant: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
@@ -28,6 +38,63 @@ class Printer(Base):
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
     # Per-printer override of the shop-wide machine rate ($ per hour of print time); null = use the shop rate.
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The `gcode.produce` plugin this printer slices with (BIZ-291); NULL = the capability default. Not a FK: a plugin may go dormant.
+    preferred_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class PrinterModelRecord(Base):
+    """A printer model known to Themis (BIZ-262): a stable UUID keyed to the supplying plugin's own model key. Plugins contribute
+    declarations; core owns the identity. Rows are never deleted or re-keyed: `declared` goes False when no registered plugin
+    declares the key any more (the model is dormant while printers/files reference it). `enabled` is the user's subset for
+    setup and eligibility pickers."""
+    __tablename__ = "printer_models"
+    __table_args__ = (UniqueConstraint("plugin_id", "manufacturer_id", "model_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    plugin_id: Mapped[str] = mapped_column(String(64))
+    manufacturer_id: Mapped[str] = mapped_column(String(64))
+    model_id: Mapped[str] = mapped_column(String(64))
+    manufacturer_name: Mapped[str] = mapped_column(String(255), default="")
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    toolheads: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    declared: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PrinterModelSlicerProfile(Base):
+    """Which slicer machine profile a printer model uses, per slicing provider and nozzle variant (BIZ-294). Set once per model, not
+    per printer: ten identical printers need zero per-printer entry; only a physical difference (nozzle diameter / high-flow) picks
+    another row via `printers.nozzle_variant`. Keyed per provider because profile names are provider-specific. Exactly one
+    `is_default` row per (model, provider) (partial unique index). `provider_plugin_id` is not a FK: a plugin may go dormant."""
+    __tablename__ = "printer_model_slicer_profiles"
+    __table_args__ = (
+        UniqueConstraint("model_uuid", "provider_plugin_id", "nozzle_diameter_mm", "flow"),
+        Index("ux_printer_model_slicer_profiles_default", "model_uuid", "provider_plugin_id", unique=True,
+              sqlite_where=text("is_default = 1")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64))
+    nozzle_diameter_mm: Mapped[float] = mapped_column(Float)
+    flow: Mapped[str] = mapped_column(String(16), default="standard")   # standard | high_flow
+    machine_profile: Mapped[str] = mapped_column(String(255))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class FileMachineEligibility(Base):
+    """Which printer models a pre-sliced G-code file may be sent to (BIZ-263). A file is `eligibility_known` once a user set
+    it or Themis recorded it from a slice; known + these rows is the whole set (core model UUIDs, never free text).
+    `source`: manual | target (the model it was sliced for) | equivalent (a registry-declared equivalent of the target) | backfill."""
+    __tablename__ = "file_machine_eligibility"
+    __table_args__ = (UniqueConstraint("file_id", "model_uuid"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id", ondelete="CASCADE"), index=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="manual")
 
 
 class UploadedFile(Base):
@@ -51,6 +118,9 @@ class UploadedFile(Base):
     content_hash: Mapped[str] = mapped_column(String(64), default="")
     mtime: Mapped[float] = mapped_column(Float, default=0.0)
     missing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pre-sliced G-code only (BIZ-263): False = legacy/unknown machine eligibility (never treated as a confirmed match);
+    # True = `file_machine_eligibility` is the complete set of printer models this file may be sent to.
+    eligibility_known: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Project-generated packs only (BIZ-193): hash of the pack inputs (STL hashes x quantities, bed, pack mode), so an
     # identical later generation can reuse this 3MF instead of re-packing.
     pack_recipe_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -130,6 +200,8 @@ class Order(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # Never reuse an id: events, webhooks and logs name a job by it (v054).
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
@@ -140,6 +212,8 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The user confirmed sending a pre-sliced file whose machine eligibility is unknown (BIZ-263).
+    eligibility_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
@@ -151,6 +225,11 @@ class Job(Base):
     actual_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     actual_filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     deduction_skipped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Why filament usage was not recorded for this job (inventory tracking suspended / no starting weight); null otherwise.
+    deduction_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set (once) by the `job_complete.maintenance` subscriber in the transaction that bumps the printer's wear counters: the
+    # idempotency key that keeps a redelivered `job.complete` event from counting the job twice (BIZ-269).
+    maintenance_accrued: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # --- Estimate values (set after background test slice) ---
     estimate_token: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     estimate_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -189,11 +268,23 @@ class JobPrinterConfig(Base):
     print_profile: Mapped[str] = mapped_column(String(512))
     filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    # Provider-namespaced "specific material" ask (v036); `filament_id` is the legacy Spoolman mirror, written while the provider is Spoolman
+    material_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # Filament ask — "any" means no constraint (never null/blank; see v012 migration)
     filament_type: Mapped[str] = mapped_column(String(100), nullable=False, server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), nullable=False, server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # The slots chosen at claim time (`[{model_filament, slot}]`, filament_matching.SlotUse): slicing, the print and the spool
+    # deduction all follow this plan instead of re-matching a slot list that may have changed since.
+    slot_plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.
@@ -210,19 +301,27 @@ class JobPrinterConfig(Base):
 
 
 class JobModelTarget(Base):
-    """A job eligible on *any* printer whose `current_orca_printer_profile` equals `machine_profile`. The queue
+    """A job eligible on *any* printer of the model `model_uuid` (BIZ-294; was keyed by the printers' machine profile). The queue
     engine materializes it into per-printer `JobPrinterConfig` rows (services/model_targets.py), so everything
     downstream keeps looking configs up by (job, printer). Slot-specific asks (tool_index) don't apply here."""
     __tablename__ = "job_model_targets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
-    machine_profile: Mapped[str] = mapped_column(String(255), index=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
     print_profile: Mapped[str] = mapped_column(String(512))
     filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    material_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     filament_type: Mapped[str] = mapped_column(String(100), default="any", server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any", server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
@@ -245,6 +344,9 @@ class QueueConfig(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
+    # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
+    # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
+    printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -324,6 +426,9 @@ class Project(Base):
     source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The companion app's own id for this project (BIZ-172): unique together with `source_app`, so a retried create returns the
+    # existing project. Separate from the Ordinus-specific `source_layout_id`.
+    external_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
     share_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -344,7 +449,11 @@ class Project(Base):
     # Set by migration v032 when this project was created from a legacy customer order (provenance; plain int).
     converted_from_order_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
+    __table_args__ = (
+        UniqueConstraint("share_token", name="uq_projects_share_token"),
+        Index("ux_projects_source_external_ref", "source_app", "external_ref", unique=True,
+              sqlite_where=text("external_ref IS NOT NULL")),
+    )
 
 
 class ProjectItem(Base):
@@ -363,7 +472,15 @@ class ProjectItem(Base):
     # Filament requirement spec — "any" means no constraint
     filament_type: Mapped[str] = mapped_column(String(50), default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    material_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -565,3 +682,228 @@ class PrinterAlarm(Base):
     last_seen: Mapped[str] = mapped_column(String(32))
     resolved_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     acknowledged_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class PluginConfig(Base):
+    """Per-plugin settings, secrets (write-only through every API) and runtime state (health, last error)."""
+    __tablename__ = "plugin_configs"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets: Mapped[dict] = mapped_column(JSON, default=dict)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class CapabilitySelection(Base):
+    """Which plugin serves a capability. `explicit` = the user chose (including "None"); False = auto-selected because it was
+    the only enabled provider. A provider is *active* iff the row names it AND it is enabled AND its requirements are met."""
+    __tablename__ = "capability_selections"
+
+    capability: Mapped[str] = mapped_column(String(96), primary_key=True)
+    plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    explicit: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PluginSchemaVersion(Base):
+    """Applied plugin-owned migrations (see plugins/migrations.py)."""
+    __tablename__ = "plugin_schema_versions"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    applied_at: Mapped[str] = mapped_column(String(32), server_default=text("(strftime('%Y-%m-%dT%H:%M:%S', 'now'))"))
+
+
+class InstalledPlugin(Base):
+    """An installed (non-bundled) plugin package: `/data/plugins/<id>/<version>/`. Bundled plugins have no row.
+    status: pending_restart | active | error | pending_removal (see plugins/installer.py)."""
+    __tablename__ = "installed_plugins"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200), default="")
+    publisher: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    source: Mapped[str] = mapped_column(String(16))                       # upload | github
+    source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    subdir: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    archive_sha256: Mapped[str] = mapped_column(String(64))
+    installed_at: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24))
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    previous_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class AuditLog(Base):
+    """Who did what to the instance itself (plugin install/upgrade/uninstall, restart). Append-only."""
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    at: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64))
+    target: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class InventoryConfig(Base):
+    """Provider-agnostic inventory settings (singleton id=1). Low-stock keys are namespaced `"<provider>:<ref>"`."""
+    __tablename__ = "inventory_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deduct_on_complete: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)     # {"spoolman:3": 40.0}
+    low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)       # ["spoolman:7"]
+
+
+class JobSpoolSnapshot(Base):
+    """A spool's weight when a job started printing (the base for the absolute `pre - spent` write at completion).
+    `source` = live | pending | cached | missing (missing: no starting weight could be obtained -> tracking suspends)."""
+    __tablename__ = "job_spool_snapshots"
+    __table_args__ = (UniqueConstraint("job_id", "provider", "spool_ref", name="ux_job_spool_snapshots"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    spool_ref: Mapped[str] = mapped_column(String(128))
+    pre_weight_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(16))
+    taken_at: Mapped[str] = mapped_column(String(32))
+
+
+class InventoryPendingWrite(Base):
+    """The deduction outbox: an ABSOLUTE `set remaining = target_g` for a spool, written in the completion transaction and
+    flushed to the provider by the host (re-sending is harmless). status: pending -> applied | superseded | discarded, or
+    `conflict` (BIZ-198: the provider's weight changed since `pre_weight_g`, so the write is held for the user to resolve)."""
+    __tablename__ = "inventory_pending_writes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    spool_ref: Mapped[str] = mapped_column(String(128))
+    target_g: Mapped[float] = mapped_column(Float)
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(24))                      # queue | manual_complete
+    created_at: Mapped[str] = mapped_column(String(32))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    pre_weight_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)         # the weight `target_g` was computed from
+    conflict_current_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # the provider's weight when a conflict was found
+
+    __table_args__ = (Index("ix_inventory_pending_writes_spool", "provider", "spool_ref", "status"),)
+
+
+class InventorySpoolStatus(Base):
+    """A spool whose usage tracking is suspended (its recorded weight is known to be wrong) until a user corrects it."""
+    __tablename__ = "inventory_spool_status"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spool_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tracking: Mapped[str] = mapped_column(String(16), default="suspended")
+    reason: Mapped[str] = mapped_column(Text)
+    since: Mapped[str] = mapped_column(String(32))
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class InventoryCache(Base):
+    """Last-known list of a REMOTE provider's `spools` / `materials` (so reads survive an outage and a restart)."""
+    __tablename__ = "inventory_cache"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)          # spools | materials
+    payload: Mapped[list] = mapped_column(JSON)
+    fetched_at: Mapped[str] = mapped_column(String(32))
+
+
+class EventOutbox(Base):
+    """A durable event (BIZ-249): the envelope, written in the publisher's own transaction. `dedup_key` is unique, so publishing
+    the same logical event twice stores it once."""
+    __tablename__ = "event_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(32), unique=True)
+    dedup_key: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(128))
+    schema_version: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[str] = mapped_column(String(32))
+    envelope: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+
+class EventDelivery(Base):
+    """One subscriber's pending/finished delivery of one outbox event. status: pending -> delivered | dead (attempts exhausted;
+    an operator can retry it). Unique per (event, subscriber), so a restart never creates a second delivery."""
+    __tablename__ = "event_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbox_id: Mapped[int] = mapped_column(ForeignKey("event_outbox.id", ondelete="CASCADE"))
+    subscriber: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[str] = mapped_column(String(32))
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    delivered_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (UniqueConstraint("outbox_id", "subscriber", name="ux_event_deliveries"),
+                      Index("ix_event_deliveries_due", "status", "next_attempt_at"))
+
+
+class WebhookDestination(Base):
+    """An outbound webhook endpoint (BIZ-172). Each has its own secret, event filter (empty = all events) and enabled flag.
+    The legacy single webhook (`webhook_config`) was migrated to the destination named `default`."""
+    __tablename__ = "webhook_destinations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+    # Outcome of the most recent delivery (after its bounded retries), so a failing endpoint is visible.
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_success_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class IdempotencyKey(Base):
+    """A client's `Idempotency-Key` for a mutating request (BIZ-172). `in_progress` while the first request runs; `done` keeps its
+    response so a retry gets the same answer instead of repeating the work. Keys are scoped to the endpoint and resource."""
+    __tablename__ = "idempotency_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(160))
+    key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(12), default="in_progress", server_default="in_progress")   # in_progress | done | partial
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
+
+
+class JobDetail(Base):
+    """One detail field of a job, written by one origin (a plugin id or `core`). Names and values are not enforced; `status` is `ok` or
+    `unsupported` (the source says it cannot provide the field for this job). Unique per (job, field, origin)."""
+    __tablename__ = "job_details"
+    __table_args__ = (UniqueConstraint("job_id", "field", "origin", name="ux_job_details"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    field: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
+    value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String(32))

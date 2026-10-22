@@ -1,0 +1,24 @@
+{
+  "after_sync": {
+    "body": {
+      "enabled": true,
+      "interval_minutes": 5,
+      "last_attempt_at": "<masked>",
+      "last_error": null,
+      "last_error_code": null,
+      "last_sync_at": "<masked>"
+    },
+    "status": 200
+  },
+  "never_configured": {
+    "body": {
+      "enabled": false,
+      "interval_minutes": 15,
+      "last_attempt_at": null,
+      "last_error": null,
+      "last_error_code": null,
+      "last_sync_at": null
+    },
+    "status": 200
+  }
+}

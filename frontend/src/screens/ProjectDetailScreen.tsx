@@ -1,3 +1,4 @@
+import { describeAsk } from '../lib/filamentAsk';
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
@@ -12,6 +13,7 @@ import {
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
 import { PaymentsCard } from '../components/PaymentsCard';
+import { LinkJobsModal } from '../components/LinkJobsModal';
 import { CostsCard } from '../components/CostsCard';
 import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
 
@@ -35,6 +37,7 @@ export function ProjectDetailScreen() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [jobs, setJobs] = useState<ProjectJob[]>([]);
+  const [linking, setLinking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [generateResult, setGenerateResult] = useState<{ jobCount: number; files: GenerateOut['files'] } | null>(null);
@@ -548,9 +551,7 @@ export function ProjectDetailScreen() {
               <span>File</span><span>Qty</span><span>Filament</span><span>Progress</span>
             </div>
             {project.items.map(item => {
-              const filamentLabel = item.filament_id != null
-                ? `Spoolman #${item.filament_id}`
-                : `${item.filament_type} / ${item.filament_color}`;
+              const filamentLabel = describeAsk(item);
               const done = item.quantity_completed;
               const failed = item.quantity_failed;
               return (
@@ -638,12 +639,32 @@ export function ProjectDetailScreen() {
 
       {/* ── Jobs ────────────────────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
-          Jobs ({jobs.length})
+        <div className="row between" style={{ alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            Jobs ({jobs.length})
+          </div>
+          <div className="row gap-2">
+            <button
+              className="btn sm"
+              onClick={() => setLinking(true)}
+              disabled={project.stage === 'draft'}
+              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+            >
+              Link existing job
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => navigate(`/queue/new?project=${project.id}`)}
+              disabled={project.stage === 'draft'}
+              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+            >
+              {Icons.plus} Add job
+            </button>
+          </div>
         </div>
         {jobs.length === 0 ? (
           <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No jobs yet — click Generate to create print jobs.
+            No jobs yet — click Generate to create print jobs, or add or link one by hand.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -657,6 +678,8 @@ export function ProjectDetailScreen() {
             </div>
             {jobs.map(job => {
               const st = STATUS_META[job.status] ?? { label: job.status, color: 'var(--text-3)' };
+              // The queue engine starts a project's jobs only once the project itself is Queued.
+              const held = project.stage !== 'queued' && (job.status === 'queued' || job.status === 'blocked');
               return (
                 <div key={job.id} style={{
                   display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
@@ -671,7 +694,10 @@ export function ProjectDetailScreen() {
                     {job.file_name ?? '—'}
                     {' '}<span style={{ fontSize: 11, color: 'var(--text-4)' }}>p{job.plate_number}</span>
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}>{st.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}
+                        title={held ? `Held until ${project.name} is moved to Queued` : undefined}>
+                    {st.label}{held ? ' · held' : ''}
+                  </span>
                   <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
                     {job.total_parts > 0 ? `${job.total_parts}` : '—'}
                   </span>
@@ -689,6 +715,15 @@ export function ProjectDetailScreen() {
         )}
       </div>
 
+      {linking && (
+        <LinkJobsModal
+          projectId={project.id}
+          projectName={project.name}
+          projectStage={project.stage}
+          onClose={() => setLinking(false)}
+          onLinked={reload}
+        />
+      )}
     </div>
   );
 }

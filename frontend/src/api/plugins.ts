@@ -1,0 +1,327 @@
+import { useCallback, useSyncExternalStore } from 'react';
+import { apiFetch } from './client';
+
+export type PluginRenderer = 'default' | 'schema' | 'component';
+export interface PluginTab { id: string; label: string; renderer: PluginRenderer;
+  /** `component` tabs: the registry key of the compiled-in component, and the capability feature the plugin must declare. */
+  component?: string | null; requires?: string | null }
+export interface PluginUi {
+  mode: 'section' | 'page';
+  nav_label: string;
+  nav_placement: 'settings' | 'main';
+  nav_icon: string | null;
+  tabs: PluginTab[];
+  /** Old absolute app URLs → the tab of this plugin that replaced them. */
+  redirects?: { from: string; tab: string }[];
+  /** The settings page shows a persistent connection-state pill (probed via the plugin's test endpoint on load). */
+  connection_status?: boolean;
+}
+
+/** A plugin may name why a connection test came out as it did. */
+export type ConnectionState = 'unconfigured' | 'unavailable' | 'healthy';
+/** The keys of a connection-test response the settings page's state pill reads (contracts/response-keys.json). */
+export interface PluginConnectionResult { ok: boolean; state?: ConnectionState }
+export interface PluginTestResult extends PluginConnectionResult { message?: string; version?: string }
+
+export interface PluginProvides {
+  capability: string;
+  version: number;
+  features: string[];
+  /** This plugin is the stored choice for the capability. */
+  selected: boolean;
+  /** `routed` / `fan_out` capabilities have no single selected provider: every enabled one serves them. */
+  mode?: 'exclusive' | 'routed' | 'choose_one' | 'fan_out';
+  status: 'serving' | 'waiting' | 'error' | 'disabled' | 'none_selected' | 'no_provider' | 'dormant' | 'not_selected';
+  waiting_on: string[];
+}
+export interface CapabilityRef { capability: string; min_version: number }
+
+export interface PluginDiagnostic { scope: string; message: string }
+
+export interface PluginSummary {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  docs_url: string | null;
+  source: string;                 // bundled | upload | github
+  /** False for an installed package that is not running (staged for the next restart, or failed to load). */
+  loaded?: boolean;
+  /** What the installer knows about a non-bundled plugin; null/absent for bundled ones. */
+  install?: PluginInstall | null;
+  provides: PluginProvides[];
+  requires: CapabilityRef[];
+  optional: CapabilityRef[];
+  defines: string[];
+  ui: PluginUi;
+  /** Problems found with this plugin's declarative UI when it loaded; each names the contribution (`ui.tab.<id>`, `settings.<field>`). */
+  diagnostics?: PluginDiagnostic[];
+  /** The plugin's own switch (it also has to be the selected provider of a capability to be in use). */
+  enabled: boolean;
+  /** Serving at least one capability right now. */
+  active: boolean;
+  error: string | null;
+}
+
+export interface PluginDetail extends PluginSummary {
+  settings: Record<string, unknown>;
+  /** Secret fields: whether a value is stored (the value itself never leaves the server). */
+  secrets: Record<string, boolean>;
+  settings_schema: JsonSchema;
+  /** Version of the declarative settings contract the backend validated against; the page renders only version 1. */
+  settings_schema_version?: number;
+  secret_fields: string[];
+  state: Record<string, unknown>;
+}
+
+export interface JsonSchemaProperty {
+  type?: string | string[];
+  anyOf?: JsonSchemaProperty[];
+  allOf?: JsonSchemaProperty[];
+  $ref?: string;
+  enum?: string[];
+  title?: string;
+  description?: string;
+  default?: unknown;
+  minimum?: number;
+  maximum?: number;
+  maxLength?: number;
+  /** `array` settings: a fixed set of choices renders as checkboxes, anything else as a comma-separated list. */
+  items?: JsonSchemaProperty;
+}
+export interface JsonSchema { properties?: Record<string, JsonSchemaProperty>; required?: string[]; $defs?: Record<string, JsonSchemaProperty> }
+
+export interface PluginInstall {
+  status: 'pending_restart' | 'active' | 'error' | 'pending_removal';
+  version: string;
+  previous_version: string | null;
+  publisher: string | null;
+  source_url: string | null;
+  ref: string | null;
+  commit_sha: string | null;
+  archive_sha256: string;
+  installed_at: string;
+  error: string | null;
+  can_rollback: boolean;
+  can_check_updates: boolean;
+}
+
+export interface PendingChange { plugin_id: string; name: string; version: string; change: 'install' | 'update' | 'uninstall' }
+
+export interface PluginList { plugins: PluginSummary[]; selections: Record<string, string | null>; pending?: PendingChange[] }
+
+export interface PluginUpdate {
+  enabled?: boolean;
+  settings?: Record<string, unknown>;
+  /** Write-only: omit a key to keep the stored value, "" to clear it. */
+  secrets?: Record<string, string>;
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const resp = await apiFetch(url, init);
+  if (!resp.ok) {
+    const raw = await resp.text().catch(() => '');
+    let body: unknown = raw;
+    try { body = JSON.parse(raw); } catch { /* plain text */ }
+    const detail = body && typeof body === 'object' ? (body as { detail?: unknown }).detail : null;
+    throw Object.assign(
+      new Error(typeof detail === 'string' ? detail : typeof body === 'string' && body ? `${resp.status} ${body}` : `${resp.status}`),
+      { status: resp.status });
+  }
+  return resp.json();
+}
+
+const json = (method: string, body: unknown): RequestInit => ({
+  method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+
+export const fetchPlugins = (): Promise<PluginList> => request('/api/v1/plugins');
+export const fetchPlugin = (id: string): Promise<PluginDetail> => request(`/api/v1/plugins/${encodeURIComponent(id)}`);
+
+export async function updatePlugin(id: string, patch: PluginUpdate): Promise<PluginDetail> {
+  const detail = await request<PluginDetail>(`/api/v1/plugins/${encodeURIComponent(id)}`, json('PUT', patch));
+  invalidatePlugins();
+  return detail;
+}
+
+export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings' | 'secrets'>): Promise<PluginTestResult> {
+  return request(`/api/v1/plugins/${encodeURIComponent(id)}/test`, json('POST', draft));
+}
+
+export async function setCapabilityProvider(capability: string, pluginId: string | null): Promise<{ capability: string; plugin_id: string | null; explicit: boolean }> {
+  const r = await request<{ capability: string; plugin_id: string | null; explicit: boolean }>(
+    `/api/v1/capabilities/${encodeURIComponent(capability)}/provider`, json('PUT', { plugin_id: pluginId }));
+  invalidatePlugins();
+  return r;
+}
+
+/** The feature flags a plugin declares for `capability` (or, with no capability, for all of them). */
+export function featuresOf(plugin: Pick<PluginSummary, 'provides'>, capability?: string): string[] {
+  const entries = capability ? plugin.provides.filter(p => p.capability === capability) : plugin.provides;
+  return [...new Set(entries.flatMap(p => p.features))];
+}
+
+// ---- installation (admin session only) ----
+
+export interface InstallPreview {
+  token: string; id: string; name: string; version: string; publisher: string | null; description: string;
+  provides: { capability: string; version: number }[]; requires: CapabilityRef[]; optional: CapabilityRef[]; defines: string[];
+  source: 'upload' | 'github'; source_url: string | null; ref: string | null; commit_sha: string | null; archive_sha256: string;
+  min_themis: string | null;
+}
+export interface GithubSource { repo_url: string; ref?: string; subdir?: string }
+
+export async function previewUpload(file: File): Promise<InstallPreview> {
+  const body = new FormData();
+  body.append('file', file);
+  return (await request<{ preview: InstallPreview }>('/api/v1/plugins/install?preview=true', { method: 'POST', body })).preview;
+}
+export async function previewGithub(src: GithubSource): Promise<InstallPreview> {
+  return (await request<{ preview: InstallPreview }>('/api/v1/plugins/install-from-github', json('POST', { ...src, preview: true }))).preview;
+}
+export async function commitInstall(token: string): Promise<void> {
+  await request(`/api/v1/plugins/install/${encodeURIComponent(token)}/commit`, { method: 'POST' });
+  invalidatePlugins();
+}
+export async function discardInstall(token: string): Promise<void> {
+  await apiFetch(`/api/v1/plugins/install/${encodeURIComponent(token)}`, { method: 'DELETE' });
+}
+export const checkPluginUpdates = (id: string): Promise<{ update_available: boolean; ref: string; current_commit: string | null; latest_commit: string }> =>
+  request(`/api/v1/plugins/${encodeURIComponent(id)}/updates`);
+export async function previewUpgrade(id: string): Promise<InstallPreview> {
+  return (await request<{ preview: InstallPreview }>(`/api/v1/plugins/${encodeURIComponent(id)}/upgrade`, json('POST', { preview: true }))).preview;
+}
+export async function rollbackPlugin(id: string): Promise<void> {
+  await request(`/api/v1/plugins/${encodeURIComponent(id)}/rollback`, { method: 'POST' });
+  invalidatePlugins();
+}
+export async function uninstallPlugin(id: string, removeData: boolean): Promise<void> {
+  await request(`/api/v1/plugins/${encodeURIComponent(id)}?remove_data=${removeData}`, { method: 'DELETE' });
+  invalidatePlugins();
+}
+export const fetchRestartStatus = (): Promise<{ pending: { plugin_id: string; version: string; status: string }[]; printing: string[] }> =>
+  request('/api/v1/system/restart');
+/** How the restart screen waits for Themis to come back (a mutable object so tests can shorten it). */
+export const RECONNECT = { pollMs: 1500 };
+
+/** Poll `/api/v1/health` until Themis has gone down and come back up; resolves true then, false if `signal` aborts first. */
+export async function waitForRestart(signal: AbortSignal): Promise<boolean> {
+  let wentDown = false;
+  for (let i = 0; i < 400 && !signal.aborted; i++) {            // ~10 minutes at the default interval
+    await new Promise(r => setTimeout(r, RECONNECT.pollMs));
+    if (signal.aborted) break;
+    try {
+      const r = await apiFetch('/api/v1/health');
+      if (r.ok && wentDown) return true;
+    } catch { wentDown = true; continue; }
+    if (!wentDown && i >= 3) return true;                       // never saw it drop (a fast restart): assume it is back
+  }
+  return false;
+}
+
+/** Restart Themis (applies every pending change). Resolves `{printing}` instead of restarting when printers are busy and `force` is false. */
+export async function restartThemis(force: boolean): Promise<{ restarting: boolean; printing?: string[] }> {
+  const resp = await apiFetch('/api/v1/system/restart', json('POST', { force }));
+  if (resp.status === 409) {
+    const body = await resp.json().catch(() => ({}));
+    return { restarting: false, printing: body?.detail?.printers ?? [] };
+  }
+  if (!resp.ok) throw new Error(`${resp.status}`);
+  return { restarting: true };
+}
+
+// ---- a tiny shared store: every hook sees the same list, and a change (provider switch, enable toggle) refreshes all ----
+
+interface Store { data: PluginList | null; loaded: boolean }
+let store: Store = { data: null, loaded: false };
+let inflight: Promise<void> | null = null;
+const listeners = new Set<() => void>();
+
+function emit(next: Store) { store = next; listeners.forEach(l => l()); }
+
+function load(): Promise<void> {
+  if (!inflight) {
+    inflight = fetchPlugins()
+      .then(data => emit({ data, loaded: true }))
+      .catch(() => emit({ data: store.data, loaded: true }))      // unreachable / no permission: behave as "no plugins"
+      .finally(() => { inflight = null; });
+  }
+  return inflight;
+}
+
+/** Drop the cached plugin list and refetch (after a plugin or slot change). */
+export function invalidatePlugins(): void { void load(); }
+
+/** Forget everything (tests). */
+export function resetPluginStore(): void { store = { data: null, loaded: false }; inflight = null; }
+
+function subscribe(l: () => void) {
+  listeners.add(l);
+  if (!store.loaded && !inflight) void load();
+  return () => { listeners.delete(l); };
+}
+
+// Stable empties: consumers put these in effect dependency lists, so a fresh [] / {} per render would loop.
+const NO_PLUGINS: PluginSummary[] = [];
+const NO_SELECTIONS: Record<string, string | null> = {};
+const NO_PENDING: PendingChange[] = [];
+
+export function usePlugins(): { plugins: PluginSummary[]; selections: Record<string, string | null>; pending: PendingChange[]; loaded: boolean; refresh: () => void } {
+  const s = useSyncExternalStore(subscribe, () => store);
+  const refresh = useCallback(() => invalidatePlugins(), []);
+  return { plugins: s.data?.plugins ?? NO_PLUGINS, selections: s.data?.selections ?? NO_SELECTIONS, pending: s.data?.pending ?? NO_PENDING, loaded: s.loaded, refresh };
+}
+
+/** Plugins that contribute a navigation entry: installed AND running (not staged for removal or failed to load), enabled, and asking for
+ *  their own page. A transient provider error does not hide the entry: the plugin's page is where the admin fixes it. */
+export const navigablePlugins = (plugins: PluginSummary[]): PluginSummary[] =>
+  plugins.filter(p => p.loaded !== false && p.enabled && p.ui.mode === 'page');
+
+/** The plugin currently serving `capability` (selected, enabled, requirements met), or null. */
+export function useCapabilityProvider(capability: string): PluginSummary | null {
+  const { plugins } = usePlugins();
+  return plugins.find(p => p.provides.some(x => x.capability === capability && x.status === 'serving')) ?? null;
+}
+
+/** Whether the provider serving `capability` offers `feature`. False with no provider, or while loading. */
+export function useFeature(capability: string, feature: string): boolean {
+  const provider = useCapabilityProvider(capability);
+  return !!provider && featuresOf(provider, capability).includes(feature);
+}
+
+// ---- schema-renderer tabs (`renderer: 'schema'`): a UI the plugin describes, rendered by Themis ----
+
+interface FieldBase {
+  key: string; label: string; required?: boolean; help?: string;
+  /** Show this field only while the named sibling holds `equals`. */
+  visible_if?: { key: string; equals: string | number | boolean };
+}
+export type SchemaField =
+  | (FieldBase & { type: 'text' | 'textarea'; max_length?: number })
+  | (FieldBase & { type: 'number'; min?: number; max?: number })
+  | (FieldBase & { type: 'checkbox' })
+  | (FieldBase & { type: 'select'; options: { value: string; label: string }[] });
+
+export type SchemaBlock =
+  | { type: 'form'; title?: string; description?: string; load: string; save: string; fields: SchemaField[] }
+  | { type: 'table'; title?: string; description?: string; data: string; columns: { key: string; label: string }[];
+      create?: { path: string; label?: string; fields: SchemaField[] };
+      row_actions?: { label: string; method: 'POST' | 'DELETE' | 'PATCH'; path: string; confirm?: string; body?: Record<string, unknown> }[];
+      empty?: string };
+
+export interface TabSchema { schema_version?: number; title?: string; blocks: SchemaBlock[] }
+
+export const fetchTabSchema = (pluginId: string, tabId: string): Promise<TabSchema> =>
+  request(`/api/v1/plugins/${encodeURIComponent(pluginId)}/ui/${encodeURIComponent(tabId)}`);
+
+/** A path relative to the plugin's own API (under the plugin's id), as the schema names it. */
+export function pluginPath(pluginId: string, path: string, vars?: Record<string, unknown>): string {
+  const filled = path.replace(/\{(\w+)\}/g, (_m, k) => {
+    const v = String(vars?.[k] ?? '');
+    if (v === '' || v === '.' || v === '..') throw new Error(`Cannot build the request: the row has no usable value for {${k}}`);
+    return encodeURIComponent(v);
+  });
+  return `/api/v1/plugins/${encodeURIComponent(pluginId)}/${filled.replace(/^\/+/, '')}`;
+}
+
+export const pluginRequest = request;

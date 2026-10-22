@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from app.models import Job, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 
 _ITEM_KEYS = {"id", "project_id", "file_id", "file_name", "quantity", "quantity_completed", "quantity_failed",
-              "filament_type", "filament_color", "filament_id", "sort_order"}  # src/api/projects.ts ProjectItem
+              "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order"}  # src/api/projects.ts ProjectItem
 _LINK_KEYS = {"id", "project_id", "url", "label", "sort_order", "created_at"}
 
 
@@ -75,13 +75,14 @@ async def test_reorder_items_404_for_missing_project(client):
 async def test_item_lifecycle_add_list_update_delete(client, project, upload_3mf):
     f = await upload_3mf(filename="bracket.3mf")
 
-    created = await _add_item(client, project, f, quantity=3, filament_type="PLA",
+    created = await _add_item(client, project, f, quantity=3, filament_type="PLA", filament_subtype="any",
                               filament_color="#FF0000", sort_order=2)
     assert set(created) == _ITEM_KEYS
     assert created == {
         "id": created["id"], "project_id": project, "file_id": f, "file_name": "bracket.3mf",
         "quantity": 3, "quantity_completed": 0, "quantity_failed": 0,
-        "filament_type": "PLA", "filament_color": "#FF0000", "filament_id": None, "sort_order": 2,
+        "filament_manufacturer": None, "filament_type": "PLA", "filament_subtype": "any", "filament_color": "#FF0000",
+        "sort_order": 2,
     }
     assert (await client.get(f"/api/v1/projects/{project}/items")).json() == [created]
 
@@ -249,7 +250,7 @@ async def test_generate_requires_the_sidecar(client, project, tmp_path, upload_3
 
     resp = await _generate(client, project, tmp_path, sidecar=None)
 
-    assert resp.status_code == 422 and "LAMINUS_SIDECAR_URL" in resp.json()["detail"]
+    assert resp.status_code == 422 and "Settings -> Laminus" in resp.json()["detail"]
     await _assert_no_jobs(client, project)
 
 

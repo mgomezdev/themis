@@ -9,6 +9,8 @@ import { StlPreview } from '../components/StlPreview';
 import { Icons } from '../components/icons';
 import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig, type ApiJob } from '../api/queue';
 import { useFleetData } from '../api/fleet';
+import { useProjects } from '../api/projects';
+import { JobProjectControl } from '../components/JobProjectControl';
 import type { StatusKey } from '../data/types';
 import { apiFetch } from '../api/client';
 import { startsIn } from '../lib/schedule';
@@ -33,6 +35,8 @@ interface DisplayJob {
   id: string;
   rawId: number;
   fileName: string | null;
+  projectId: number | null;
+  projectName: string | null;
   plateName: string;
   status: string;
   blockReason: string | null;
@@ -213,6 +217,12 @@ function JobCardRich({
                   {job.fileName}
                 </div>
               )}
+              {job.projectName && (
+                <div className="tiny" style={{ color: 'var(--accent-hi)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                     title={`Project: ${job.projectName}`}>
+                  {Icons.layers} {job.projectName}
+                </div>
+              )}
             </div>
             <div className="row gap-2" style={{ alignItems: 'center' }}>
               <SliceCacheMarkers job={job.sliceCache} />
@@ -379,12 +389,14 @@ function JobDetailPanel({
   onCancel,
   onUnblock,
   onReorder,
+  onProjectChanged,
 }: {
   job: DisplayJob;
   onClose: () => void;
   onCancel: (jobId: number) => void;
   onUnblock: (jobId: number) => void;
   onReorder: (jobId: number, action: 'promote' | 'demote' | 'front' | 'back') => void;
+  onProjectChanged: () => void;
 }) {
   const navigate = useNavigate();
   const isActive = job.status === 'printing' || job.status === 'paused';
@@ -682,6 +694,11 @@ function JobDetailPanel({
           </button>
         )}
 
+        <div style={{ marginBottom: 8 }}>
+          <div className="tag-key" style={{ marginBottom: 6 }}>Project</div>
+          <JobProjectControl jobId={job.rawId} projectId={job.projectId} projectName={job.projectName} onChanged={onProjectChanged} />
+        </div>
+
         {/* View full details */}
         <button
           className="btn ghost sm"
@@ -762,6 +779,9 @@ export function QueueScreen() {
   const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
   const { getPlate, getFileName } = useFilePlates(fileIds);
 
+  const { projects, refetch: refetchProjects } = useProjects();
+  const projectNames = useMemo(() => new Map(projects.map(p => [p.id, p.name])), [projects]);
+
   // Map ApiJob → DisplayJob
   const jobs: DisplayJob[] = useMemo(() => {
     return rawJobs.map(j => {
@@ -800,6 +820,8 @@ export function QueueScreen() {
         id: String(j.id),
         rawId: j.id,
         fileName: fileName ?? null,
+        projectId: j.project_id ?? null,
+        projectName: j.project_id != null ? (projectNames.get(j.project_id) ?? `Project #${j.project_id}`) : null,
         sliceCache: {
           status: j.status, save_slice: j.save_slice ?? false, sliced_version_id: j.sliced_version_id ?? null,
           slice_cache_info: j.slice_cache_info ?? null,
@@ -1014,6 +1036,7 @@ export function QueueScreen() {
           onCancel={handleCancel}
           onUnblock={handleUnblock}
           onReorder={handleReorder}
+          onProjectChanged={() => { refetch(); refetchProjects(); }}
         />
       )}
     </div>

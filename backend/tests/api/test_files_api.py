@@ -1,5 +1,6 @@
 import io
 import json
+from tests.conftest import slice_info_xml
 import zipfile
 import pytest
 from pathlib import Path
@@ -10,10 +11,7 @@ from app.services.three_mf_parser import PlateInfo
 def _make_three_mf_bytes() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        slice_info = json.dumps({"plate": [
-            {"index": 1, "prediction": 3600, "weight": [42.1]},
-            {"index": 2, "prediction": 1800, "weight": [21.5]},
-        ]})
+        slice_info = slice_info_xml([(1, 3600, 42.1), (2, 1800, 21.5)])
         zf.writestr("Metadata/slice_info.config", slice_info)
         zf.writestr("Metadata/plate_1.png", b"\x89PNG\r\n\x1a\n")
         zf.writestr("Metadata/plate_2.png", b"\x89PNG\r\n\x1a\n")
@@ -77,9 +75,9 @@ async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path)
     runs multiple iterations, and confirm the content lands intact with the
     right hash-derived dedup key, and no .part scratch file is left behind."""
     import hashlib
-    from app.api.routes import files as files_mod
+    from app.services.artifact_store import CHUNK_SIZE
 
-    big = (b"solid model\n" + b"x" * (files_mod._UPLOAD_CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
+    big = (b"solid model\n" + b"x" * (CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
     expected_hash = hashlib.sha256(big).hexdigest()
 
     lib, cache = _patch_dirs(tmp_path)

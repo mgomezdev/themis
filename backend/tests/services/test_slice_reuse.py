@@ -105,6 +105,26 @@ async def test_a_matching_version_is_printed_and_slicing_skipped(session_factory
 
 
 @pytest.mark.asyncio
+async def test_a_cached_version_is_staged_by_reading_its_library_key_from_the_store(session_factory, tmp_path, env):
+    from app.services.artifact_store import LocalDiskArtifactStore
+    opened = []
+
+    class Recording(LocalDiskArtifactStore):
+        def open(self, key):
+            opened.append(key)
+            return super().open(key)
+
+    await _add_version(session_factory, env)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+
+    with patch("app.services.queue_engine.get_library_store", lambda: Recording(env, prune_empty=False)):
+        await _run_to_printing(qe, session_factory, job_id)
+
+    assert opened == ["Prints/Benchy cached.gcode"]
+
+
+@pytest.mark.asyncio
 async def test_a_job_that_does_not_allow_the_cache_slices(session_factory, tmp_path, env):
     await _add_version(session_factory, env)
     qe, _ = _engine(session_factory, tmp_path)
@@ -334,9 +354,9 @@ async def test_a_hand_picked_version_blocks_on_a_printer_whose_profile_changed(s
     qe, mgr = _engine(session_factory, tmp_path)
     async with session_factory() as s:
         s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile="Some Other 0.6 nozzle"))
+                      machine_profile_override="Some Other 0.6 nozzle"))
         cached = (await s.execute(select(UploadedFile).where(UploadedFile.original_filename == "Benchy cached.gcode"))).scalar_one()
-        j = Job(uploaded_file_id=cached.id, plate_number=1, queue_position=1.0, status="queued",
+        j = Job(uploaded_file_id=cached.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True,
                 created_at=_now(), updated_at=_now())
         s.add(j)
         await s.flush()

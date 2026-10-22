@@ -1,45 +1,46 @@
 import { useEffect, useState } from 'react';
 import {
-  filamentDisplayName, getLowStock, saveLowStock, type ApiFilament, type LowStockConfig,
-} from '../api/spoolman';
+  getInventorySettings, materialDisplayName, saveInventorySettings, type InvMaterial, type LowStockConfig,
+} from '../api/inventory';
 
 const toNum = (s: string): number | null => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s));
 
-/** Low-inventory alerts: a default threshold plus per-filament overrides. Alerts fire as the `spool.low` event. */
-export function LowStockSettings({ filaments }: { filaments: ApiFilament[] }) {
+/** Low-inventory alerts: a default threshold plus per-material overrides. Alerts fire as the `spool.low` event. */
+export function LowStockSettings({ materials }: { materials: InvMaterial[] }) {
   const [loaded, setLoaded] = useState(false);
   const [defaultG, setDefaultG] = useState('');
   const [overrides, setOverrides] = useState<Record<string, number>>({});
-  const [pickFilament, setPickFilament] = useState('');
+  const [pickMaterial, setPickMaterial] = useState('');
   const [pickGrams, setPickGrams] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
-    getLowStock()
+    getInventorySettings()
+      .then(st => st.low_stock)
       .then(c => { if (!alive) return; setDefaultG(c.default_g != null ? String(c.default_g) : ''); setOverrides(c.overrides ?? {}); setLoaded(true); })
       .catch(e => { if (alive) { setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setLoaded(true); } });
     return () => { alive = false; };
   }, []);
 
-  const nameOf = (id: string) => {
-    const f = filaments.find(x => String(x.id) === id);
-    return f ? filamentDisplayName(f) : `Filament #${id}`;
+  const nameOf = (ref: string) => {
+    const m = materials.find(x => x.ref === ref);
+    return m ? materialDisplayName(m) : `Material #${ref}`;
   };
 
   function addOverride() {
     const grams = toNum(pickGrams);
-    if (!pickFilament || grams == null || grams < 0) return;
-    setOverrides(o => ({ ...o, [pickFilament]: grams }));
-    setPickFilament(''); setPickGrams('');
+    if (!pickMaterial || grams == null || grams < 0) return;
+    setOverrides(o => ({ ...o, [pickMaterial]: grams }));
+    setPickMaterial(''); setPickGrams('');
   }
 
   async function save() {
     setSaving(true); setMsg(null);
     const body: LowStockConfig = { default_g: toNum(defaultG), overrides };
     try {
-      const cfg = await saveLowStock(body);
+      const cfg = (await saveInventorySettings({ low_stock: body })).low_stock;
       setDefaultG(cfg.default_g != null ? String(cfg.default_g) : ''); setOverrides(cfg.overrides);
       setMsg({ ok: true, text: 'Saved' });
     } catch (e) {
@@ -47,7 +48,7 @@ export function LowStockSettings({ filaments }: { filaments: ApiFilament[] }) {
     } finally { setSaving(false); }
   }
 
-  const available = filaments.filter(f => !(String(f.id) in overrides));
+  const available = materials.filter(m => !m.archived && !(m.ref in overrides));
 
   return (
     <div data-testid="low-stock" style={{ padding: '20px 0', borderBottom: '1px solid var(--border-1)' }}>
@@ -67,7 +68,7 @@ export function LowStockSettings({ filaments }: { filaments: ApiFilament[] }) {
           </label>
 
           <div className="col gap-2">
-            <div className="small muted">Per-filament thresholds (override the default)</div>
+            <div className="small muted">Per-material thresholds (override the default)</div>
             {Object.keys(overrides).length === 0 && <div className="muted small">None.</div>}
             {Object.entries(overrides).map(([id, g]) => (
               <div key={id} className="row gap-2" data-testid={`override-${id}`} style={{ alignItems: 'center' }}>
@@ -78,15 +79,15 @@ export function LowStockSettings({ filaments }: { filaments: ApiFilament[] }) {
               </div>
             ))}
             <div className="row gap-2" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-              <select className="select" aria-label="Filament" value={pickFilament} onChange={e => setPickFilament(e.target.value)}
+              <select className="select" aria-label="Material" value={pickMaterial} onChange={e => setPickMaterial(e.target.value)}
                       style={{ minWidth: 200 }}>
-                <option value="">Choose a filament…</option>
-                {available.map(f => <option key={f.id} value={f.id}>{filamentDisplayName(f)}</option>)}
+                <option value="">Choose a material…</option>
+                {available.map(m => <option key={m.ref} value={m.ref}>{materialDisplayName(m)}</option>)}
               </select>
-              <input className="input" type="number" min="0" step="1" placeholder="grams" aria-label="Threshold for filament (g)"
+              <input className="input" type="number" min="0" step="1" placeholder="grams" aria-label="Threshold for material (g)"
                      value={pickGrams} onChange={e => setPickGrams(e.target.value)} style={{ width: 100 }} />
               <button className="btn sm" onClick={addOverride}
-                      disabled={!pickFilament || toNum(pickGrams) == null || (toNum(pickGrams) ?? 0) < 0}>Add</button>
+                      disabled={!pickMaterial || toNum(pickGrams) == null || (toNum(pickGrams) ?? 0) < 0}>Add</button>
             </div>
           </div>
 

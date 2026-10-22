@@ -2,7 +2,7 @@
 in-memory stand-ins for the documented protocols. Whether real firmware agrees is `backend/protocol_verification`."""
 import pytest
 
-from app.services.bambu_mqtt import parse_unix_list_line
+from app.plugins.bambu.client import parse_unix_list_line
 from app.services.abstract_printer_client import AbstractPrinterClient, PrinterCapabilities
 from tests.virtual_printers import fake_bambu_ftps as bambu_fake
 from tests.virtual_printers import fake_moonraker as moon_fake
@@ -162,9 +162,9 @@ def test_moonraker_sends_the_api_key(monkeypatch):
 # ── capability claims ────────────────────────────────────────────────────────
 
 def test_file_capabilities_per_vendor_match_the_implemented_operations():
-    from app.services.bambu_mqtt import BambuMQTTClient
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
-    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from app.plugins.bambu.client import BambuMQTTClient
+    from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
     def caps(cls) -> PrinterCapabilities:
         return cls.__new__(cls).get_capabilities()

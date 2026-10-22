@@ -5,20 +5,20 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { EditJobScreen } from './EditJobScreen';
 import * as queueApi from '../api/queue';
 
-// ── Spoolman mock ─────────────────────────────────────────────────────────────
+// ── Inventory mock ─────────────────────────────────────────────────────────────
 
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn(),
-  useFilaments: vi.fn(),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(),
+  useMaterials: vi.fn(),
 }));
 
-import * as spoolmanApi from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { noInventory } from '../test/inventoryFixtures';
 
 function mockSpoolmanDisconnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({ config: null, refetch: vi.fn() });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue([]);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
 }
 
 // ── Queue API mock ────────────────────────────────────────────────────────────
@@ -42,10 +42,12 @@ const MULTI_PRINTER = {
   id: 3,
   name: 'U1',
   printer_type: 'snapmaker_extended',
+  model_uuid: 'model-u1',
+  model_label: 'Snapmaker U1',
   connection_config: {},
   awaiting_plate_clear: false,
   orca_printer_profiles: ['U1 Profile'],
-  current_orca_printer_profile: 'U1 Profile',
+  machine_profile: 'U1 Profile',
   enabled: true,
   connected: true,
   loaded_filaments: [
@@ -95,8 +97,9 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
       printer_type: 'snapmaker_extended',
       print_profile: '0.20mm Standard @U1',
       filament_profile: 'TPU @U1',
-      filament_id: null,
+      filament_manufacturer: null,
       filament_type: 'TPU',
+      filament_subtype: 'standard',
       filament_color: '#00ff00',
       tool_index: 2,
       from_model_target: false,
@@ -227,12 +230,58 @@ describe('EditJobScreen — isComplete relaxed (defer)', () => {
   });
 });
 
+describe('EditJobScreen — the filament ask is the stored tuple', () => {
+  const asked: queueApi.ApiJobDetails = {
+    ...JOB_WITH_TOOL2,
+    printer_configs: [{
+      ...JOB_WITH_TOOL2.printer_configs[0],
+      filament_profile: null, tool_index: null,
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#ff0000',
+    }],
+  };
+
+  it('shows the stored tuple in the editor and saves an edit of one part with the others kept', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(asked);
+    const user = userEvent.setup();
+    renderEditJob();
+
+    expect(await screen.findByTestId('filament-ask-manufacturer')).toHaveValue('Acme');
+    expect(screen.getByTestId('filament-ask-type')).toHaveValue('PLA');
+    expect(screen.getByTestId('filament-ask-subtype')).toHaveValue('silk');
+    await user.selectOptions(screen.getByTestId('filament-ask-subtype'), 'plus');
+
+    const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+    await waitFor(() => expect(vi.mocked(queueApi.updateJobConfigs)).toHaveBeenCalled());
+    const [, configs] = vi.mocked(queueApi.updateJobConfigs).mock.calls[0];
+    expect(configs[0]).toMatchObject({ filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'plus', filament_color: '#ff0000' });
+    expect(Object.keys(configs[0]).filter(k => /material|filament_id/.test(k))).toEqual([]);
+  });
+
+  it('an undefined ask stays undefined on save (null parts, not "any")', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...asked,
+      printer_configs: [{ ...asked.printer_configs[0], filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null }],
+    });
+    const user = userEvent.setup();
+    renderEditJob();
+    const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+    await waitFor(() => expect(vi.mocked(queueApi.updateJobConfigs)).toHaveBeenCalled());
+    expect(vi.mocked(queueApi.updateJobConfigs).mock.calls[0][1][0]).toMatchObject({
+      filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null,
+    });
+  });
+});
+
 describe('EditJobScreen — make/model targets', () => {
   const targetJob: queueApi.ApiJobDetails = {
     ...JOB_WITH_TOOL2,
     model_targets: [{
-      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+      model_uuid: 'model-u1', model_label: 'Snapmaker U1', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: null, filament_map: null,
     }],
     // The materialized row for the target must not come back as an explicit printer pick.
     printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], tool_index: null, from_model_target: true, slice_failed: false }],
@@ -251,8 +300,8 @@ describe('EditJobScreen — make/model targets', () => {
     const [, configs, , targets] = vi.mocked(queueApi.updateJobConfigs).mock.calls[0];
     expect(configs).toEqual([]);
     expect(targets).toEqual([{
-      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, filament_type: 'PLA', filament_color: 'any',
+      model_uuid: 'model-u1', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: null,   // the stored tuple comes back unchanged
     }]);
   });
 });

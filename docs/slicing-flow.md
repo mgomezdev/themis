@@ -59,7 +59,7 @@ sequenceDiagram
 
     Cat->>Cat: assign stable UUIDs<br/>machine → UUID5(mfr|model|nozzle)<br/>process/filament → UUID5(source\0rel_path)
 
-    note over Cat: Public GET /api/profiles<br/>strips _resolved — callers<br/>see names + UUIDs only.<br/>Internal catalog keeps full<br/>_resolved data for slice calls.
+    note over Cat: Public GET /api/v1/profiles (paged)<br/>strips _resolved — callers<br/>see names + UUIDs only.<br/>Internal catalog keeps full<br/>_resolved data for slice calls.
 ```
 
 The sidecar returns a **503** on any slice or profile endpoint until this scan completes.
@@ -79,7 +79,7 @@ sequenceDiagram
 
     UI->>TB: GET /api/v1/printers/{id}/profiles
     TB->>SC: get_catalog()
-    SC->>OS: GET /api/profiles
+    SC->>OS: GET /api/v1/profiles (paged)
     OS-->>SC: { machine: [...], process: [...], filament: [...] }
     SC-->>TB: catalog dict (names + UUIDs + compatible_printers)
 
@@ -88,7 +88,7 @@ sequenceDiagram
     TB-->>UI: { print_profiles: ["0.16mm Optimal", ...],<br/>             filament_profiles: ["Elegoo PLA Basic", ...] }
 ```
 
-The printer's `current_orca_printer_profile` (e.g. `"Elegoo Centauri Carbon 0.4 nozzle"`) is the key used to filter compatible process and filament profiles.
+The printer's resolved machine profile (`machine_profile` in the printer response, e.g. `"Elegoo Centauri Carbon 0.4 nozzle"`: its model's slicer profile for the printer's nozzle variant, or the advanced per-printer override, BIZ-294) is the key used to filter compatible process and filament profiles.
 
 ---
 
@@ -143,7 +143,7 @@ sequenceDiagram
 
     alt catalog cache stale (>300s)
         SS->>SC: get_catalog()
-        SC->>OS: GET /api/profiles
+        SC->>OS: GET /api/v1/profiles (paged)
         OS-->>SC: catalog dict
         SC-->>SS: catalog dict
         SS->>SS: cache catalog + timestamp
@@ -157,13 +157,13 @@ sequenceDiagram
     end
 
     SS->>SC: slice_start(<br/>  source_file,<br/>  machine_uuid, process_uuid, filament_uuids,<br/>  plate, export_3mf,<br/>  extra_config<br/>)
-    SC->>OS: POST /api/slice/start (multipart)
+    SC->>OS: POST /api/v1/jobs (multipart)
     OS-->>SC: { "job_id": "abc-123" }
     SC-->>SS: "abc-123"
 
     loop poll every 2 seconds
         SS->>SC: poll_status("abc-123")
-        SC->>OS: GET /api/slice/status/abc-123
+        SC->>OS: GET /api/v1/jobs/abc-123
         OS-->>SC: { "status": "slicing" | "completed" | "failed" }
     end
 
@@ -173,7 +173,7 @@ sequenceDiagram
     end
 
     SS->>SC: download("abc-123", dest_path)
-    SC->>OS: GET /api/slice/download/abc-123
+    SC->>OS: GET /api/v1/jobs/abc-123/artifact
     OS-->>SC: gcode bytes
     SC->>SC: write to dest_path
     SC-->>SS: Path(dest_path)
@@ -184,7 +184,7 @@ sequenceDiagram
     SS-->>QE: gcode_path
 ```
 
-### 3c. Orca Sidecar — POST /api/slice/start Internals
+### 3c. Orca Sidecar — POST /api/v1/jobs Internals
 
 ```mermaid
 sequenceDiagram
@@ -193,7 +193,7 @@ sequenceDiagram
     participant Cat as ProfileCatalog
     participant CLI as OrcaSlicer CLI
 
-    SC->>OS: POST /api/slice/start\nmultipart: file + UUIDs + plate + extra_config
+    SC->>OS: POST /api/v1/jobs\nmultipart: file + UUIDs + plate + extra_config
 
     OS->>Cat: get_by_uuid(machine_uuid)
     OS->>Cat: get_by_uuid(process_uuid)
@@ -228,7 +228,7 @@ sequenceDiagram
     end
 
     CLI-->>OS: plate_1.gcode [+ .gcode.3mf]
-    OS->>OS: jobs[job_id].status = "completed"\njobs[job_id].sliced_file = "plate_1.gcode"
+    OS->>OS: jobs[job_id].status = "completed"\njob.artifact.name = "plate_1.gcode"
 ```
 
 ### 3d. Queue Engine — After Slicing
@@ -271,7 +271,7 @@ sequenceDiagram
     UI->>TB: POST /api/v1/jobs/{id}/check-overrides\n(multipart: machine, print_profile, filament_profile, file)
 
     TB->>SC: get_catalog()
-    SC->>OS: GET /api/profiles
+    SC->>OS: GET /api/v1/profiles (paged)
     OS-->>SC: catalog dict
     SC-->>TB: catalog dict
 
@@ -285,7 +285,7 @@ sequenceDiagram
     end
 
     TB->>SC: get_merged_config(machine_uuid, process_uuid, [filament_uuid])
-    SC->>OS: POST /api/profiles/merged-config\n{ machine_uuid, process_uuid, filament_uuids }
+    SC->>OS: POST /api/v1/profiles/merged-config\n{ machine_uuid, process_uuid, filament_uuids }
     OS->>OS: build_project_settings(_resolved data)
     OS-->>SC: canonical_config dict
     SC-->>TB: canonical_config dict
@@ -320,7 +320,7 @@ flowchart TD
     H --> I{All UUIDs\nfound?}
     I -- No --> FAIL3[SliceError:\nprofile not found\nin sidecar catalog]
 
-    I -- Yes --> J[OrcaSidecarClient.slice_start\nPOST /api/slice/start\nmachine + process + filament UUIDs\nplate + extra_config]
+    I -- Yes --> J[OrcaSidecarClient.slice_start\nPOST /api/v1/jobs\nmachine + process + filament UUIDs\nplate + extra_config]
 
     J --> K[Sidecar: resolve _resolved data\nbuild_project_settings\nmerge extra_config\nembed into 3MF\nlaunch OrcaSlicer CLI]
 
@@ -340,7 +340,7 @@ flowchart TD
 | Invariant | Where enforced |
 |---|---|
 | Themis never reads profile JSON files | `slicer_service.py` — no file imports |
-| All profile data comes from `GET /api/profiles` | `OrcaSidecarClient.get_catalog()` |
+| All profile data comes from `GET /api/v1/profiles (paged)` | `OrcaSidecarClient.get_catalog()` |
 | Profile catalog cached 300 s | `SlicerService._CATALOG_TTL = 300.0` |
 | `extra_config` (bed type, job overrides) applied **after** profile resolution | Sidecar `start_slice` handler |
 | Inheritance flattened once at catalog build time | `ProfileCatalog` on sidecar startup |
@@ -353,7 +353,7 @@ flowchart TD
 
 | Condition | Error | Source |
 |---|---|---|
-| `LAMINUS_SIDECAR_URL` not set | `SliceError: LAMINUS_SIDECAR_URL is not configured` | `SlicerService.slice` |
+| Laminus URL unresolved (plugin disabled) | `SliceError: Laminus is not configured ...` | `SlicerService.slice` |
 | Catalog fetch fails (sidecar down) | `SliceError: Orca sidecar unreachable — cannot resolve profiles: …` | `SlicerService._resolve_uuids` |
 | Profile name not in catalog | `SliceError: Profile not found in Orca sidecar catalog` | `SlicerService._resolve_uuids` |
 | OrcaSlicer CLI returns non-zero (both attempts) | `SidecarError` → `SliceError` | Sidecar `run_orcaslicer_task` |

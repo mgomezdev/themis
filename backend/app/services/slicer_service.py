@@ -1,4 +1,6 @@
 from __future__ import annotations
+import contextlib
+import dataclasses
 import logging
 import zipfile
 from dataclasses import dataclass, field
@@ -6,7 +8,10 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import get_data_dir
-from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider
+from .artifact_store import ArtifactError, ArtifactNotFound
+from .library_store import get_library_store
+from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider, slicing_provider_for
+from .three_mf_parser import plate_thumbnail_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +34,16 @@ def _export_3mf_name(export_args: list[str]) -> str | None:
 class SliceRequest:
     """What a single (job, printer) slice needs.
 
-    ``machine_preset`` is the printer's ``current_orca_printer_profile``;
+    ``machine_preset`` is the printer's resolved machine profile (model mapping + nozzle variant, BIZ-294);
     ``process_preset``/``filament_presets`` are OrcaSlicer preset names resolved
     by the Orca sidecar catalog. ``export_args`` are the printer-specific output
     args: ``[]`` yields raw gcode, ``["--export-3mf", "<name>.gcode.3mf"]`` yields
     the archive. ``extra_config`` carries runtime overrides (bed type, job-level
     setting overrides) merged by the sidecar after profile resolution.
+
+    The source model is either a local path (``source_3mf``) or, preferably, a library
+    artifact key (``source_key``): ``SlicerService.slice`` then materializes that artifact
+    for the duration of the slice and ``source_3mf`` is ignored (BIZ-287).
     """
     job_id: int
     source_3mf: str
@@ -46,6 +55,22 @@ class SliceRequest:
     export_args: list[str] = field(default_factory=list)
     prepare_hook: "Callable[[Path], None] | None" = None
     extra_config: dict = field(default_factory=dict)
+    source_key: "str | None" = None
+    # The `gcode.produce` plugin to slice with (BIZ-291: the one the queue resolved for this printer). None = the capability default.
+    provider_id: "str | None" = None
+
+
+def tool_mapping_hook(client, tool_index, filament_map, provider) -> "Callable[[Path], None] | None":
+    """The `SliceRequest.prepare_hook` that routes a 3MF's filaments to tool heads, or None when none is needed. Only a
+    printer whose client declares `slice_tool_mapping` has its 3MF rewritten (Bambu realizes the mapping at print time);
+    the rewrite is the slicing provider's (`apply_tool_mapping`), never the printer client's."""
+    if client is None or not getattr(client, "slice_tool_mapping", False):
+        return None
+    if tool_index is None and not filament_map:
+        return None
+    if provider is None:
+        return None                                  # the slice itself reports "not configured"
+    return lambda path: provider.apply_tool_mapping(path, tool_index=tool_index, filament_map=filament_map)
 
 
 def resolve_preset_uuids(
@@ -110,7 +135,7 @@ class SlicerService:
     # ── public API ────────────────────────────────────────────────────────────
     def slice(self, req: SliceRequest, output_dir: "Path | None" = None) -> str:
         """Resolve profile names to sidecar UUIDs and delegate the full slice to
-        the Orca sidecar (POST /api/slice/start). The sidecar owns all profile
+        the Laminus sidecar (POST /api/v1/jobs). The sidecar owns all profile
         resolution, 3MF assembly, and gcode generation. Raises SliceError if the
         sidecar is unreachable, unconfigured, or any profile is not in its catalog.
 
@@ -118,9 +143,23 @@ class SlicerService:
         (``<data_dir>/gcode/<job_id>``). Callers can use this to isolate estimate
         gcode from production gcode. The directory is created if it does not exist.
         """
-        provider = get_slicing_provider()
+        provider = slicing_provider_for(req.provider_id) if req.provider_id else get_slicing_provider()
         if provider is None:
-            raise SliceError("LAMINUS_SIDECAR_URL is not configured — Laminus sidecar is required for slicing")
+            from ..plugins import get_plugin
+            plugin = get_plugin(req.provider_id) if req.provider_id else None
+            label = plugin.name if plugin else "Laminus"
+            raise SliceError(f"{label} is not configured — set its URL in Settings -> {label}; it is required for slicing")
+
+        if req.source_key is not None:
+            # The provider reads a local path: hold a materialized copy of the library artifact for the whole slice.
+            with contextlib.ExitStack() as held:
+                try:   # only opening the artifact maps to a SliceError; the slice's own errors pass through untouched
+                    local = held.enter_context(get_library_store().materialize(req.source_key))
+                except ArtifactNotFound as exc:
+                    raise SliceError(f"the source model {req.source_key!r} is missing from the library") from exc
+                except ArtifactError as exc:
+                    raise SliceError(f"could not read the source model {req.source_key!r}: {exc}") from exc
+                return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local)), output_dir)
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -186,16 +225,9 @@ class SlicerService:
         import base64
         try:
             with zipfile.ZipFile(source_3mf, "r") as z:
-                names = z.namelist()
-                thumb_path = f"Metadata/plate_{plate_number}.png"
-                if thumb_path not in names:
-                    if "Metadata/thumbnail.png" in names:
-                        thumb_path = "Metadata/thumbnail.png"
-                    elif "Metadata/preview.png" in names:
-                        thumb_path = "Metadata/preview.png"
-                    else:
-                        return
-                thumb_data = z.read(thumb_path)
+                thumb_data = plate_thumbnail_bytes(z, plate_number)
+            if thumb_data is None:
+                return
 
             if thumb_data[:8] != b"\x89PNG\r\n\x1a\n":
                 return

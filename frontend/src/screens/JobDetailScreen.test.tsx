@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -57,8 +57,9 @@ const BASE_JOB: queueApi.ApiJobDetails = {
       printer_type: 'snapmaker_extended',
       print_profile: '0.20mm Standard @U1',
       filament_profile: 'PLA @U1',
-      filament_id: 12,
+      filament_manufacturer: 'Acme',
       filament_type: 'PLA',
+      filament_subtype: 'silk',
       filament_color: '#000000',
       tool_index: 0,
       from_model_target: false,
@@ -250,21 +251,55 @@ describe('JobDetailScreen — scheduled start', () => {
   });
 });
 
+describe('JobDetailScreen — why a printer does not match', () => {
+  const withMatch = (filament_match: queueApi.ApiJobPrinterConfig['filament_match']): queueApi.ApiJobDetails => ({
+    ...BASE_JOB, printer_configs: [{ ...BASE_JOB.printer_configs[0], filament_match }],
+  });
+
+  it('lists every reason under the printer when the loaded filament does not satisfy the ask, and says the ask in full', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(withMatch({
+      eligible: false, slots: [], reasons: ['T0: Acme PLA standard #FF0000; wanted Acme PLA silk #000000', 'T1 is empty'],
+    }));
+    renderJobDetail();
+
+    const box = await screen.findByTestId('filament-match-reasons');
+    expect(within(box).getByText("Filament doesn't match")).toBeTruthy();
+    expect(within(box).getByText('T0: Acme PLA standard #FF0000; wanted Acme PLA silk #000000')).toBeTruthy();
+    expect(within(box).getByText('T1 is empty')).toBeTruthy();
+    expect(screen.getByText('Acme PLA silk #000000')).toBeTruthy();                       // the ask, as a tuple
+  });
+
+  it('shows nothing extra for a printer that matches (or an older server that sends no match)', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(withMatch({ eligible: true, slots: [0], reasons: [] }));
+    renderJobDetail();
+    await screen.findByText('U1');
+    expect(screen.queryByTestId('filament-match-reasons')).toBeNull();
+  });
+
+  it('an undefined ask reads "Any loaded filament"', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, printer_configs: [{ ...BASE_JOB.printer_configs[0], filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null }],
+    });
+    renderJobDetail();
+    expect(await screen.findByText('Any loaded filament')).toBeTruthy();
+  });
+});
+
 describe('JobDetailScreen — make/model targets', () => {
   it('lists the models any printer of which may take the job, and says when none exists yet', async () => {
     vi.mocked(queueApi.getJobDetails).mockResolvedValue({
       ...BASE_JOB,
       printer_configs: [],
       model_targets: [{
-        machine_profile: 'Bambu Lab P1S 0.4 nozzle', print_profile: '0.20mm', filament_profile: null,
-        filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+        model_uuid: 'model-p1s', model_label: 'Bambu Lab P1S', print_profile: '0.20mm', filament_profile: null,
+        filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, filament_map: null,
       }],
     });
 
     renderJobDetail();
 
     const card = await screen.findByTestId('model-targets');
-    expect(card.textContent).toContain('Bambu Lab P1S 0.4 nozzle');
+    expect(card.textContent).toContain('Bambu Lab P1S');
     expect(card.textContent).toMatch(/No printer of this model is set up yet/);
   });
 });
@@ -301,5 +336,25 @@ describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
     renderJobDetail();
     await screen.findByText(/part\.gcode\.3mf/);
     expect(screen.queryByTestId('save-slice-control')).toBeNull();
+  });
+});
+
+describe('JobDetailScreen — project link', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the linked project name and unlinks it', async () => {
+    const { stubFetch } = await import('../test/fetchStub');
+    const api = stubFetch({
+      'GET /api/v1/projects/3': { id: 3, name: 'Bracket run', stage: 'queued' },
+      'PATCH /api/v1/jobs/5/project': { ...BASE_JOB, project_id: null },
+    });
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, project_id: 3 });
+
+    renderJobDetail();
+
+    expect(await screen.findByText('Bracket run')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect(await screen.findByText('Link to project…')).toBeTruthy();
+    expect(api.to('PATCH', '/api/v1/jobs/5/project')[0].body).toEqual({ project_id: null });
   });
 });

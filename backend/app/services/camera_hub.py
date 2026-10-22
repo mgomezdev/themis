@@ -2,7 +2,7 @@
 
 A camera wall opens many streams at once and several browsers may watch the same printer. Without sharing, each
 viewer costs one printer-side connection (Elegoo and Bambu cameras only tolerate one or two) and, for RTSP, one
-ffmpeg transcode. The hub keeps ONE upstream per printer, cuts it into whole JPEG frames, and fans each frame out to
+transcode. The hub keeps ONE upstream per printer, cuts it into whole JPEG frames, and fans each frame out to
 every subscriber's small queue; a slow viewer drops its own oldest frames, never stalls the others. The upstream is
 closed when the last viewer leaves. Snapshots are served from the live stream's latest frame when there is one, and
 otherwise from a short cache with concurrent requests coalesced into a single grab.
@@ -23,7 +23,7 @@ MAX_FRAME_BYTES = 2_000_000
 QUEUE_FRAMES = 2                       # a viewer more than this far behind skips ahead
 SNAPSHOT_TTL_S = 1.0                   # concurrent/rapid snapshot requests share a grab this fresh
 LIVE_FRAME_MAX_AGE_S = 3.0             # a live stream's latest frame this fresh answers snapshots too
-MAX_CONCURRENT_GRABS = 4               # simultaneous snapshot grabs across ALL printers (each may spawn ffmpeg)
+MAX_CONCURRENT_GRABS = 4               # simultaneous snapshot grabs across ALL printers (each may spawn a vendor transcoder)
 KEEPALIVE_S = 45.0                     # Elegoo drops a silent MJPEG stream after 60 s
 
 

@@ -1,509 +1,76 @@
-# Themis — Contributor Reference
+# Contributing to Themis
 
-Themis is the 3D print queue and farm management backend. It manages printer connections, slicing jobs via the Laminus sidecar, project/order tracking, and a file library. All application code is a single FastAPI service serving both the REST API and the React frontend.
+This repository contains a FastAPI backend, a React/TypeScript browser app, a separate MCP server package, bundled plugins, and a generated OpenAPI contract. Source code and generated contracts define behavior; design docs and dated plans are historical unless explicitly identified as current references.
 
----
+## Development setup
 
-## Stack
+Use Python 3.11 for the backend and Node.js 20 for the frontend. Slicing and project generation need a reachable Laminus sidecar; other app features can be developed without one.
 
-| Layer | Technology |
+```powershell
+# Terminal 1: backend
+cd backend
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 8001
+```
+
+```powershell
+# Terminal 2: frontend
+cd frontend
+npm ci
+npm run dev
+```
+
+Vite runs at `http://localhost:5173` and proxies `/api` and `/ws` to the backend at `:8001`. To run Laminus locally, use the sibling `../laminus` checkout and the root Compose dev overlay described in [operations](docs/operations.md).
+
+## Repository map
+
+| Path | Responsibility |
 |---|---|
-| Backend | Python 3.11 / FastAPI / uvicorn |
-| Database | SQLite via SQLAlchemy async + aiosqlite |
-| Frontend | React 19 / TypeScript / Vite |
-| Printer protocols | Bambu MQTT/TLS, Elegoo SDCP WebSocket, Snapmaker HTTP |
-| Slicer | Laminus sidecar (external service, optional) |
-| Container | Single image — uvicorn serves API + static frontend |
+| `backend/app/api/routes/` | Versioned HTTP routes and authorization dependencies. |
+| `backend/app/services/` | Queue, printer management, slicing orchestration, inventory, events, cameras, and domain services. |
+| `backend/app/plugins/` | Bundled plugin implementations, capability contracts, plugin host, loader, and installer. |
+| `backend/app/models.py`, `backend/app/migrations/` | Core SQLAlchemy models and ordered schema migrations. |
+| `backend/app/eventing/` | Event registry, envelopes, durable/best-effort hub, and payload definitions. |
+| `frontend/src/screens/`, `components/`, `api/` | Routed app screens, shared UI, and typed API clients/hooks. |
+| `mcp-server/` | Independently installable MCP server that calls the REST API. |
+| `openapi.json`, `contracts/response-keys.json` | Generated API schema and frontend-consumed response-key contract. |
+| `docs/` | User guides, operations, integrations, current architecture notes, and historical design records. |
 
----
+For deeper code maps, see [the architecture index](docs/agent/README.md). The SQLite schema is versioned and migrations run during startup. Add a migration for changes to existing tables; do not rely on model metadata alone to update deployed databases.
 
-## Repo Layout
+## Useful commands
 
-```
-themis/
-├── backend/
-│   ├── pyproject.toml           # Dependencies + pytest config (install with: pip install -e backend/)
-│   └── app/
-│       ├── main.py              # FastAPI app, lifespan, router registration
-│       ├── database.py          # Engine, SessionLocal, init_db()
-│       ├── models.py            # ALL SQLAlchemy ORM models (one file)
-│       ├── config.py            # Path/env resolution helpers
-│       ├── api/
-│       │   ├── routes/          # One file per resource group
-│       │   │   ├── files.py
-│       │   │   ├── fleet.py
-│       │   │   ├── jobs.py
-│       │   │   ├── laminus.py
-│       │   │   ├── orders.py
-│       │   │   ├── printers.py
-│       │   │   ├── projects.py
-│       │   │   ├── queue.py
-│       │   │   ├── settings.py
-│       │   │   ├── spoolman.py
-│       │   │   └── tags.py
-│       │   └── websocket.py     # ConnectionManager + /ws endpoint
-│       ├── migrations/
-│       │   ├── runner.py        # Versioned migration runner
-│       │   ├── migrate.py       # CLI: python -m app.migrations.migrate up|down
-│       │   └── v001_initial.py  # Baseline schema migration
-│       └── services/
-│           ├── queue_engine.py          # Job state machine + asyncio loop
-│           ├── slicer_service.py        # Laminus slice orchestration
-│           ├── printer_manager.py       # All printer connection state
-│           ├── printer_client_factory.py
-│           ├── bambu_mqtt.py
-│           ├── elegoo_centauri_client.py
-│           ├── snapmaker_client.py
-│           ├── catalog_service.py       # catalog cache over SlicingProvider
-│           ├── providers/               # SlicingProvider + FilamentInventoryProvider, adapters/
-│           │   ├── slicing.py  filament_inventory.py
-│           │   ├── laminus/             # adapter, sidecar_client, gcode/overrides
-│           │   └── spoolman/            # adapter, service (Spoolman client)
-│           ├── library_scanner.py
-│           ├── three_mf_parser.py
-│           └── spool_check.py
-├── mock/
-│   ├── server.py                # Themis API mock (published as ninjabuffalo/themis-mock)
-│   ├── __main__.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── openapi.json                 # Committed OpenAPI spec — regenerated by CI, fails if stale
-├── scripts/
-│   └── export_openapi.py        # Regenerates openapi.json from the live app
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx              # BrowserRouter + all Routes + AppShell
-│   │   ├── api/                 # Fetch-based API clients (9 modules)
-│   │   ├── screens/             # 13 screen components
-│   │   └── components/          # Shared UI components
-│   └── vite.config.ts
-└── docs/
-    ├── agent/                   # Supplementary LLM-facing docs
-    ├── slicing-flow.md          # Full pipeline Mermaid diagrams
-    └── printer-interface.md     # AbstractPrinterClient reference
+```sh
+# Backend (from backend/)
+pytest -v
+pytest tests/services/test_queue_engine.py -q
+
+# Frontend (from frontend/)
+npm run build       # TypeScript project check and production build
+npm run test:run
+npm run test:e2e
+
+# MCP server (from mcp-server/)
+pip install -e ".[dev]"
+pytest
+
+# Regenerate API schema (from repository root)
+python scripts/export_openapi.py
 ```
 
----
+Run the checks affected by a change before reporting it complete. Hardware protocol verification under `backend/protocol_verification/` is a separate manual suite and is not part of the ordinary backend tests; its README explains its read/write safeguards.
 
-## Running Locally
+## Change guidance
 
-```bash
-# Backend (from repo root)
-pip install -e "backend[dev]"
-cd backend && uvicorn app.main:app --reload --port 8000
+- Keep printer-specific protocol code inside printer plugins. Core services should depend on the printer client and capability contracts, not a vendor implementation.
+- Keep optional feature access capability-based. For filament inventory, use the neutral provider interface and handle unavailable capability results rather than importing a concrete provider into core code.
+- Keep blocking slicing/provider calls off the asyncio event loop. Queue behavior and retry semantics are described in [backend architecture](docs/agent/backend.md) and [slicing flow](docs/slicing-flow.md).
+- Every API route needs an explicit scope or a documented intentional public/session exception. Use the scope registry and existing auth dependencies.
+- Update `openapi.json` when the API contract changes and `contracts/response-keys.json` when a backend response field consumed by the frontend changes.
+- Update current guides or architecture references when behavior changes. Dated specs and plans under `docs/superpowers/` record past decisions; do not treat them as promises about the current implementation.
 
-# Frontend (separate terminal)
-cd frontend && npm install && npm run dev
-# Vite dev server on :5173 proxies /api/v1 → :8000
+## Local verification
 
-# DB migrations (run once after pulling)
-cd backend && python -m app.migrations.migrate up
-```
-
-Docker:
-```bash
-docker compose up
-# or from Concordia:
-docker compose -f docker-compose.yml -f docker-compose.local.yml up
-```
-
----
-
-## Architecture
-
-### Three core singletons
-
-Three singleton objects are wired together in `app/main.py`'s `lifespan` and passed by reference:
-
-| Singleton | Module | Role |
-|---|---|---|
-| `printer_manager` | `services/printer_manager.py` | Owns all live printer connections; normalizes state from protocol-specific clients; fans out WebSocket broadcasts |
-| `queue_engine` | `services/queue_engine.py` | Asyncio event loop; claims jobs for idle printers; drives the job state machine |
-| `slicer_service` | `services/slicer_service.py` | Resolves profile names→UUIDs; posts to Laminus `/api/slice/start`; polls status; downloads gcode |
-
-### Startup sequence (`app/main.py :: lifespan`)
-
-1. `init_db()` — WAL pragma + run pending migrations
-2. Seed placeholder Elegoo Centauri Carbon printer (idempotent)
-3. `LibraryScanner.scan()` — walk library dir, hash files, sync `uploaded_files` table
-4. Wire `printer_manager` (load `awaiting_plate_clear` from DB, connect all enabled printers)
-5. Wire `queue_engine` with session factory, printer_manager, slicer_service
-6. If `LAMINUS_SIDECAR_URL` set: health-check sidecar, start `catalog_service.warm()` background task
-
-### Job state machine
-
-```
-queued
-  ├─ (slicing required) → slicing → uploading → printing → complete
-  ├─ (Laminus unreachable) → blocked  ← re-evaluated each queue cycle
-  ├─ (filament mismatch) → blocked
-  ├─ (slice failed) → failed          ← slice_failed=True, won't auto-retry
-  └─ (cancelled)  → cancelled
-                       ↑ (user unblock)
-                    blocked
-```
-
-`blocked` jobs re-enter the queue cycle automatically. `failed` jobs (with `slice_failed=True`) do not retry without user intervention.
-
-### Request → Response flow
-
-```
-Browser / API client
-  └─ HTTP request (X-Api-Key header or ?key= query param)
-       └─ FastAPI (app/main.py)
-            └─ router (app/api/routes/<resource>.py)
-                 └─ Depends(require_scope("<resource>:<read|write|control>"))  (app/auth.py)
-                      └─ async route function
-                           └─ AsyncSession (via Depends(get_session))
-                                └─ SQLAlchemy async queries / service calls
-```
-
-WebSocket updates push to all connected clients when queue, fleet, or order state changes.
-
-### Laminus catalog caching
-
-The Laminus profile catalog is large and expensive to fetch. Themis caches it module-level in `app/services/catalog_service.py` (fetched through `SlicingProvider.get_catalog()`):
-
-```python
-_catalog: Catalog | None = None       # neutral DTO for internal callers
-_catalog_bytes: bytes | None = None   # pre-serialised legacy JSON for HTTP responses
-```
-
-All internal code calls `catalog_service.get_cached_catalog()` — never fetch from Laminus per-request. To force a refresh: `POST /api/v1/laminus/catalog/refresh`.
-
----
-
-## Routes Reference
-
-All routes are under `/api/v1`. Route files are in `backend/app/api/routes/`. Every route requires a
-valid API key (see **Auth** below) — each endpoint below is gated by `Depends(require_scope("<scope>"))`
-matching its resource + verb class; that's omitted from the per-route lists below for brevity.
-
-### api_keys.py — `/api/v1/api-keys`
-- `GET /` — list keys (never returns `key_hash` or the raw key) — `apikeys:read`
-- `POST /` — create a key; response includes the raw key **once** — `apikeys:write`. While the table is
-  empty this is the bootstrap route: requested scopes are ignored and the key is granted every scope.
-- `POST /{key_id}/revoke` — soft: `enabled=False` + `revoked_at` — `apikeys:write`
-- `DELETE /{key_id}` — hard delete — `apikeys:write`
-- Revoking/deleting the last enabled key holding `apikeys:write` → `400` (can't lock yourself out).
-
-### files.py — `/api/v1/files`
-- `GET /` — list files (query: folder, tags, search, sort)
-- `GET /tree` — folder tree from DB
-- `POST /upload` — multipart upload (default folder: `/Job Uploads`)
-- `POST /folders` / `DELETE /folders` — create/delete folder
-- `PATCH /{file_id}` — rename or move
-- `DELETE /{file_id}` — delete (blocks if active job references it)
-- `POST /{file_id}/tags` / `DELETE /{file_id}/tags/{tag_id}` — tag management
-- `POST /rescan` — re-walk library dir, sync DB
-- `GET /{file_id}/plates` — plate metadata
-- `GET /{file_id}/model-filaments` — filament slots from 3MF
-- `GET /{file_id}/embedded-settings` — OrcaSlicer settings baked in 3MF
-- `GET /{file_id}/thumbnails/{filename}` — serve plate PNG thumbnail
-
-### jobs.py — `/api/v1/jobs`
-- `POST /` — create job (body: uploaded_file_id, plate_number, printer_configs[], overrides)
-- `POST /check-overrides` — diff 3MF embedded settings vs canonical OrcaSlicer presets
-- `GET /` — list active queue jobs (ordered by queue_position)
-- `GET /history` — completed/cancelled/failed jobs
-- `GET /{job_id}/details` — enriched detail with file, plate, printer configs
-- `POST /{job_id}/cancel` — cancel (stops printer if active)
-- `POST /{job_id}/unblock` — re-queue blocked job at front of queue
-- `POST /{job_id}/verify-slice` — test-slice without printing
-- `PUT /{job_id}/outcome` — record per-item pass/fail counts
-
-### printers.py — `/api/v1/printers`
-- `GET /types` — supported printer types + connection form fields
-- `POST /` — create printer and connect
-- `GET /{printer_id}/profiles` — compatible print + filament profiles for this printer
-- `PATCH /{printer_id}` — update printer settings
-- `POST /{printer_id}/plate-cleared` — mark plate clear, wake queue engine
-- `POST /{printer_id}/pause` / `resume` / `stop` — print controls
-- `POST /{printer_id}/light` / `jog-z` / `fan` / `bed-temp` — hardware controls
-- `GET /{printer_id}/camera` — MJPEG stream (multipart/x-mixed-replace)
-- `GET /{printer_id}/snapshot` — single JPEG frame
-
-### projects.py — `/api/v1/projects`
-- `GET /` / `POST /` / `PATCH /{id}` / `DELETE /{id}` — project CRUD
-- `GET /{project_id}/items` / `POST /{project_id}/items` / `PUT /{project_id}/items/{item_id}` / `DELETE` — item management
-- `GET /{project_id}/links` / `POST /{project_id}/links` / `PUT /{project_id}/links/{link_id}` / `DELETE` — user-defined URL links
-- `GET /{project_id}/parts` / `POST /{project_id}/parts` / `PUT /{project_id}/parts/{part_id}` / `DELETE` — non-3D-printed parts (hardware BOM, e.g. magnets/screws) with a manual `allocated` flag
-- `POST /{project_id}/generate` — pack STLs via Laminus, create 3MFs, enqueue print jobs per plate
-
-### laminus.py — `/api/v1/laminus`
-- `GET /catalog` — cached full catalog (JSON bytes)
-- `GET /catalog/status` — cache state + Laminus live health
-- `POST /catalog/refresh` — pull fresh catalog from Laminus
-- `POST /catalog/rescan` — tell Laminus to rebuild from disk, then re-fetch (polls up to 120s)
-
-### Other routers
-- `fleet.py` — `GET /api/v1/fleet/` — all printers with live normalized state
-- `orders.py` — CRUD for customer/internal print orders
-- `queue.py` — `GET /api/v1/queue/`, `PATCH /api/v1/queue/reorder`
-- `settings.py` — QueueConfig singleton, SpoolmanConfig singleton, fleet backup/import
-- `spoolman.py` — filament and spool data from Spoolman
-- `tags.py` — file tag CRUD
-
-### Auth
-
-Every `/api/v1/*` request needs a valid API key: `X-Api-Key: <key>` header, or `?key=<key>` for the
-handful of endpoints that can't set headers (`/ws`, camera/snapshot, file thumbnails). Keys are managed
-via `api_keys.py` and enforced by `app/auth.py`'s `require_scope(scope)` dependency + a fixed,
-hardcoded scope registry (`SCOPES` in `app/auth.py`) — one `read`/`write` pair per route module, plus
-`printers:control` for hardware actions and `apikeys:{read,write}` for key management itself.
-**Bootstrap escape hatch:** while the `api_keys` table is empty, every request passes through
-unauthenticated so the very first key can be created through the normal `POST /api/v1/api-keys`
-endpoint; the instant one key exists, the hatch closes permanently. The React SPA bootstraps its own
-full-access "Browser" key on first load and stores it in `localStorage` (`frontend/src/auth/AuthGate.tsx`)
-— there's no login system, the browser key just functions like a device credential. `/ws` requires *any*
-valid, non-revoked key (no specific scope) and closes with code `4401` if missing/invalid. `/api/v1/health`
-and the static frontend (`/`, `/assets/*`, SPA fallback) stay unauthenticated so the app shell can load
-before any key exists.
-
-**Recovery:** the simplest path is `THEMIS_BOOTSTRAP_KEY=<any-string>` in `.env` + restart — any request
-presenting that value as its key is accepted with full scopes, no `api_keys` row required, no DB access
-needed. Deleting all rows from `api_keys` via the sqlite CLI and restarting also works (the empty-table
-check is re-evaluated on every request, not cached), but requires DB access you may not have.
-
-**Scope notes:**
-- `jobs:write` grants the ability to cancel a running job, which stops the printer (see `cancel_job` route in `jobs.py` line 514).
-- Other `write` scopes are update-only; only `jobs:write` and `printers:control` control hardware.
-
----
-
-## Data Model
-
-All models live in `backend/app/models.py`. Timestamps are stored as `VARCHAR(32)` ISO strings.
-
-| Model | Table | Notes |
-|---|---|---|
-| `Printer` | `printers` | connection_config JSON, loaded_filaments JSON, awaiting_plate_clear |
-| `UploadedFile` | `uploaded_files` | plates JSON, content_hash for dedup |
-| `Job` | `jobs` | queue_position FLOAT for fractional reordering, overrides JSON |
-| `JobPrinterConfig` | `job_printer_configs` | per-printer profile/filament assignments |
-| `JobModelTarget` | `job_model_targets` | job eligible on any printer of a make/model; materialized into `job_printer_configs` |
-| `GcodeFile` | `gcode_files` | path to downloaded gcode on disk |
-| `QueueConfig` | `queue_config` | singleton (id=1) |
-| `SpoolmanConfig` | `spoolman_config` | singleton (id=1) |
-| `Project` | `projects` | source_app, source_user, source_layout_id for Ordinus integration |
-| `ProjectItem` | `project_items` | quantity, filament_profile_uuid, color_hex |
-| `ProjectLink` | `project_links` | user-defined URL links attached to a project |
-| `ProjectPart` | `project_parts` | non-3D-printed hardware parts (name, quantity) with manual `allocated` flag |
-| `Order` | `orders` | parts JSON, derived status computed at API layer |
-| `Tag` / `FileTag` | `tags` / `file_tags` | many-to-many file tagging |
-| `ApiKey` | `api_keys` | key_prefix (indexed lookup) + key_hash (sha256), scopes JSON, enabled/revoked_at |
-
----
-
-## Key Code Paths
-
-### 1. Job lifecycle (queue engine)
-
-```
-queue_engine.py :: _run_loop()
-  → queries jobs WHERE status IN ('queued', 'blocked') ORDER BY queue_position
-  → for each idle printer:
-       → pre-flight Laminus health check
-         ├─ unreachable → _block_job("Laminus unreachable") → continue
-         └─ OK → claim job (status=slicing)
-              → slicer_service.slice(job)
-                   → resolve profile names → UUIDs (via Laminus catalog)
-                   → POST /api/slice/start to Laminus
-                   → poll /api/slice/status/{job_id} until complete|failed
-                   → GET /api/slice/download/{job_id} → save gcode
-              → upload gcode to printer (printer_manager)
-              → job status=printing
-  → sleeps until Event triggered (plate-clear, job-created, job-cancelled, etc.)
-```
-
-### 2. Slicing flow
-
-```
-slicer_service.py :: slice(request: SliceRequest)
-  → catalog_service.get_cached_catalog() → resolve profile name → ref (UUID)
-  → provider.slice(SliceSpec) — Laminus adapter: POST /api/slice/start (uploads STL, passes profile UUIDs)
-  → poll GET /api/slice/status/{job_id} (2s interval, up to SLICE_TIMEOUT)
-  → GET /api/slice/download/{job_id} → bytes
-  → save to <filecache_dir>/<job_id>.gcode
-```
-
-### 3. File upload and library scan
-
-```
-POST /api/v1/files/upload
-  → files.py route handler
-  → save multipart file to THEMIS_LIBRARY_DIR/<folder>/
-  → library_scanner.py :: scan_single(path)
-       → hash file (content_hash for dedup)
-       → parse 3MF plates → PlateInfo[]
-       → generate plate thumbnails (OrcaSlicer headless if available)
-       → insert/update uploaded_files row
-```
-
-### 4. Ordinus → Themis project creation
-
-When Ordinus sends a layout to Themis:
-- Ordinus uploads each bin STL: `POST /api/v1/files/upload` (folder: `/ordinus/layouts/<layout_id>/`)
-- Ordinus creates a project: `POST /api/v1/projects` with `source_app="ordinus"`, `source_layout_id`
-- Ordinus adds items: `POST /api/v1/projects/:id/items` per STL
-
-The `project.source_layout_id` and `project.source_app` fields enable bidirectional linking.
-
-### 5. WebSocket broadcast
-
-```
-printer_manager.py :: _broadcast(msg)
-  → websocket.py :: ConnectionManager.broadcast(msg)
-  → pushes to all connected /ws clients
-
-Message types:
-  "queue_update"   → full jobs array
-  "job_update"     → single job delta
-  "printer_state"  → single printer state delta
-```
-
-Frontend hooks (`useQueue`, `useFleetData`, `useOrders`) maintain separate `/ws` connections and merge server-pushed updates into local state.
-
----
-
-## Adding a New Route
-
-1. Create or edit a file in `backend/app/api/routes/`.
-2. Define an `APIRouter`:
-```python
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from ...database import get_session
-
-router = APIRouter(prefix="/api/v1/widgets", tags=["widgets"])
-
-@router.get("/", dependencies=[Depends(require_scope("widgets:read"))])
-async def list_widgets(session: AsyncSession = Depends(get_session)):
-    ...
-```
-3. Add `widgets:read`/`widgets:write` (or whichever verb classes apply) to `SCOPES` in `app/auth.py` —
-   the registry is fixed/hardcoded, not auto-derived, so a new route module needs its scopes added there
-   explicitly. Import `require_scope` from `...auth`.
-4. Register in `backend/app/main.py`:
-```python
-from .api.routes.widgets import router as widgets_router
-app.include_router(widgets_router)
-```
-5. Add frontend API client in `frontend/src/api/widgets.ts`, calling `apiFetch` (from `api/client.ts`)
-   instead of raw `fetch` — see **API client pattern** under Frontend Notes.
-
----
-
-## Adding a New Printer Type
-
-1. Create `backend/app/services/my_printer_client.py` implementing `AbstractPrinterClient` (see `abstract_printer_client.py` for the full interface and `docs/printer-interface.md` for the protocol).
-2. Register in `printer_client_factory.py`:
-```python
-_REGISTRY = {
-    "bambu": "...",
-    "elegoo_centauri": "...",
-    "my_printer": "app.services.my_printer_client.MyPrinterClient",
-}
-```
-3. Add connection form fields by implementing `get_connection_fields() -> list[ConnectionField]`.
-
----
-
-## DB Migrations
-
-### How it works
-
-- `schema_migrations` table tracks applied versions (version, name, applied_at)
-- Runner in `backend/app/migrations/runner.py` applies pending migrations in version order
-- `init_db()` in `database.py` calls `run_migrations(conn)` at every startup
-- Each migration module exports `version`, `name`, `up(conn)`, `down(conn)`
-
-### Adding a migration
-
-1. Create `backend/app/migrations/v002_my_change.py`:
-```python
-from sqlalchemy import text
-
-version = 2
-name = "my_change"
-
-async def up(conn) -> None:
-    await conn.execute(text("ALTER TABLE jobs ADD COLUMN priority INTEGER DEFAULT 0"))
-
-async def down(conn) -> None:
-    # SQLite 3.35+: ALTER TABLE jobs DROP COLUMN priority
-    pass
-```
-
-2. Register in `backend/app/migrations/runner.py`:
-```python
-from . import v001_initial, v002_my_change
-_MIGRATIONS = sorted([v001_initial, v002_my_change], key=lambda m: m.version)
-```
-
-3. Run:
-```bash
-cd backend && python -m app.migrations.migrate up    # apply pending
-cd backend && python -m app.migrations.migrate down  # roll back latest (dev only)
-```
-
-Migrations auto-apply at startup via `init_db()` — no manual step needed.
-
-### Rules
-- Never edit an applied migration file — add a new one instead
-- `up()` must be idempotent where possible (check PRAGMA table_info before ADD COLUMN)
-- `down()` exists for dev rollback only; production rollbacks are manual
-- The `conn` argument is an `AsyncConnection` from `engine.begin()` — use `await conn.execute(text(...))`
-
----
-
-## Environment Variables
-
-Resolved in `backend/app/config.py`:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `THEMIS_DATA_DIR` | `<repo-root>/data` | Root for DB, library, filecache, gcode |
-| `THEMIS_LIBRARY_DIR` | `<data>/library` | Uploaded print files |
-| `LAMINUS_SIDECAR_URL` | *(unset)* | Laminus base URL; sidecar disabled if unset |
-| `ORCA_CONFIG_DIR` | `%APPDATA%/OrcaSlicer` (Win) | OrcaSlicer profile dir (local dev only) |
-| `ORCA_EXECUTABLE` | searches Program Files | OrcaSlicer binary (local dev only) |
-| `FFMPEG_EXECUTABLE` | `ffmpeg` | For RTSP camera proxy |
-
----
-
-## Frontend Notes
-
-### API client pattern
-
-API client files in `frontend/src/api/` call `apiFetch` (from `api/client.ts`), not raw `fetch` —
-`apiFetch` injects the `X-Api-Key` header from `auth/apiKeyStore.ts` and reports 401s to the app-wide
-`AuthGate` via `setUnauthorizedHandler`. `withKeyParam(url)` (same file) appends `?key=` for the few
-endpoints that need it in a URL instead of a header (WS connections, camera/snapshot `<img>` src, plate
-thumbnails). Imperative async functions for mutations, `useXxx()` React hooks for data that needs
-polling or WebSocket integration.
-
-**Important:** `frontend/src/api/orca.ts` calls `/api/v1/orca/...` routes — this is a stale name from before the Laminus rename. The actual backend routes are at `/api/v1/laminus/...`. This mismatch exists and the frontend orca.ts functions are currently broken. When touching profile/catalog code, use `/api/v1/laminus/...` endpoints.
-
-### Screen structure
-
-13 screen components in `frontend/src/screens/`. Each screen fetches its own data via the API hooks — no global frontend store. WebSocket updates (via `useQueue`, `useFleetData`, `useOrders`) trigger re-renders without polling.
-
-### WebSocket
-
-Three independent `/ws` connections are opened (one per hook). All receive the same broadcast messages; each hook filters for its relevant message type. Don't open a fourth `/ws` connection for new features — add a new message type to the existing broadcast in `printer_manager.py` and handle it in the relevant existing hook.
-
----
-
-## Known Gotchas
-
-- **Auth is mandatory everywhere.** Every `/api/v1/*` route requires `Depends(require_scope(...))` — see
-  the **Auth** subsection under Routes Reference. Adding a new route means picking (or adding) a scope in
-  `app/auth.py`'s `SCOPES` registry, not skipping the dependency. The bootstrap hatch (open access while
-  `api_keys` is empty) is the only exception, and it's automatic — never bypass auth manually for "just
-  this one route."
-- **`orca.ts` naming mismatch.** `api/orca.ts` hits `/api/v1/orca/...` which doesn't exist. Use `/api/v1/laminus/...` when adding profile/catalog features.
-- **`awaiting_plate_clear` persisted to DB.** This boolean on each Printer row survives restarts. If a printer is stuck, clear it via `POST /api/v1/printers/{id}/plate-cleared`.
-- **Laminus pre-flight.** `queue_engine.py` checks Laminus health before claiming each job. If Laminus is unreachable, jobs are `blocked` (not failed) and will auto-retry.
-- **SQLite single-writer.** All write operations go through `engine.begin()` transactions. WAL mode is on. Don't open additional raw connections alongside SQLAlchemy.
-- **All timestamps are strings.** The `VARCHAR(32)` ISO string format (e.g. `2026-07-10T14:30:00`) is used throughout. No Python `datetime` objects in the DB layer.
+Backend tests use a per-test SQLite file and fixtures in `backend/tests/conftest.py`. Frontend tests use Vitest and Testing Library; E2E tests use Playwright with the mocked API in `frontend/e2e/mock-api.ts`. Protocol verification requires a real device and is opt-in. Do not commit generated local state, credentials, or database files.

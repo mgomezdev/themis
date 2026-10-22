@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Job, Project, SlicedVersion, UploadedFile
+from app.services.artifact_store import ArtifactStoreError, LocalDiskArtifactStore
 from tests.api.test_slice_cache_api import _version_for, library  # noqa: F401 — `library` is a fixture
 from tests.conftest import make_sliced_archive
 
@@ -336,17 +337,17 @@ async def test_a_failed_version_move_puts_everything_back(client, library, uploa
     model = await upload_3mf()
     _, f1 = await _version_for(session_factory, library, model, name="a.gcode.3mf")
     _, f2 = await _version_for(session_factory, library, model, name="b.gcode.3mf")
-    real_replace = type(library).replace
+    real_move = LocalDiskArtifactStore.move
     calls = {"n": 0}
 
-    def flaky_replace(self, target):
+    def flaky_move(self, src, dst, **kw):
         calls["n"] += 1
         if calls["n"] == 3:   # model, first version, then the second version fails
-            raise OSError("disk full")
-        return real_replace(self, target)
+            raise ArtifactStoreError("disk full")
+        return real_move(self, src, dst, **kw)
 
     with patch("app.config.get_library_dir", return_value=library), \
-         patch.object(type(library), "replace", flaky_replace):
+         patch.object(LocalDiskArtifactStore, "move", flaky_move):
         resp = await client.patch(f"/api/v1/files/{model}", json={"folder": "/Archive"})
 
     assert resp.status_code == 500
@@ -354,3 +355,22 @@ async def test_a_failed_version_move_puts_everything_back(client, library, uploa
     assert not any((library / "Archive").iterdir())
     for fid, rel in ((model, f"{UP}/m.3mf"), (f1, f"{UP}/a.gcode.3mf"), (f2, f"{UP}/b.gcode.3mf")):
         assert (await _file(session_factory, fid)).relative_path == rel
+
+
+async def test_a_failing_rollback_does_not_mask_the_original_error(client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    await _version_for(session_factory, library, model, name="a.gcode.3mf")
+    await _version_for(session_factory, library, model, name="b.gcode.3mf")
+    real_move = LocalDiskArtifactStore.move
+    calls = {"n": 0}
+
+    def move(self, src, dst, **kw):
+        calls["n"] += 1
+        if calls["n"] >= 3:   # the second version fails, and so does every put-back after it
+            raise ArtifactStoreError("disk full")
+        return real_move(self, src, dst, **kw)
+
+    with patch("app.config.get_library_dir", return_value=library), patch.object(LocalDiskArtifactStore, "move", move):
+        resp = await client.patch(f"/api/v1/files/{model}", json={"folder": "/Archive"})
+
+    assert resp.status_code == 500 and "sliced versions" in resp.json()["detail"]

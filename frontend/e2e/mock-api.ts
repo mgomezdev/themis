@@ -4,19 +4,21 @@ export interface Mocks { captured: { url: string; method: string; body: any }[];
 
 const U1 = {
   id: 3, name: 'U1', printer_type: 'snapmaker_extended', connected: true, state: 'IDLE',
-  current_orca_printer_profile: 'Snapmaker U1 (0.4 nozzle)', queue_on: true, enabled: true,
+  machine_profile_override: null, machine_profile: 'Snapmaker U1 (0.4 nozzle)', machine_profile_reason: null, nozzle_variant: null,
+  model_uuid: 'model-u1', model_label: 'Snapmaker U1', queue_on: true, enabled: true,
   awaiting_plate_clear: false, progress: 0, remaining_time: 0,
   temperatures: { nozzle: 27, bed: 25, extruders: [{index:0,temp:27},{index:1,temp:27},{index:2,temp:28},{index:3,temp:28}] },
   loaded_filaments: [
-    { slot: 0, filament_id: null, name: 'PLA White', type: 'PLA', color: '#ffffff', filament_profile: 'Generic PLA @System' },
-    { slot: 1, filament_id: null, name: 'PETG Black', type: 'PETG', color: '#000000', filament_profile: 'Generic PETG @System' },
-    { slot: 2, filament_id: null, name: 'TPU Green', type: 'TPU', color: '#00ff00', filament_profile: 'Generic TPU @System' },
-    { slot: 3, filament_id: null, name: 'PLA Blue', type: 'PLA', color: '#0000ff', filament_profile: 'Generic PLA @System' },
+    { slot: 0, filament_id: null, name: 'PLA White', type: 'PLA', subtype: 'standard', manufacturer: null, color: '#ffffff', filament_profile: 'Generic PLA @System' },
+    { slot: 1, filament_id: null, name: 'PETG Black', type: 'PETG', subtype: 'standard', manufacturer: null, color: '#000000', filament_profile: 'Generic PETG @System' },
+    { slot: 2, filament_id: null, name: 'TPU Green', type: 'TPU', subtype: 'standard', manufacturer: null, color: '#00ff00', filament_profile: 'Generic TPU @System' },
+    { slot: 3, filament_id: null, name: 'PLA Blue', type: 'PLA', subtype: 'standard', manufacturer: null, color: '#0000ff', filament_profile: 'Generic PLA @System' },
   ],
 };
 const MONO = {
   id: 1, name: 'Mono', printer_type: 'elegoo_centauri', connected: true, state: 'IDLE',
-  current_orca_printer_profile: 'Mono', queue_on: true, enabled: true, awaiting_plate_clear: false,
+  machine_profile_override: null, machine_profile: 'Mono', machine_profile_reason: null, nozzle_variant: null,
+  model_uuid: 'model-mono', model_label: 'Elegoo Mono', queue_on: true, enabled: true, awaiting_plate_clear: false,
   progress: 0, remaining_time: 0, temperatures: { nozzle: 25, bed: 25 }, loaded_filaments: [],
 };
 const PROFILES = { print_profiles: ['0.20mm Standard', '0.08 Extra Fine'], filament_profiles: ['Generic PLA @System', 'Generic PETG @System', 'Generic TPU @System'] };
@@ -38,6 +40,8 @@ export async function mockApi(page: Page, over: Partial<{
   platesByFile: Record<number, any[]>;
   /** GET /queue body (a function so a test can make it change as the journey progresses). */
   queue: () => any[];
+  /** GET /plugins body (default: no plugin active). */
+  plugins: any;
   /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
   respond: (method: string, path: string, body: any) => any;
 }> = {}): Promise<Mocks> {
@@ -98,15 +102,24 @@ export async function mockApi(page: Page, over: Partial<{
     }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
     if ((m = path.match(/^\/files\/(\d+)\/sliced-versions$/))) return ok(route, over.slicedVersions?.[+m[1]] ?? []);
-    if (path === '/settings/spoolman') return ok(route, { enabled: false });
-    if (path === '/spoolman/filaments' || path === '/spoolman/spools') return ok(route, []);
+    // Inventory: no provider is active by default (so no spool pickers, scan button or status chip)
+    if (path === '/plugins') return ok(route, over.plugins ?? { plugins: [], selections: {} });
+    if (path === '/capabilities') return ok(route, { capabilities: [] });
+    if (path === '/inventory/spools' || path === '/inventory/materials')
+      return ok(route, { provider: 'none', stale: false, as_of: '2026-01-01T00:00:00Z', items: [] });
+    if (path === '/inventory/pending-writes' || path === '/inventory/tracking') return ok(route, { provider: null, items: [] });
+    if (path === '/inventory/sync-status') return ok(route, { provider: null, capabilities: [], enabled: false });
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
     if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5, slice_cache_use_latest_settings: true });
     if (path === '/queue') return ok(route, over.queue ? over.queue() : []);
     if (path === '/jobs') return ok(route, []);
-    if (path === '/orders') return ok(route, []);
+    if (path === '/orders' || path === '/projects') return ok(route, []);
     if (path === '/machine-catalog') return ok(route, []);
+    // A model's slicer profiles (BIZ-294): none mapped, and the provider offers no suggestions
+    if (/^\/printer-models\/[^/]+\/slicer-profiles$/.test(path)) return ok(route, []);
+    if (/^\/printer-models\/[^/]+\/slicer-profiles\/suggestions$/.test(path))
+      return ok(route, { provider_plugin_id: null, available: false, candidates: [], variants: [], error: null });
     return ok(route, {});  // permissive default for any unlisted GET
   });
   return mocks;

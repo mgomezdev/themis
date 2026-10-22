@@ -3,8 +3,10 @@ import json
 
 import pytest
 
-from app.services import alarm_codes
-from app.services.alarm_codes import decode_hms, hms_alarms, hms_key, klipper_alarms, sdcp_alarms
+from app.plugins.bambu import alarms as alarm_codes   # HMS decoding and its message cache live in the Bambu plugin
+from app.plugins.bambu.alarms import decode_hms, hms_alarms, hms_key
+from app.plugins.elegoo_centauri.alarms import sdcp_alarms
+from app.plugins.snapmaker.alarms import klipper_alarms
 from tests.virtual_printers.alarm_payloads import bambu_report, elegoo_status, moonraker_status
 
 
@@ -58,7 +60,7 @@ def test_hms_alarms_skips_malformed_entries_and_dedupes():
 
 
 def test_bambu_client_keeps_the_last_full_hms_list_and_ignores_updates_without_the_key():
-    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.plugins.bambu.client import BambuMQTTClient
     c = BambuMQTTClient(ip_address="192.0.2.7", serial_number="01P00A000000001", access_code="12345678")
     c._handle_message(bambu_report([(0x07000100, 0x00020001), (0x0C000000, 0x00030002)]))
     assert sorted(a.code for a in c.get_alarms()) == ["HMS_0700_0100_0002_0001", "HMS_0C00_0000_0003_0002"]
@@ -87,7 +89,7 @@ def test_sdcp_zero_and_junk_are_no_alarm(none):
 
 
 def _elegoo():
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
+    from app.plugins.elegoo_centauri.client import ElegooCentauriClient
     c = ElegooCentauriClient(ip_address="192.0.2.5")
     c._loop = None
     return c
@@ -117,7 +119,7 @@ def test_klipper_shutdown_and_error_states_and_print_errors():
 
 
 def _moon():
-    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
     return SnapmakerExtendedClient(ip_address="192.0.2.6")
 
 
@@ -154,5 +156,5 @@ def test_snapmaker_asks_for_the_reason_on_shutdown_and_reads_the_printer_info_re
 
 
 def test_default_clients_and_the_mock_report_no_alarms():
-    from app.services.mock_printer_client import MockPrinterClient
+    from app.plugins.mock.client import MockPrinterClient
     assert MockPrinterClient.__new__(MockPrinterClient).get_alarms() == []

@@ -7,23 +7,27 @@ import time as _time
 
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import shutil
 
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
+from ...plugins import providers_of
 from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
-from ...services.providers.slicing import Catalog, get_format_provider
-from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
-from ...services import scheduling
+from ...services.inventory import refs as inventory_refs
+from ...services.providers.slicing import Catalog, default_compatible_presets, get_slicing_provider
+from ...services.printer_client_factory import (
+    client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
+)
+from ...services import printer_model_registry as registry
+from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
+from ...services import filament_matching, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -41,33 +45,45 @@ router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
 class PrinterCreate(BaseModel):
     name: str
-    printer_type: str
+    # Identity: either the plugin/manufacturer/model triple, or a legacy printer_type (mapped to the triple).
+    plugin_id: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
+    model_uuid: str | None = None         # the registry's stable id for the model, instead of the triple
+    printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
-    current_orca_printer_profile: str | None = None
+    # advanced: a raw slicer machine profile that wins over the model mapping (BIZ-294); the pre-BIZ-294 name is still accepted on input
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))
+    nozzle_variant: dict | None = None              # {"diameter_mm", "flow"}; must be mapped for the model
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
-    bed_x_mm: float = 256.0
-    bed_y_mm: float = 256.0
+    bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
+    bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
 class PrinterUpdate(BaseModel):
     name: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
     connection_config: dict | None = None
     orca_printer_profiles: list[str] | None = None
-    current_orca_printer_profile: str | None = None
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))   # explicit null clears
+    nozzle_variant: dict | None = None             # explicit null = the model's default variant
     enabled: bool | None = None
     queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool | None = None
-    bed_x_mm: float | None = None
-    bed_y_mm: float | None = None
+    bed_x_mm: float | None = Field(default=None, gt=0)
+    bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None
+    # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
+    preferred_slicer_plugin_id: str | None = None
 
     @model_validator(mode="after")
     def _quiet_hours_pair(self):
@@ -80,10 +96,6 @@ class PrinterUpdate(BaseModel):
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("quiet_start and quiet_end must be set together (or both null)")
         return self
-
-
-class ActivePresetUpdate(BaseModel):
-    preset: str
 
 
 class LightBody(BaseModel):
@@ -120,16 +132,39 @@ class ChamberTempBody(BaseModel):
     celsius: int = Field(..., ge=0, le=100)
 
 
-def _to_dict(p: Printer) -> dict:
+async def _check_variant(session: AsyncSession, model_uuid: str | None, raw: dict | None) -> dict | None:
+    """A posted nozzle variant must be one the printer's model has a mapping for (any provider); returns its canonical form."""
+    if raw is None:
+        return None
+    variant = slicer_profiles.NozzleVariant.parse(raw)
+    if variant is None:
+        raise HTTPException(422, "nozzle_variant must be {diameter_mm > 0, flow: standard|high_flow}")
+    rows = await slicer_profiles.mapping_rows(session, model_uuid) if model_uuid else []
+    if not any(slicer_profiles.variant_of(r) == variant for r in rows):
+        label = await slicer_profiles.model_display_name(session, model_uuid) or "this printer"
+        raise HTTPException(422, f"No slicer profile is mapped for {label} {variant.label}; map it in Settings > Printer models")
+    return variant.as_dict()
+
+
+def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = None) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
         "id": p.id,
         "name": p.name,
         "printer_type": p.printer_type,
+        "plugin_id": p.plugin_id,
+        "manufacturer_id": p.manufacturer_id,
+        "model_id": p.model_id,
+        "model_uuid": p.model_uuid,
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "orca_printer_profiles": p.orca_printer_profiles,
-        "current_orca_printer_profile": p.current_orca_printer_profile,
+        "machine_profile_override": p.machine_profile_override,
+        "nozzle_variant": p.nozzle_variant,
+        # The machine profile this printer slices with right now (override, else model mapping + variant); null + reason when unmapped.
+        "machine_profile": res.profile if res else None,
+        "machine_profile_reason": res.reason if res else None,
+        "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
@@ -140,6 +175,7 @@ def _to_dict(p: Printer) -> dict:
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
+        "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -158,10 +194,41 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-@router.get("/types", summary="List printer types", dependencies=[Depends(require_scope("printers:read"))])
-async def list_printer_types() -> list[dict]:
-    """Available printer driver types with display name and required connection config fields."""
-    return get_printer_types_for_ui()
+def _identity_for_create(body: PrinterCreate, registered=None):
+    """(plugin_id, manufacturer_id, model_id, stored printer_type, declared model). A legacy printer_type is mapped; an
+    explicit triple must be declared by its plugin. Raises IdentityError (-> 422) before anything is stored."""
+    if body.model_uuid is not None and body.plugin_id is None and not body.manufacturer_id and not body.model_id:
+        if registered is None:
+            raise IdentityError(f"Unknown printer model: {body.model_uuid!r}")
+        plugin_id, manufacturer_id, model_id = registered.plugin_id, registered.manufacturer_id, registered.model_id
+        printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
+    elif body.plugin_id is None and body.printer_type is not None:
+        plugin_id, manufacturer_id, model_id = resolve_legacy(body.printer_type)
+        printer_type = body.printer_type
+    elif body.plugin_id is not None and body.manufacturer_id and body.model_id:
+        plugin_id, manufacturer_id, model_id = body.plugin_id, body.manufacturer_id, body.model_id
+        # the legacy column keeps the client's own key (e.g. snapmaker_extended), which badges and old consumers still read
+        printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
+    else:
+        raise IdentityError("Give model_uuid, plugin_id + manufacturer_id + model_id, or a legacy printer_type")
+    _, model = declared_model(plugin_id, manufacturer_id, model_id)
+    if dormant_reason(plugin_id) == "plugin_disabled":
+        raise IdentityError(f"Plugin {plugin_id!r} is disabled; enable it before adding printers")
+    return plugin_id, manufacturer_id, model_id, printer_type, model
+
+
+@router.get("/types", summary="List printer models every plugin declares", dependencies=[Depends(require_scope("printers:read"))])
+async def list_printer_types(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Available printer driver types with display name and required connection config fields. Each entry carries the
+    registry's stable `model_uuid` and whether the user has `model_enabled` it for setup (the add-printer flow offers only those)."""
+    await registry.sync_registry(session)
+    await session.commit()
+    ids = {(m["plugin_id"], m["manufacturer_id"], m["model_id"]): m for m in await registry.list_models(session)}
+    out = []
+    for entry in printer_model_catalog():
+        reg = ids.get((entry["plugin_id"], entry["manufacturer_id"], entry["model_id"]))
+        out.append({**entry, "model_uuid": reg["id"] if reg else None, "model_enabled": reg["enabled"] if reg else True})
+    return out
 
 
 def _stem(name: str) -> str:
@@ -223,8 +290,9 @@ async def list_all_printer_files(session: AsyncSession = Depends(get_session)) -
 @router.get("", summary="List printers", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printers(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All configured printers with their current connection status."""
-    result = await session.execute(select(Printer))
-    return [_to_dict(p) for p in result.scalars().all()]
+    printers = list((await session.execute(select(Printer))).scalars().all())
+    resolved = await slicer_profiles.resolve_many(session, printers)
+    return [_to_dict(p, resolved[p.id]) for p in printers]
 
 
 @router.post(
@@ -242,30 +310,44 @@ async def create_printer(
 ) -> dict:
     """Register a new printer and attempt an immediate connection. Connection failure
     is non-fatal — the printer is saved and will retry on next restart."""
-    if body.printer_type not in REGISTRY:
-        raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}. Valid types: {list(REGISTRY.keys())}")
+    await registry.sync_registry(session)
+    registered = await registry.get_model(session, body.model_uuid) if body.model_uuid else None
+    try:
+        plugin_id, manufacturer_id, model_id, printer_type, model = _identity_for_create(body, registered)
+    except IdentityError as e:
+        raise HTTPException(422, str(e))
+    model_uuid = await registry.model_uuid_for(session, plugin_id, manufacturer_id, model_id)
+    record = await registry.get_model(session, model_uuid) if model_uuid else None
+    if record is not None and not record.enabled and body.printer_type is None:
+        raise HTTPException(422, f"Model {record.display_name!r} is disabled in the printer-model registry")
     printer = Printer(
+        model_uuid=model_uuid,
         name=body.name,
-        printer_type=body.printer_type,
+        printer_type=printer_type,
+        plugin_id=plugin_id,
+        manufacturer_id=manufacturer_id,
+        model_id=model_id,
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
-        current_orca_printer_profile=body.current_orca_printer_profile,
-        loaded_filaments=body.loaded_filaments,
+        machine_profile_override=body.machine_profile_override,
+        nozzle_variant=await _check_variant(session, model_uuid, body.nozzle_variant),
+        loaded_filaments=inventory_refs.normalize_slots(body.loaded_filaments),
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
-        bed_x_mm=body.bed_x_mm,
-        bed_y_mm=body.bed_y_mm,
+        bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
+        bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
         machine_rate_per_hour=body.machine_rate_per_hour,
     )
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
+    printer_manager.set_printer_plugin(printer.id, plugin_id)
     try:
         client = create_client(printer)
         printer_manager.connect_printer(printer.id, client)
     except Exception:
         pass  # non-fatal: printer saved, connection will retry on next restart
-    return _to_dict(printer)
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
 @router.get("/orca-presets", summary="List OrcaSlicer machine preset names",
@@ -361,7 +443,7 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
     net = _discovery_network()
     try:
         async with _discovery_lock:
-            result = await discovery.scan(net, ranges, REGISTRY)
+            result = await discovery.scan(net, ranges, enabled_client_classes())
     except discovery.ScanRangeError as e:
         raise HTTPException(422, str(e))
     finally:
@@ -374,11 +456,20 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
         for key in ("ip_address", "host"):
             if cfg.get(key):
                 existing.add(str(cfg[key]).strip())
-    names = {t["printer_type"]: t["display_name"] for t in get_printer_types_for_ui()}
+    names = printer_type_names()
+    plugin_ids = printer_type_plugins()
+    await registry.sync_registry(session)
+    await session.commit()
+    # A discovered free-text model matches a registry entry only when exactly one enabled model fits; otherwise the UI offers
+    # the explicit custom/unmatched path (`model_uuid` is None).
+    matches = {d.ip: await registry.match_free_text(session, d.model, plugin_id=plugin_ids.get(d.printer_type))
+               for d in result.found}
     return {
         "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
         "found": [{
-            "printer_type": d.printer_type, "display_name": names.get(d.printer_type, d.printer_type),
+            "model_uuid": matches[d.ip],
+            "printer_type": d.printer_type, "plugin_id": plugin_ids.get(d.printer_type),
+            "display_name": names.get(d.printer_type, d.printer_type),
             "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
             "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
         } for d in result.found],
@@ -426,7 +517,7 @@ async def _connect_failure_hint(client) -> str:
 async def test_connection(body: TestConnectionRequest) -> dict:
     """Attempt to connect with the given config and return `{ok: true}` or
     `{ok: false, error: "..."}` with a human-readable hint about why it failed."""
-    if body.printer_type not in REGISTRY:
+    if client_class(body.printer_type) is None:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
     client = None
     try:
@@ -462,17 +553,18 @@ async def get_profiles(
 ) -> dict:
     """OrcaSlicer print and filament profiles compatible with this printer's active machine preset."""
     printer = await _get_or_404(printer_id, session)
-    if not printer.current_orca_printer_profile:
+    machine_name = await slicer_profiles.machine_profile_for(session, printer)
+    if not machine_name:
         return {"print_profiles": [], "filament_profiles": []}
-    machine_name = printer.current_orca_printer_profile
 
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
 
-    slicer = get_format_provider()
-    processes = sorted(p.name for p in slicer.compatible_presets(cat, machine_name, "process"))
-    filaments = sorted(f.name for f in slicer.compatible_presets(cat, machine_name, "filament"))
+    slicer = get_slicing_provider()   # may be None: the catalog is a cached copy, matching needs no live server
+    compat = slicer.compatible_presets if slicer else default_compatible_presets
+    processes = sorted(p.name for p in compat(cat, machine_name, "process"))
+    filaments = sorted(f.name for f in compat(cat, machine_name, "filament"))
     return {"print_profiles": processes, "filament_profiles": filaments}
 
 
@@ -488,7 +580,27 @@ async def get_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    return _to_dict(await _get_or_404(printer_id, session))
+    printer = await _get_or_404(printer_id, session)
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
+
+
+@router.get(
+    "/{printer_id}/slot-conflicts",
+    summary="Slots whose bound spool differs from what the printer reports",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def slot_conflicts(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Indexes of the slots in conflict (a hardware-reported slot whose bound spool's material differs in a part known on both
+    sides). A conflicting slot is skipped by the queue's filament matching; the UI flags it so the operator can rebind, correct or
+    unbind the spool. Empty when no slot is bound or the inventory cannot be read."""
+    printer = await _get_or_404(printer_id, session)
+    return {"conflicts": sorted(await filament_matching.conflicts_for(printer.loaded_filaments or []))}
 
 
 @router.patch(
@@ -505,8 +617,31 @@ async def update_printer(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Update one or more printer fields. Omitted fields are left unchanged.
-    `current_orca_printer_profile` supports explicit null to clear the preset."""
+    `machine_profile_override` and `nozzle_variant` support explicit null to clear them."""
     printer = await _get_or_404(printer_id, session)
+    if body.manufacturer_id is not None or body.model_id is not None:
+        # validated before anything is changed: a rejected identity leaves the printer exactly as it was
+        manufacturer_id = body.manufacturer_id or printer.manufacturer_id or ""
+        model_id = body.model_id or printer.model_id or ""
+        try:
+            declared_model(printer.plugin_id or "", manufacturer_id, model_id)
+        except IdentityError as e:
+            raise HTTPException(422, str(e))
+        await registry.sync_registry(session)      # commits: done before any field below is touched
+        printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
+        new_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
+        if new_uuid != printer.model_uuid:
+            # A different model: the old model's nozzle variant and raw override do not carry over. The variant is kept only when the new
+            # model maps the same one (else cleared to NULL = the new model's default, never a silent 422 on an identity edit); the override
+            # is cleared unless this same request sets it.
+            current = slicer_profiles.NozzleVariant.parse(printer.nozzle_variant)
+            if "nozzle_variant" not in body.model_fields_set and current is not None:
+                rows = await slicer_profiles.mapping_rows(session, new_uuid) if new_uuid else []
+                if not any(slicer_profiles.variant_of(r) == current for r in rows):
+                    printer.nozzle_variant = None
+            if "machine_profile_override" not in body.model_fields_set:
+                printer.machine_profile_override = None
+        printer.model_uuid = new_uuid
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:
@@ -515,14 +650,17 @@ async def update_printer(
         printer.orca_printer_profiles = body.orca_printer_profiles
     # Use model_fields_set so an explicit null clears the preset (EditForm sends
     # null to unset make/model); an omitted key leaves it unchanged.
-    if "current_orca_printer_profile" in body.model_fields_set:
-        printer.current_orca_printer_profile = body.current_orca_printer_profile
+    if "machine_profile_override" in body.model_fields_set:
+        printer.machine_profile_override = body.machine_profile_override
+    if "nozzle_variant" in body.model_fields_set:
+        printer.nozzle_variant = await _check_variant(session, printer.model_uuid, body.nozzle_variant)
     if body.enabled is not None:
         printer.enabled = body.enabled
     if body.queue_on is not None:
         printer.queue_on = body.queue_on
     if body.loaded_filaments is not None:
-        printer.loaded_filaments = body.loaded_filaments
+        # whole-list replace from the client: resolve each slot against what is stored (dual-write, see inventory/refs.py)
+        printer.loaded_filaments = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)
     if "build_plate_type" in body.model_fields_set:
         printer.build_plate_type = body.build_plate_type
     if body.no_snapshots_while_idle is not None:
@@ -535,9 +673,15 @@ async def update_printer(
         printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
     if "machine_rate_per_hour" in body.model_fields_set:
         printer.machine_rate_per_hour = body.machine_rate_per_hour
+    if "preferred_slicer_plugin_id" in body.model_fields_set:
+        wanted = body.preferred_slicer_plugin_id or None
+        if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
+            raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
+        printer.preferred_slicer_plugin_id = wanted
     await session.commit()
     await session.refresh(printer)
-    return _to_dict(printer)
+    queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
 @router.delete(
@@ -617,6 +761,7 @@ async def delete_printer(
     await session.delete(printer)
     await session.commit()
     printer_manager.disconnect_printer(printer_id)
+    printer_manager.forget_printer(printer_id)
     if printer_manager._on_state_broadcast is not None:   # its alarms went with it (FK cascade)
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
@@ -640,31 +785,6 @@ async def plate_cleared(
     printer_manager.set_awaiting_plate_clear(printer_id, False)
     queue_engine.wake()
     return {"ok": True}
-
-
-@router.patch(
-    "/{printer_id}/active-preset",
-    summary="Switch active OrcaSlicer preset",
-    responses={
-        404: {"description": "Printer not found"},
-        422: {"description": "Preset not in this printer's configured profiles"},
-    },
-    dependencies=[Depends(require_scope("printers:write"))],
-)
-async def switch_active_preset(
-    printer_id: int,
-    body: ActivePresetUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Change the active OrcaSlicer machine preset. The preset must already be in
-    the printer's `orca_printer_profiles` list."""
-    printer = await _get_or_404(printer_id, session)
-    if body.preset not in (printer.orca_printer_profiles or []):
-        raise HTTPException(422, f"Preset {body.preset!r} not in this printer's configured profiles")
-    printer.current_orca_printer_profile = body.preset
-    await session.commit()
-    await session.refresh(printer)
-    return _to_dict(printer)
 
 
 @router.post(
@@ -1126,7 +1246,7 @@ async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSessio
     dependencies=[Depends(require_scope("files:write"))],
 )
 async def copy_stored_file_to_library(
-    printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
+    printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
     deduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models."""
@@ -1146,9 +1266,7 @@ async def copy_stored_file_to_library(
     from io import BytesIO
     from starlette.datastructures import UploadFile as StarletteUpload
     from .files import upload_file as library_upload
-    # The route's own BackgroundTasks, so the thumbnail job the library upload queues actually runs.
-    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), background_tasks,
-                                "/From Printers", session)
+    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), "/From Printers", session)
 
 
 async def _activate_camera(client) -> None:
@@ -1163,7 +1281,7 @@ async def _activate_camera(client) -> None:
     summary="Stream camera (MJPEG)",
     responses={
         404: {"description": "Printer not found or has no camera"},
-        503: {"description": "Printer not connected or ffmpeg unavailable for RTSP"},
+        503: {"description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"},
     },
     dependencies=[Depends(require_scope("printers:read"))],
 )
@@ -1171,8 +1289,8 @@ async def stream_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    """MJPEG multipart stream from the printer camera. Supports both native MJPEG
-    and RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on
+    """MJPEG multipart stream from the printer camera. The printer's client produces the feed (native
+    MJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on
     printers that time out after 60 s of inactivity."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
@@ -1182,25 +1300,20 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    if client.camera_mjpeg_url:
-        mjpeg_url, rtsp_url = client.camera_mjpeg_url, None
-    elif client.camera_rtsp_url:
-        from ...config import get_ffmpeg_executable
-        if not shutil.which(get_ffmpeg_executable()):
-            raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        mjpeg_url, rtsp_url = None, client.camera_rtsp_url
-    else:
+    if not client.camera_configured:
         raise HTTPException(404, "No camera URL configured")
+    reason = client.camera_unavailable_reason()          # e.g. a transcoder the vendor needs is missing
+    if reason:
+        raise HTTPException(503, reason)
 
     if not camera_hub.hub.has_stream(printer_id):
         await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
 
     async def upstream():
-        raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
-        async for chunk in raw:
+        async for chunk in client.camera_stream():       # the client (its plugin) produces the feed; core fans it out
             yield chunk
 
-    # One upstream connection / ffmpeg per printer however many viewers (camera wall, several browsers);
+    # One upstream connection / transcoder per printer however many viewers (camera wall, several browsers);
     # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
     ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
     if camera_hub.hub.is_full_for(printer_id):
@@ -1246,7 +1359,7 @@ async def snapshot_camera(
 
     async def grab():
         await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
-        return await grab_snapshot_from_client(client)
+        return await client.camera_snapshot()
 
     try:
         jpeg = await camera_hub.hub.snapshot(printer_id, grab)

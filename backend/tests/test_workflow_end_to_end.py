@@ -3,6 +3,7 @@ client — with only the slicer faked: queue two jobs, the first prints, the pri
 clears the plate, then the second job is claimed. API tests patch the engine and engine tests seed the DB
 directly, so this is the only place the seams between the layers are exercised together."""
 from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -45,7 +46,7 @@ async def farm(client, session_factory, tmp_path, monkeypatch):
     printer_manager.set_job_complete_callback(engine.handle_print_complete)
     printer_manager.set_broadcast_callback(broadcast)
 
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=FakeSlicingProvider()):
+    with slicing_provider(FakeSlicingProvider()):
         yield SimpleNamespace(engine=engine, slicer=slicer, broadcasts=broadcasts)
 
     printer_manager._session_factory, printer_manager._on_job_complete, printer_manager._on_state_broadcast = saved
@@ -67,7 +68,7 @@ async def test_two_jobs_flow_from_queue_to_print_to_plate_clear_to_next_print(cl
     # ── set up: a mock printer, one uploaded plate, two queued jobs ──────────────────────────────
     created = await client.post("/api/v1/printers", json={
         "name": "Mock", "printer_type": "mock", "connection_config": {},
-        "orca_printer_profiles": ["Mock Machine"], "current_orca_printer_profile": "Mock Machine",
+        "orca_printer_profiles": ["Mock Machine"], "machine_profile_override": "Mock Machine",
     })
     assert created.status_code == 201, created.text
     printer_id = created.json()["id"]

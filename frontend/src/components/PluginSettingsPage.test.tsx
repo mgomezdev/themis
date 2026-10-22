@@ -1,0 +1,399 @@
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginSettingsPage } from './PluginSettingsPage';
+import { Reply, stubFetch } from '../test/fetchStub';
+import { mkPlugin, mkStatus, pluginsBody } from '../test/inventoryFixtures';
+import { resetPluginStore, type PluginDetail } from '../api/plugins';
+
+const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
+  ...mkPlugin({ id: 'demo_inv', name: 'Demo inventory', ...(over.active === false ? { active: false } : {}) }),
+  description: 'A demo provider', docs_url: 'https://example.test/docs', version: '2.1',
+  settings: { url: 'http://demo.test', sync_interval_minutes: 15, max_disconnect_minutes: null },
+  secrets: { api_key: true },
+  secret_fields: ['api_key'],
+  settings_schema: {
+    properties: {
+      url: { type: 'string', title: 'Url', description: 'Where it lives' },
+      api_key: { type: 'string', title: 'Api Key', description: 'Optional key' },
+      sync_interval_minutes: { type: 'integer', title: 'Sync interval', minimum: 1, maximum: 60, default: 15 },
+      max_disconnect_minutes: { anyOf: [{ type: 'integer' }, { type: 'null' }], title: 'Alert after (min)' },
+      verbose: { type: 'boolean', title: 'Verbose' },
+    },
+    required: ['url'],
+  },
+  state: {},
+  ...over,
+});
+
+const routes = (d = detail(), over: Record<string, unknown> = {}) => ({
+  'GET /api/v1/plugins': pluginsBody(d),
+  'GET /api/v1/plugins/demo_inv': d,
+  'GET /api/v1/inventory/sync-status': mkStatus({ provider: 'demo_inv' }),
+  'GET /api/v1/inventory/pending-writes': { provider: 'demo_inv', items: [] },
+  'GET /api/v1/inventory/tracking': { provider: 'demo_inv', items: [] },
+  ...over,
+});
+
+describe('PluginSettingsPage', () => {
+  beforeEach(() => resetPluginStore());
+  afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  it('shows the header facts and builds the form from the settings schema (required marked, secret fields separate)', async () => {
+    stubFetch(routes());
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    expect(await screen.findByRole('heading', { name: 'Demo inventory' })).toBeTruthy();
+    expect(screen.getByText(/A demo provider · v2\.1/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Documentation' }).getAttribute('href')).toBe('https://example.test/docs');
+    expect(screen.getByTestId('plugin-health').textContent).toBe('Active');
+    expect((screen.getByLabelText('Url') as HTMLInputElement).value).toBe('http://demo.test');
+    expect(screen.getByText('Url *')).toBeTruthy();                                        // required
+    expect((screen.getByLabelText('Sync interval') as HTMLInputElement).type).toBe('number');
+    expect((screen.getByLabelText('Sync interval') as HTMLInputElement).min).toBe('1');
+    expect((screen.getByLabelText('Sync interval') as HTMLInputElement).max).toBe('60');
+    expect((screen.getByLabelText('Alert after (min)') as HTMLInputElement).value).toBe('');   // nullable integer, unset
+    expect(screen.getByRole('switch', { name: '' , checked: false })).toBeTruthy();       // the boolean (and the enable switch is checked)
+  });
+
+  it('renders an array setting with fixed choices as switches and a free list as comma-separated text, and saves both as arrays', async () => {
+    const channel = detail({
+      settings: { events: ['job.complete'], to_addrs: ['a@x.test'] }, secrets: {}, secret_fields: [],
+      settings_schema: { properties: {
+        events: { type: 'array', title: 'Events', items: { type: 'string', enum: ['job.complete', 'job.failed', 'spool.low'] } },
+        to_addrs: { type: 'array', title: 'To addresses', items: { type: 'string' } },
+      } },
+    });
+    const api = stubFetch(routes(channel, { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...channel, ...c.body as object }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    const group = await screen.findByRole('group', { name: 'Events' });
+    expect(within(group).getByRole('switch', { name: 'job.complete' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(group).getByRole('switch', { name: 'job.failed' }).getAttribute('aria-checked')).toBe('false');
+
+    await userEvent.click(within(group).getByRole('switch', { name: 'spool.low' }));
+    await userEvent.click(within(group).getByRole('switch', { name: 'job.complete' }));
+    const addrs = screen.getByLabelText('To addresses') as HTMLInputElement;
+    expect(addrs.value).toBe('a@x.test');
+    await userEvent.clear(addrs);
+    await userEvent.type(addrs, 'b@x.test, c@x.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toHaveLength(1));
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { settings: object }).settings)
+      .toEqual({ events: ['spool.low'], to_addrs: ['b@x.test', 'c@x.test'] });
+  });
+
+  it('offers no "Use for" choice for a fan-out capability: every enabled provider serves it', async () => {
+    const base = detail();
+    const fanOut = detail({ provides: [{ capability: 'notify.channel', version: 1, features: [], selected: false, mode: 'fan_out', status: 'disabled', waiting_on: [] }] });
+    const exclusive = detail({ provides: [{ ...base.provides[0], selected: false, mode: 'exclusive', status: 'not_selected' }] });
+
+    stubFetch(routes(fanOut));
+    const { unmount } = render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByRole('heading', { name: 'Demo inventory' });
+    expect(screen.queryByRole('button', { name: /^Use / })).toBeNull();
+    unmount();
+    resetPluginStore();
+
+    stubFetch(routes(exclusive));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByRole('button', { name: /^Use / })).toBeTruthy();         // an exclusive capability still offers it
+  });
+
+  it('never shows a stored secret; saving untouched sends no secrets, replacing sends the new value, clearing sends ""', async () => {
+    const api = stubFetch(routes(detail(), { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...detail(), ...c.body as object }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    const key = await screen.findByLabelText('Api Key') as HTMLInputElement;
+    expect(key.value).toBe('');
+    expect(key.placeholder).toBe('Set ✓ — type to replace');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('status');
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { secrets: object }).secrets).toEqual({});          // omitted = keep
+
+    await userEvent.type(key, 'new-key');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toHaveLength(2));
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[1].body as { secrets: object }).secrets).toEqual({ api_key: 'new-key' });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear Api Key' }));
+    expect(screen.getByText('Will be cleared on save')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toHaveLength(3));
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[2].body as { secrets: object }).secrets).toEqual({ api_key: '' });
+  });
+
+  it('saves edited settings with numbers as numbers and blanks as null', async () => {
+    const api = stubFetch(routes(detail(), { 'PUT /api/v1/plugins/demo_inv': detail() }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    const interval = await screen.findByLabelText('Sync interval');
+
+    await userEvent.clear(interval);
+    await userEvent.type(interval, '30');
+    await userEvent.type(screen.getByLabelText('Alert after (min)'), '45');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('status');
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { settings: Record<string, unknown> }).settings)
+      .toMatchObject({ url: 'http://demo.test', sync_interval_minutes: 30, max_disconnect_minutes: 45 });
+  });
+
+  it('Test connection tries the unsaved form values and shows the result without saving', async () => {
+    const api = stubFetch(routes(detail(), { 'POST /api/v1/plugins/demo_inv/test': { ok: true, version: '1.9' } }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    const url = await screen.findByLabelText('Url');
+
+    await userEvent.clear(url);
+    await userEvent.type(url, 'http://other.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+
+    expect((await screen.findByTestId('test-result')).textContent).toBe('Connected (version 1.9)');
+    expect((api.to('POST', '/api/v1/plugins/demo_inv/test')[0].body as { settings: { url: string } }).settings.url).toBe('http://other.test');
+    expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toEqual([]);                          // nothing saved
+  });
+
+  it('reports a failed test and a rejected save', async () => {
+    stubFetch(routes(detail(), {
+      'POST /api/v1/plugins/demo_inv/test': { ok: false, message: 'connection refused' },
+      'PUT /api/v1/plugins/demo_inv': new Reply(422, { detail: 'sync interval must be >= 1' }),
+    }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByLabelText('Url');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    expect((await screen.findByTestId('test-result')).textContent).toBe('connection refused');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('sync interval must be >= 1');
+  });
+
+  it('enables and disables the plugin from the header switch', async () => {
+    const api = stubFetch(routes(detail(), { 'PUT /api/v1/plugins/demo_inv': (c: { body: { enabled: boolean } }) => detail({ enabled: c.body.enabled, active: false }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    const enable = await screen.findByRole('switch', { name: '', checked: true });
+
+    await userEvent.click(enable);
+
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo_inv')[0].body).toEqual({ enabled: false }));
+    expect((await screen.findByTestId('plugin-health')).textContent).toBe('Disabled');
+  });
+
+  it('offers to make an enabled plugin the active provider when another one is selected', async () => {
+    const d = detail({ active: false });
+    const api = stubFetch(routes(d, {
+      'GET /api/v1/plugins': { plugins: [d], selections: { 'inventory.filament': 'someone_else' } },
+      'PUT /api/v1/capabilities/inventory.filament/provider': { capability: 'inventory.filament', plugin_id: 'demo_inv', explicit: true },
+    }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    expect(await screen.findByText('Enabled, not selected')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Use Demo inventory' }));
+
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/inventory.filament/provider')[0].body).toEqual({ plugin_id: 'demo_inv' }));
+  });
+
+  it('shows a plugin problem, and a load failure, instead of the form', async () => {
+    stubFetch(routes(detail({ error: 'could not build provider: bad url' })));
+    const { unmount } = render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect((await screen.findByTestId('plugin-health')).textContent).toBe('Problem');
+    expect(screen.getByText('could not build provider: bad url')).toBeTruthy();
+    unmount();
+
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} }, 'GET /api/v1/plugins/demo_inv': new Reply(404, { detail: "Unknown plugin 'demo_inv'" }) });
+    resetPluginStore();
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect((await screen.findByRole('alert')).textContent).toBe("Unknown plugin 'demo_inv'");
+  });
+
+  it('only an active inventory provider gets the sync / queued-writes panel', async () => {
+    stubFetch(routes(detail({ active: false })));
+    const { unmount } = render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByLabelText('Url');
+    expect(screen.queryByTestId('inventory-panel')).toBeNull();
+    unmount();
+
+    stubFetch(routes());
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
+    expect(within(screen.getByTestId('inventory-panel')).getByText('Queued weight updates')).toBeTruthy();
+  });
+
+  it('a plugin serving several capabilities gets one "Use for" button per capability it is not selected for', async () => {
+    const base = mkPlugin({ id: 'demo_inv', name: 'Demo inventory', active: false });
+    const d = detail({ active: false, provides: [
+      { ...base.provides[0], selected: false },
+      { capability: 'demo_inv.notes', version: 1, features: [], selected: false, status: 'not_selected', waiting_on: [] }] });
+    const api = stubFetch(routes(d, { 'PUT /api/v1/capabilities/demo_inv.notes/provider': { capability: 'demo_inv.notes', plugin_id: 'demo_inv', explicit: true } }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use Demo inventory for demo_inv.notes' }));
+
+    expect(screen.getByRole('button', { name: 'Use Demo inventory for inventory.filament' })).toBeTruthy();
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/demo_inv.notes/provider')[0].body).toEqual({ plugin_id: 'demo_inv' }));
+  });
+
+  it('says what a waiting capability is waiting on', async () => {
+    const d = detail({ provides: [{ capability: 'demo_inv.report', version: 1, features: [], selected: true, status: 'waiting', waiting_on: ['demo_inv.notes'] }] });
+    stubFetch(routes(d));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByText('demo_inv.report: waiting on demo_inv.notes')).toBeTruthy();
+    expect(screen.queryByTestId('inventory-panel')).toBeNull();
+  });
+
+  it('after "Use", the page reflects the new selection without navigating away', async () => {
+    let selected = false;
+    const make = () => detail({ active: selected, provides: mkPlugin({ id: 'demo_inv', active: selected }).provides });
+    stubFetch(routes(detail({ active: false }), {
+      'GET /api/v1/plugins/demo_inv': () => make(),
+      'GET /api/v1/plugins': () => ({ plugins: [make()], selections: { 'inventory.filament': selected ? 'demo_inv' : 'someone_else' } }),
+      'PUT /api/v1/capabilities/inventory.filament/provider': () => { selected = true; return { capability: 'inventory.filament', plugin_id: 'demo_inv', explicit: true }; },
+    }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByText('Enabled, not selected')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use Demo inventory' }));
+
+    await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Active'));
+    expect(screen.queryByRole('button', { name: 'Use Demo inventory' })).toBeNull();
+    expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
+  });
+  describe('connection state pill (ui.connection_status)', () => {
+    const watched = (over: Partial<PluginDetail> = {}) => detail({
+      ui: { mode: 'page', nav_label: 'Demo inventory', nav_placement: 'settings', nav_icon: null, tabs: [], connection_status: true }, ...over,
+    });
+    const pill = () => screen.queryByTestId('plugin-connection');
+
+    it.each([
+      ['healthy', 'Healthy', 'ok'],
+      ['unavailable', 'Unavailable', 'err'],
+      ['unconfigured', 'Not configured', 'warn'],
+    ])('shows %s from the backend state on load, without pressing Test', async (state, label, tone) => {
+      const api = stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': { ok: state === 'healthy', state } }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+
+      await waitFor(() => expect(pill()?.textContent).toBe(label));
+      expect(pill()!.className).toContain(tone);
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')[0].body).toEqual({});          // probes the SAVED settings
+    });
+
+    it('is absent for a plugin that does not opt in (no probe is made)', async () => {
+      const api = stubFetch(routes());
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('is absent while the plugin is disabled', async () => {
+      const api = stubFetch(routes(watched({ enabled: false })));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('follows the Test button result for the form values', async () => {
+      let n = 0;
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? { ok: false, state: 'unavailable', message: 'refused' } : { ok: true, state: 'healthy', version: '1' }) }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+    });
+
+    it('re-probes after the settings are saved and shows the new state', async () => {
+      let n = 0;
+      const api = stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? { ok: false, state: 'unavailable' } : { ok: true, state: 'healthy' }),
+        'PUT /api/v1/plugins/demo_inv': () => watched({ settings: { url: 'http://new.test' } }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toHaveLength(2);
+    });
+
+    it('a slow probe never overwrites a newer Test result', async () => {
+      const slow: { resolve?: (v: unknown) => void } = {};
+      let n = 0;
+      stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? new Promise(r => { slow.resolve = r; }) : { ok: true, state: 'healthy' }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      await waitFor(() => expect(slow.resolve).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+
+      await act(async () => { slow.resolve!({ ok: false, state: 'unavailable' }); });
+
+      expect(pill()?.textContent).toBe('Healthy');
+    });
+
+    it('a probe answering after the plugin was disabled does not resurrect the pill', async () => {
+      const slow: { resolve?: (v: unknown) => void } = {};
+      stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => new Promise(r => { slow.resolve = r; }),
+        'PUT /api/v1/plugins/demo_inv': () => watched({ enabled: false, active: false }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(slow.resolve).toBeTruthy());
+      await userEvent.click(await screen.findByRole('switch', { name: '', checked: true }));
+      await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Disabled'));
+
+      await act(async () => { slow.resolve!({ ok: true, state: 'healthy' }); });
+
+      expect(pill()).toBeNull();
+    });
+
+    it('shows a neutral Unknown (not Unavailable) when the probe is refused for lack of permission', async () => {
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': new Reply(403, { detail: 'needs settings:write' }) }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unknown'));
+      expect(pill()!.className).toContain('idle');
+    });
+
+    it('falls back to unavailable when the probe itself fails', async () => {
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': new Reply(500, 'boom') }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+    });
+  });
+
+  it('lists the plugin-scoped diagnostics, and shows a setting outside the contract as not editable instead of guessing an input', async () => {
+    const d = detail({
+      settings: { url: 'http://demo.test', limits: { a: 1 } },
+      settings_schema: { properties: { url: { type: 'string', title: 'Url' }, limits: { type: 'object', title: 'Limits' } } },
+      diagnostics: [{ scope: 'settings.limits', message: "setting 'limits' uses a type the settings form cannot render" }],
+    });
+    const api = stubFetch(routes(d, { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...d, ...c.body as object }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    const diag = await screen.findByTestId('plugin-diagnostics');
+    expect(within(diag).getByText('settings.limits')).toBeTruthy();
+    expect(diag.textContent).toContain('cannot render');
+    expect(screen.getByTestId('unsupported-limits').textContent).toBe('Not editable here.');
+    expect(screen.queryByLabelText('Limits')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('status');
+    expect(Object.keys((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { settings: object }).settings)).toEqual(['url']);   // never sent
+  });
+
+  it('does not render a settings form whose schema version it does not know, but the plugin can still be switched', async () => {
+    const d = detail({ settings_schema_version: 2 });
+    stubFetch(routes(d));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('schema version 2');
+    expect(screen.queryByLabelText('Url')).toBeNull();
+    expect(screen.queryByLabelText('Api Key')).toBeNull();
+    expect(screen.getByRole('switch', { name: '' , checked: true })).toBeTruthy();
+  });
+});

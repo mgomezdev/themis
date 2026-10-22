@@ -14,6 +14,7 @@ from app.models import Job, JobPrinterConfig, Printer
 from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
 from app.services import slice_cache
 from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 from tests.services.test_slice_reuse import (  # noqa: F401 — `env` is a fixture
     INPUTS, _add_version, _cache_lines, _job, _seed_allowing, env,
 )
@@ -30,7 +31,7 @@ def _down(mode="unreachable"):
         provider = FakeSlicingProvider()
         provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if mode == "not_ready"
                                       else SlicingProviderError("health check request failed: refused"))
-    return patch("app.services.queue_engine.get_slicing_provider", return_value=provider)
+    return slicing_provider(provider)
 
 
 async def _config(factory, job_id, printer_id=1) -> JobPrinterConfig:
@@ -154,9 +155,9 @@ async def test_only_the_printer_with_a_version_claims_it(session_factory, tmp_pa
     mgr.is_printer_ready.side_effect = lambda pid: pid in (1, 2)
     job_id = await _seed_allowing(session_factory)
     async with session_factory() as s:
-        (await s.get(Printer, 1)).current_orca_printer_profile = "Some Other Machine"
+        (await s.get(Printer, 1)).machine_profile_override = "Some Other Machine"
         s.add(Printer(id=2, name="P2", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile=MACHINE,
+                      machine_profile_override=MACHINE,
                       loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                          "filament_profile": "Generic PETG"}]))
         await s.flush()

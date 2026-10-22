@@ -184,6 +184,6 @@ def test_orca_export_args_default_is_raw_gcode():
 
 
 def test_bambu_orca_export_args_names_3mf_after_job():
-    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.plugins.bambu.client import BambuMQTTClient
     client = BambuMQTTClient.__new__(BambuMQTTClient)  # method is pure; skip __init__
     assert client.orca_export_args("mymodel_p1_j7") == ["--export-3mf", "mymodel_p1_j7.gcode.3mf"]

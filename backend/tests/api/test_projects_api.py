@@ -140,9 +140,7 @@ async def test_generate_stores_3mf_in_job_pack_folder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -178,9 +176,7 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -212,9 +208,7 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -239,7 +233,7 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
 
 async def test_generate_printer_configs_use_process_preset_not_machine_preset(client, tmp_path, create_printer):
     """JobPrinterConfig.print_profile must be the user-supplied process_preset —
-    never current_orca_printer_profile (a machine preset, wrong namespace entirely)."""
+    never machine_profile_override (a machine preset, wrong namespace entirely)."""
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     printer_id = await create_printer()
 
@@ -249,9 +243,7 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -282,9 +274,7 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -325,7 +315,7 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
 
         item_resp = await client.post(
             f"/api/v1/projects/{project_id}/items",
-            json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_color": "#FF0000"},
+            json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#FF0000"},
         )
         assert item_resp.status_code == 201
 
@@ -335,9 +325,7 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -352,8 +340,8 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
 
     detail = await client.get(f"/api/v1/jobs/{job_id}/details")
     cfg = detail.json()["printer_configs"][0]
-    assert cfg["filament_type"] == "PETG"
-    assert cfg["filament_color"] == "#FF0000"
+    assert (cfg["filament_manufacturer"], cfg["filament_type"], cfg["filament_subtype"], cfg["filament_color"]) \
+        == (None, "PETG", "any", "#FF0000")
 
 
 async def test_project_estimate_rollup_keys(client):
@@ -404,7 +392,7 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+        "machine_profile_override": "Bambu Lab P1S 0.4",
     })
     printer_id = printer_resp.json()["id"]
 
@@ -526,34 +514,33 @@ async def test_delete_part(client):
     assert detail["parts"] == []
 
 
-async def test_generate_with_machine_profile_creates_model_targets_and_configs(
-        client, tmp_path, create_printer, session_factory):
-    """eligible_machine_profiles -> a model target per job, materialized onto matching printers only."""
+async def test_generate_with_model_uuids_creates_model_targets_and_configs(
+        client, tmp_path, create_printer, model_uuid_of, session_factory):
+    """eligible_model_uuids -> a model target per job, materialized onto printers of that model only."""
     from sqlalchemy import select
     from app.models import JobModelTarget, JobPrinterConfig
 
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    p1s = await create_printer(name="A")  # default preset: Bambu Lab P1S 0.4
-    await create_printer(name="B", current_orca_printer_profile="Other 0.4", orca_printer_profiles=["Other 0.4"])
+    p1s = await create_printer(name="A")  # a Bambu P1S
+    await create_printer(name="B", printer_type="elegoo_centauri")
+    model = await model_uuid_of(p1s)
     lib = tmp_path / "library"
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
-            json={"eligible_machine_profiles": ["Bambu Lab P1S 0.4"], "process_preset": "0.20mm"},
+            json={"eligible_model_uuids": [model], "process_preset": "0.20mm"},
         )
 
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobs"][0]["id"]
     async with session_factory() as s:
         targets = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
-        assert [(t.machine_profile, t.print_profile) for t in targets] == [("Bambu Lab P1S 0.4", "0.20mm")]
+        assert [(t.model_uuid, t.print_profile) for t in targets] == [(model, "0.20mm")]
         cfgs = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
         assert [c.printer_id for c in cfgs] == [p1s]
 
@@ -562,9 +549,7 @@ async def _generate_with(client, tmp_path, provider, project_id):
     lib = tmp_path / "library"
     with (
         patch("app.config.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
 
@@ -590,7 +575,7 @@ async def test_generate_422_without_a_provider_or_without_the_pack_capability(cl
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     none = await _generate_with(client, tmp_path, None, project_id)
     assert (none.status_code, none.json()["detail"]) == (
-        422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
+        422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
 
     incapable = FakeSlicingProvider()
     incapable.PACK_MODELS = False
@@ -608,3 +593,37 @@ async def test_generate_packs_by_bed_size_when_the_project_has_no_presets(client
     assert resp.status_code == 200, resp.text
     (call,) = provider.pack_models.call_args_list
     assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}   # no eligible printers → default bed, Laminus default z
+
+
+async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client, tmp_path):
+    """BIZ-284: pack output is read from its embedded PNGs only; nothing renders thumbnails via a local binary."""
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    lib = tmp_path / "library"
+    boom = AssertionError("subprocess spawned")
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("subprocess.run", side_effect=boom), patch("subprocess.Popen", side_effect=boom),
+    ):
+        mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
+        resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
+    assert resp.status_code == 200
+    assert len(resp.json()["jobs"]) == 2
+
+
+def test_parse_plate_nums_uses_the_core_reader(tmp_path):
+    """BIZ-283: the pack route shares plate discovery with the library scanner (PNG names, model_settings, StartPart)."""
+    from app.api.routes.projects import _parse_plate_nums
+    two = tmp_path / "two.3mf"
+    two.write_bytes(_make_3mf_bytes(plate_count=2))
+    assert _parse_plate_nums(two) == [1, 2]
+    stripped = tmp_path / "s.3mf"
+    with zipfile.ZipFile(stripped, "w") as z:
+        z.writestr("Metadata/plate_1.png", b"x")
+        z.writestr("Metadata/model_settings.config",
+                   '<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>')
+    assert _parse_plate_nums(stripped) == [1, 2]
+    bad = tmp_path / "bad.3mf"
+    bad.write_bytes(b"nope")
+    assert _parse_plate_nums(bad) == []

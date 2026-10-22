@@ -1,5 +1,5 @@
 """MockPrinterClient is the stand-in printer for end-to-end and integration tests (printer_type "mock")."""
-from app.services.mock_printer_client import MockPrinterClient
+from app.plugins.mock.client import MockPrinterClient
 from app.services.printer_client_factory import create_client_from_config
 
 

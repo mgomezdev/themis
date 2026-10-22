@@ -5,6 +5,7 @@ import pytest
 
 from app.services import alarms as alarm_service
 from app.services.abstract_printer_client import Alarm, PrinterCapabilities
+from app.services.events import event_bus
 from app.services.printer_manager import printer_manager
 
 
@@ -108,6 +109,13 @@ async def test_settings_round_trip_and_validation(client):
     assert (await client.get("/api/v1/alarms/settings")).json()["min_severity"] == "error"
 
 
+async def _state_change(pid):
+    """A client's state callback: the manager publishes the alarms onto the bus and the subscribed handler records them."""
+    printer_manager.subscribe_events()
+    await printer_manager.on_state_change(pid, None)
+    await event_bus.drain()
+
+
 async def test_the_printer_manager_turns_a_clients_reported_problems_into_alarms_and_resolves_them(client, session_factory, create_printer, monkeypatch):
     monkeypatch.setattr(alarm_service, "RESOLVE_GRACE_S", 0)
     pid = await create_printer(name="Atlas")
@@ -125,13 +133,13 @@ async def test_the_printer_manager_turns_a_clients_reported_problems_into_alarms
     printer_manager.set_broadcast_callback(broadcast)
     alarm_service.tracker.forget(pid)
     try:
-        await printer_manager._observe_alarms(pid)
-        await printer_manager._observe_alarms(pid)                                       # unchanged → no second row
+        await _state_change(pid)
+        await _state_change(pid)                                       # unchanged → no second row
         assert [a["code"] for a in (await client.get("/api/v1/alarms")).json()] == ["HMS_0700"]
         assert broadcasts.count("alarms_changed") == 1
 
         reported.clear()
-        await printer_manager._observe_alarms(pid)
+        await _state_change(pid)
         assert (await client.get("/api/v1/alarms")).json() == []
         assert len((await client.get("/api/v1/alarms", params={"status": "all"})).json()) == 1
     finally:
@@ -147,6 +155,22 @@ async def test_a_client_that_raises_does_not_break_state_handling(client, create
     printer_manager._clients[pid] = mock
     printer_manager.set_session_factory(session_factory)
     try:
-        await printer_manager._observe_alarms(pid)                                       # logged, not raised
+        await _state_change(pid)                                       # logged, not raised
     finally:
         printer_manager._session_factory = None
+
+
+async def test_an_alarms_event_published_on_the_bus_is_recorded(client, session_factory, create_printer, monkeypatch):
+    from app.services.printer_events import AlarmsReported
+    pid = await create_printer(name="Atlas")
+    printer_manager._clients[pid] = MagicMock(connected=True)
+    printer_manager.set_session_factory(session_factory)
+    printer_manager.subscribe_events()
+    alarm_service.tracker.forget(pid)
+    try:
+        await event_bus.publish(AlarmsReported(printer_id=pid, alarms=[A("E_BUS", "error", "from a plugin")]))
+        await event_bus.drain()
+        assert [a["code"] for a in (await client.get("/api/v1/alarms")).json()] == ["E_BUS"]
+    finally:
+        printer_manager._session_factory = None
+        alarm_service.tracker.forget(pid)

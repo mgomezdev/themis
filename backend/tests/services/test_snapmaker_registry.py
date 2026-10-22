@@ -1,14 +1,10 @@
-from app.services.printer_client_factory import (
-    get_printer_types_for_ui, create_client_from_config,
-)
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.services.printer_client_factory import client_class, create_client_from_config, printer_type_names
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 
 def test_snapmaker_in_printer_types():
-    types = {t["printer_type"]: t for t in get_printer_types_for_ui()}
-    assert "snapmaker_extended" in types
-    assert types["snapmaker_extended"]["display_name"] == "Snapmaker U1 (Extended)"
-    names = [f["name"] for f in types["snapmaker_extended"]["connection_fields"]]
+    assert printer_type_names()["snapmaker_extended"] == "Snapmaker U1 (Extended)"
+    names = [f.name for f in client_class("snapmaker_extended").connection_fields()]
     assert names == ["ip_address", "port", "api_key"]
 
 

@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from app.services.snapmaker_client import SnapmakerExtendedClient, SnapmakerState
+from app.plugins.snapmaker.client import SnapmakerExtendedClient, SnapmakerState
 
 
 def _client():
@@ -58,7 +58,7 @@ def test_print_complete_fires_once_on_transition():
 
 def test_http_control_calls():
     c = _client()
-    with patch("app.services.snapmaker_client.httpx.post") as post:
+    with patch("app.plugins.snapmaker.client.httpx.post") as post:
         post.return_value = MagicMock(raise_for_status=MagicMock())
         assert c.start_print("cube.gcode") is True
         url, kw = post.call_args[0][0], post.call_args.kwargs
@@ -74,7 +74,7 @@ def test_http_control_calls():
 
 def test_upload_file_posts_multipart():
     c = _client()
-    with patch("app.services.snapmaker_client.httpx.post") as post:
+    with patch("app.plugins.snapmaker.client.httpx.post") as post:
         post.return_value = MagicMock(raise_for_status=MagicMock())
         assert c.upload_file(b"G28\n", "cube.gcode") is True
         assert post.call_args[0][0].endswith("/server/files/upload")
@@ -109,8 +109,10 @@ def test_loaded_filaments_come_from_print_task_config_positionally():
     c._apply_status({"print_task_config": _TASK_CONFIG})
     trays = c.get_loaded_filaments()
     assert [t["slot"] for t in trays] == [0, 1, 2, 3]                       # list index == tool index
-    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "type": "", "color": "", "empty": True}   # empty tool kept as a placeholder
-    assert trays[1] == {"slot": 1, "filament_id": None, "name": "Generic PLA", "type": "PLA", "color": "#8C9099"}
+    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "manufacturer": None, "type": "", "subtype": None, "color": "",
+                        "empty": True}                                          # empty tool kept as a placeholder
+    assert trays[1] == {"slot": 1, "filament_id": None, "name": "Generic PLA", "manufacturer": None, "type": "PLA",
+                        "subtype": "standard", "color": "#8C9099"}              # "Generic" is no maker; a blank sub-type is plain
     assert trays[3]["color"] == "#519F61"
 
 
@@ -135,24 +137,45 @@ def test_task_config_notifications_merge_changed_keys_and_fire_only_on_change():
     assert seen[1][1]["type"] == "PETG" and seen[1][1]["color"] == "#8C9099"                         # colour kept from the first report
 
 
+def test_tool_data_becomes_the_slot_tuple_maker_type_subtype_colour():
+    from app.plugins.snapmaker.client import _trays_from_task_config
+    cfg = {"filament_exist": [True, True, True, True], "filament_type": ["PLA", "PLA-CF", "PETG", "NONE"],
+           "filament_vendor": ["Polymaker", "Snapmaker", "NONE", "X"], "filament_sub_type": ["Silk", "", "Basic", ""],
+           "filament_color_rgba": ["FF0000FF", "00FF00FF", "0000FFFF", ""]}
+    t0, t1, t2, t3 = _trays_from_task_config(cfg)
+    assert (t0["manufacturer"], t0["type"], t0["subtype"], t0["color"]) == ("Polymaker", "PLA", "silk", "#FF0000")
+    assert (t1["manufacturer"], t1["type"], t1["subtype"]) == ("Snapmaker", "PLA", "cf")      # the variant folded into the type is kept
+    assert (t2["manufacturer"], t2["type"], t2["subtype"]) == (None, "PETG", "standard")      # "Basic" is plain; vendor NONE is unknown
+    assert t3["empty"] is True and t3["subtype"] is None                                       # type NONE = empty tool
+
+
 def test_a_tool_with_no_spool_is_not_loaded_for_the_queue():
-    from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
-    from app.services.snapmaker_client import _trays_from_task_config
+    from app.services.filament_matching import evaluate
+    from app.plugins.snapmaker.client import _trays_from_task_config
     loaded = _trays_from_task_config(_TASK_CONFIG)
-    cfg = MagicMock(tool_index=0, filament_type=None, filament_color=None)
-    assert _slot_for_config(cfg, loaded) is None                                                      # T0 is empty
-    assert _slot_for_config(MagicMock(tool_index=2), loaded)["type"] == "PLA"
-    assert _mapped_tools_loaded([{"tool_index": 0}], loaded) is False
-    assert _mapped_tools_loaded([{"tool_index": 1}, {"tool_index": 3}], loaded) is True
-    any_ask = MagicMock(tool_index=None, filament_type="any", filament_color="any")
-    assert _slot_for_config(any_ask, loaded)["slot"] == 1                                             # "any" skips the empty T0
+
+    def ask(**kw):
+        base = dict(ask_manufacturer=None, ask_type=None, ask_subtype=None, ask_color=None, tool_index=None, filament_map=None, slot_plan=None)
+        return MagicMock(**{**base, **kw})
+
+    assert evaluate(ask(tool_index=0), loaded).reasons == ["T0 is empty"]                              # T0 is empty
+    assert [u.slot for u in evaluate(ask(tool_index=2), loaded).plan] == [2]
+    assert [u.slot for u in evaluate(ask(), loaded).plan] == [1]                                       # defer skips the empty T0
+    pinned = [{"model_filament": 1, "tool_index": 0}]
+    assert evaluate(ask(filament_map=pinned), loaded).eligible is False
+    assert evaluate(ask(filament_map=[{"model_filament": 1, "tool_index": 1}, {"model_filament": 2, "tool_index": 3}]), loaded).eligible
 
 
 def test_a_hand_entered_slot_without_a_type_still_counts_as_loaded():
     """Only the U1's explicit empty-tool placeholder is "not loaded"; a manual slot with a blank type (e.g. from the
-    scan-spool flow) used to match "any" asks and tool_index, and must keep doing so."""
-    from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
+    scan-spool flow) still serves a pinned tool and a "defer" ask."""
+    from app.services.filament_matching import evaluate
     manual = [{"slot": 0, "type": "", "name": "", "color": "", "filament_profile": "Generic PLA"}]
-    assert _slot_for_config(MagicMock(tool_index=0), manual) is manual[0]
-    assert _slot_for_config(MagicMock(tool_index=None, filament_type="any", filament_color="any"), manual) is manual[0]
-    assert _mapped_tools_loaded([{"tool_index": 0}], manual) is True
+
+    def ask(**kw):
+        base = dict(ask_manufacturer=None, ask_type=None, ask_subtype=None, ask_color=None, tool_index=None, filament_map=None, slot_plan=None)
+        return MagicMock(**{**base, **kw})
+
+    assert [u.slot for u in evaluate(ask(tool_index=0), manual).plan] == [0]
+    assert [u.slot for u in evaluate(ask(), manual).plan] == [0]
+    assert evaluate(ask(filament_map=[{"model_filament": 1, "tool_index": 0}]), manual).eligible

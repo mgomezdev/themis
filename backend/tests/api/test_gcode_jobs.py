@@ -23,6 +23,8 @@ def library(tmp_path, monkeypatch):
 
 
 async def _post(client, body):
+    # These legacy files carry no machine eligibility; the tests here are about other behaviour, so the user "confirms" it (BIZ-263).
+    body = {"confirm_unknown_eligibility": True, **body}
     with patch("app.api.routes.jobs.queue_engine"):
         return await client.post("/api/v1/jobs", json=body)
 
@@ -65,14 +67,14 @@ async def test_gcode_job_must_name_printers_or_a_model(client, library, upload_3
     assert resp.status_code == 422
 
 
-async def test_gcode_job_can_target_a_model(client, library, upload_3mf, create_printer, session_factory):
+async def test_gcode_job_can_target_a_model(client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
     from sqlalchemy import select
     from app.models import JobPrinterConfig
-    pid = await create_printer(printer_type="elegoo_centauri", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    pid = await create_printer(printer_type="elegoo_centauri", machine_profile_override=P1S, orca_printer_profiles=[P1S])
 
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
-        "model_targets": [{"machine_profile": P1S, "filament_type": "any", "filament_color": "any"}],
+        "model_targets": [{"model_uuid": await model_uuid_of(pid), "filament_type": "any", "filament_color": "any"}],
     })
 
     assert resp.status_code == 201, resp.text
@@ -130,26 +132,26 @@ async def test_gcode_job_refused_for_a_printer_that_cannot_take_raw_gcode(client
     assert "raw .gcode" in resp.json()["detail"]
 
 
-async def test_gcode_job_refused_for_a_model_only_bambu_printers_have(client, library, upload_3mf, create_printer):
-    await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+async def test_gcode_job_refused_for_a_model_only_bambu_printers_have(client, library, upload_3mf, create_printer, model_uuid_of):
+    pid = await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
-        "model_targets": [{"machine_profile": P1S}],
+        "model_targets": [{"model_uuid": await model_uuid_of(pid)}],
     })
     assert resp.status_code == 422
 
 
-async def test_gcode_target_skips_printers_that_cannot_take_raw_gcode(
-        client, library, upload_3mf, create_printer, session_factory):
+async def test_gcode_target_only_reaches_printers_of_its_model_not_ones_that_cannot_take_raw_gcode(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
     from sqlalchemy import select
     from app.models import JobPrinterConfig
-    await create_printer(name="bambu", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    await create_printer(name="bambu", machine_profile_override=P1S, orca_printer_profiles=[P1S])
     ok = await create_printer(name="centauri", printer_type="elegoo_centauri",
-                              current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+                              machine_profile_override=P1S, orca_printer_profiles=[P1S])
 
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
-        "model_targets": [{"machine_profile": P1S}],
+        "model_targets": [{"model_uuid": await model_uuid_of(ok)}],
     })
 
     assert resp.status_code == 201, resp.text

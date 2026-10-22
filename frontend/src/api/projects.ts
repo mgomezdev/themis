@@ -1,3 +1,4 @@
+import type { FilamentAsk } from '../lib/filamentAsk';
 import type { ProjectStage } from './customers';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
@@ -23,9 +24,11 @@ export interface ProjectItem {
   quantity: number;
   quantity_completed: number;
   quantity_failed: number;
-  filament_type: string;    // "any" | "PLA" | "PETG" | ...
-  filament_color: string;   // "any" | "#RRGGBB"
-  filament_id: number | null; // Spoolman filament ID, or null
+  // The filament ask: manufacturer / type / subtype / color. null = undefined (matches anything); subtype "any" is a real value.
+  filament_manufacturer: string | null;
+  filament_type: string | null;
+  filament_subtype: string | null;
+  filament_color: string | null;
   sort_order: number;
 }
 
@@ -140,12 +143,9 @@ export interface ProjectCreate {
   customer_id?: number | null;
 }
 
-export interface ProjectItemCreate {
+export interface ProjectItemCreate extends Partial<FilamentAsk> {
   file_id: number;
   quantity: number;
-  filament_type: string;
-  filament_color: string;
-  filament_id?: number | null;
   sort_order?: number;
 }
 

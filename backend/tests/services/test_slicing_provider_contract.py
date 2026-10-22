@@ -9,9 +9,10 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.services.providers.laminus import LaminusSlicingProvider
-from app.services.providers.slicing import SliceSpec, SlicingProviderError, get_slicing_provider
-from tests.fake_providers import FakeSlicingProvider, make_catalog
+from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate, SettingChange
+from app.services.providers.laminus import LaminusFormatProvider, LaminusSlicingProvider
+from app.services.providers.slicing import SliceSpec, SlicingProviderError, configured_server_url, get_slicing_provider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider, make_catalog
 
 URL = "http://laminus.test"
 
@@ -32,24 +33,27 @@ def sidecar():
 
     def default(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/api/health":
+        if path == "/api/v1/health":
             return httpx.Response(200, json={"status": "ok", "orcaslicer_version": "2.3.2"})
-        if path == "/api/profiles":
-            return httpx.Response(200, json=_RAW_CATALOG)
-        if path == "/api/profiles/merged-config":
+        if path == "/api/v1/profiles":
+            data = [{**e, "type": kind} for kind, es in _RAW_CATALOG.items() for e in es]
+            return httpx.Response(200, json={"data": data, "page": {"limit": 200, "next_cursor": None}})
+        if path == "/api/v1/profiles/merged-config":
             body = json.loads(request.content)
             return httpx.Response(200, json={"machine_uuid": body["machine_uuid"], "layer_height": "0.2"})
-        if path in ("/api/slice/start", "/api/slice/prepared"):
+        if path == "/api/v1/jobs":
+            return httpx.Response(202, json={"id": "job-1", "status": "pending"})
+        if path == "/api/v1/slice/prepared":
             return httpx.Response(200, json={"job_id": "job-1"})
-        if path == "/api/slice/status/job-1":
+        if path == "/api/v1/jobs/job-1":
             if sc.status == "failed":
                 return httpx.Response(200, json={"status": "failed", "error": "bad geometry"})
-            return httpx.Response(200, json={"status": "completed", "sliced_file": "out.gcode"})
-        if path == "/api/slice/download/job-1":
+            return httpx.Response(200, json={"status": "completed", "artifact": {"name": "out.gcode", "available": True}})
+        if path == "/api/v1/jobs/job-1/artifact":
             return httpx.Response(200, content=sc.gcode)
-        if path == "/api/arrange":
+        if path == "/api/v1/arrange":
             return httpx.Response(200, content=b"ARRANGED")
-        if path == "/api/pack":
+        if path == "/api/v1/pack":
             return httpx.Response(200, content=b"PACKED")
         return httpx.Response(404)
 
@@ -149,7 +153,7 @@ def test_laminus_slice_artifact_is_downloaded_to_the_status_filename(sidecar, tm
 
 def test_laminus_slice_sends_resolved_refs_plate_and_extra_config(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, extra_config={"bed_type": "Textured PEI"}), tmp_path)
-    start = next(r for r in sidecar.requests if r.url.path == "/api/slice/start")
+    start = next(r for r in sidecar.requests if r.url.path == "/api/v1/jobs")
     body = start.content.decode(errors="ignore")
     for needle in ('name="machine_uuid"', "m-1", "p-1", '["f-1"]', 'name="plate"', "Textured PEI", "geometry_only_retry"):
         assert needle in body
@@ -157,7 +161,7 @@ def test_laminus_slice_sends_resolved_refs_plate_and_extra_config(sidecar, tmp_p
 
 def test_laminus_omits_empty_extra_config_and_names_the_3mf_export(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, export_3mf=True), tmp_path)
-    body = next(r for r in sidecar.requests if r.url.path == "/api/slice/start").content.decode(errors="ignore")
+    body = next(r for r in sidecar.requests if r.url.path == "/api/v1/jobs").content.decode(errors="ignore")
     assert "extra_config" not in body
     assert "model.gcode.3mf" in body
 
@@ -165,7 +169,7 @@ def test_laminus_omits_empty_extra_config_and_names_the_3mf_export(sidecar, tmp_
 def test_laminus_prepared_projects_use_the_prepared_endpoint(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, prepared=True), tmp_path)
     paths = [r.url.path for r in sidecar.requests]
-    assert "/api/slice/prepared" in paths and "/api/slice/start" not in paths
+    assert "/api/v1/slice/prepared" in paths and "/api/v1/jobs" not in paths
 
 
 def test_laminus_timeouts_unchanged(sidecar, tmp_path):
@@ -231,17 +235,17 @@ def test_laminus_catalog_health_uses_the_given_timeout_and_maps_transport_errors
         p.catalog_health()
 
 
-@pytest.mark.parametrize("status, ok", [(200, True), (503, True), (500, False)])
-def test_laminus_rebuild_request_accepts_200_and_503_only(sidecar, status, ok):
+@pytest.mark.parametrize("status, ok", [(200, True), (503, False), (500, False)])
+def test_laminus_rebuild_request_accepts_200_only(sidecar, status, ok):
     sidecar.handler = lambda request: httpx.Response(status)
     p = LaminusSlicingProvider(URL)
     if ok:
         p.request_catalog_rebuild()
         req = sidecar.requests[-1]
-        assert req.url.path == "/api/profiles" and req.url.params["refresh"] == "true"
+        assert req.method == "POST" and req.url.path == "/api/v1/profiles/rescan"
         assert req.extensions["timeout"]["read"] == 10.0
     else:
-        with pytest.raises(SlicingProviderError, match="Laminus rescan trigger returned 500"):
+        with pytest.raises(SlicingProviderError, match=f"Laminus rescan trigger returned {status}"):
             p.request_catalog_rebuild()
 
 
@@ -253,36 +257,63 @@ def test_laminus_rebuild_request_maps_transport_errors(sidecar):
         LaminusSlicingProvider(URL).request_catalog_rebuild()
 
 
-# ---- slicer-specific file-format methods ----
+# ---- slicer-specific file-format methods: the offline FormatProvider (BIZ-281) ----
 
-def test_format_methods_are_provided_without_any_server(monkeypatch):
-    """get_format_provider never returns None and its format methods do no I/O to a server."""
-    from app.services.providers.slicing import get_format_provider
+@pytest.fixture(params=["fake", "laminus"])
+def fmt(request):
+    if request.param == "fake":
+        return FakeFormatProvider()
+    return LaminusFormatProvider()
+
+
+def test_format_provider_is_a_separate_offline_object_and_never_none(sidecar, monkeypatch):
+    """get_format_provider never returns None and does no I/O to a server; the slicing provider no longer carries the
+    format methods."""
+    from app.services.providers.format_provider import FormatProvider
+    from app.services.providers.slicing import SlicingProvider, get_format_provider
     monkeypatch.delenv("LAMINUS_SIDECAR_URL", raising=False)
-    fmt = get_format_provider()
+    f = get_format_provider()
+    assert isinstance(f, FormatProvider) and not isinstance(f, SlicingProvider)
     assert get_slicing_provider() is None
-    assert "enable_support" in fmt.curated_override_keys()
+    assert "enable_support" in f.curated_keys()
+    assert not any(hasattr(SlicingProvider, n) for n in ("parse_estimates", "inspect_overrides", "curated_override_keys"))
+    assert sidecar.requests == []
 
 
-def test_parse_estimates_reads_the_orca_summary_lines(provider, tmp_path):
+def test_curated_settings_are_key_label_pairs(fmt):
+    settings = fmt.curated_settings()
+    assert settings and all(isinstance(s, CuratedSetting) and s.key and s.label for s in settings)
+    assert len({s.key for s in settings}) == len(settings)
+
+
+def test_laminus_curated_settings_carry_their_display_labels():
+    labels = {s.key: s.label for s in LaminusFormatProvider().curated_settings()}
+    assert labels["sparse_infill_density"] == "Infill density"
+    assert labels["layer_height"] == "Layer height"
+
+
+def test_parse_estimates_returns_a_plate_estimate_dto(sidecar, tmp_path):
     gcode = tmp_path / "m.gcode"
     gcode.write_text("; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1h 2m 3s\n")
-    grams, secs, per_extruder = provider.parse_estimates(str(gcode))
-    assert isinstance(grams, float) and isinstance(secs, int) and per_extruder
-    if isinstance(provider, LaminusSlicingProvider):
-        assert (grams, secs, per_extruder) == (4.0, 3723, [1.25, 2.75])
+    assert LaminusFormatProvider().parse_estimates(str(gcode)) == PlateEstimate(4.0, 3723, (1.25, 2.75))
+    assert sidecar.requests == []
 
 
-def test_inspect_overrides_returns_the_documented_shape(provider, tmp_path):
+def test_parse_estimates_of_unreadable_file_is_all_none(tmp_path):
+    est = LaminusFormatProvider().parse_estimates(str(tmp_path / "nope.gcode"))
+    assert est == PlateEstimate(None, None, None)
+
+
+def test_inspect_overrides_returns_an_override_inspection_dto(sidecar, tmp_path):
     import zipfile
     proj = tmp_path / "p.3mf"
     with zipfile.ZipFile(proj, "w") as zf:
         zf.writestr("Metadata/project_settings.config", json.dumps({"enable_support": "1"}))
-    result = provider.inspect_overrides(str(proj), {"enable_support": "0"}, 1)
-    assert set(result) >= {"has_findings", "setting_changes", "slot_warning"}
-    if isinstance(provider, LaminusSlicingProvider):
-        assert result["has_findings"] is True
-        assert [c["key"] for c in result["setting_changes"]] == ["enable_support"]
+    result = LaminusFormatProvider().inspect_overrides(str(proj), {"enable_support": "0"}, 1)
+    assert isinstance(result, OverrideInspection)
+    assert result.has_findings is True
+    assert result.setting_changes == (SettingChange("enable_support", "1", "0"),)
+    assert sidecar.requests == []
 
 
 def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printers_list(provider):
@@ -290,3 +321,57 @@ def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printer
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "filament")] == ["PLA @A"]
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "process")] == ["0.20mm Standard"]
     assert provider.compatible_presets(cat, "Some Other Printer", "filament") == []
+
+
+def test_slicing_provider_resolves_through_the_gcode_produce_capability(monkeypatch):
+    """Core names no slicer: the provider is whichever enabled plugin serves `gcode.produce`, and its id is the cache identity."""
+    from app.plugins.host import plugin_host
+    from app.services.providers.slicing import slicing_provider_name
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    assert slicing_provider_name() == "laminus"
+    assert isinstance(get_slicing_provider(), LaminusSlicingProvider)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)       # the only provider is disabled
+    assert get_slicing_provider() is None
+    assert configured_server_url() is None
+
+
+def test_resolver_prefers_an_enabled_selection_and_refuses_ambiguity(monkeypatch):
+    from types import SimpleNamespace
+    from app.plugins.host import plugin_host
+    from app.services.providers import slicing
+
+    two = lambda cap: [SimpleNamespace(id="a"), SimpleNamespace(id="b")]  # noqa: E731
+    monkeypatch.setattr("app.plugins.providers_of", two)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: True)
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: None)
+    assert slicing.default_provider_id() is None                      # two enabled, no selection: ambiguous
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: "b")
+    assert slicing.default_provider_id() == "b"                       # the selection wins
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: pid == "a")
+    assert slicing.default_provider_id() == "a"                       # selected one disabled: sole enabled provider
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)
+    assert slicing.default_provider_id() is None
+
+
+def test_provider_without_an_adapter_is_unavailable_not_a_crash(monkeypatch, caplog):
+    from app.plugins.host import plugin_host
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    monkeypatch.setattr(plugin_host, "build_candidate", lambda pid: object())
+    with caplog.at_level("WARNING"):
+        assert get_slicing_provider() is None
+    assert "exposes no slicing_provider" in caplog.text
+
+
+def test_format_provider_follows_the_default_plugin_and_falls_back_to_the_bundled_reader(monkeypatch):
+    from app.services.providers import slicing
+    from tests.fake_providers import FakeFormatProvider
+
+    monkeypatch.setitem(slicing._FORMAT_REGISTRY, "other", FakeFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: "other")
+    assert isinstance(slicing.get_format_provider(), FakeFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: "no_reader")        # a slicer plugin without a reader
+    assert isinstance(slicing.get_format_provider(), LaminusFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: None)               # none/ambiguous: still never None
+    assert isinstance(slicing.get_format_provider(), LaminusFormatProvider)

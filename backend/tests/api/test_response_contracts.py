@@ -4,6 +4,7 @@ The same file is checked against the frontend's TypeScript interfaces by
 frontend/src/api/responseKeys.contract.test.ts, so a renamed or dropped field fails one side or the other.
 """
 import json
+from app.plugins.elegoo_centauri.client import serialize_elegoo
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -63,6 +64,7 @@ async def test_fleet_items_carry_the_fleet_keys_offline_and_the_fan_keys_when_co
                            filename="a.3mf", temperatures={"nozzle": 200.0}, layer_num=1, total_layers=2,
                            fan_model=1, fan_aux=2, fan_box=3, print_speed_pct=100)
     live.get_capabilities.return_value = PrinterCapabilities()
+    live.serialize_state.side_effect = lambda printer_id: serialize_elegoo(live.state, printer_id)   # as the Elegoo client does
     printer_manager._clients[live_id] = live
 
     items = {i["id"]: i for i in (await client.get("/api/v1/fleet")).json()}
@@ -188,3 +190,62 @@ async def test_sliced_versions_items_carry_their_keys(client, upload_3mf, sessio
     model = await upload_3mf()
     await _version_for(session_factory, tmp_path / "library", model)
     assert_carries("sliced_version_item", (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()[0])
+
+
+async def test_plugin_and_capability_responses_carry_their_keys(client, monkeypatch):
+    from app.services.providers.laminus.sidecar_client import SidecarError
+    monkeypatch.setattr("app.services.providers.laminus.sidecar_client.LaminusSidecarClient.health", MagicMock(side_effect=SidecarError("refused")))
+    listing = (await client.get("/api/v1/plugins")).json()["plugins"]
+    spoolman = next(pl for pl in listing if pl["id"] == "spoolman")
+    assert_carries("plugin_summary", spoolman)
+    assert_carries("plugin_provides", spoolman["provides"][0])
+    assert_carries("plugin_summary", (await client.get("/api/v1/plugins/spoolman")).json())
+    for body in ({}, {"settings": {"url": "http://laminus.test:5000"}}):      # unconfigured / unavailable (nothing listens there)
+        assert_carries("plugin_connection_result", (await client.post("/api/v1/plugins/laminus/test", json=body)).json())
+    caps = (await client.get("/api/v1/capabilities")).json()["capabilities"]
+    assert_carries("capability_info", next(c for c in caps if c["id"] == "inventory.filament"))
+
+
+async def test_model_slicer_profile_responses_carry_their_keys(client, create_printer, model_uuid_of):
+    from unittest.mock import patch
+    from app.services.providers.slicing import MachineCandidate, NozzleVariantOption
+    from tests.fake_providers import FakeSlicingProvider
+
+    model = await model_uuid_of(await create_printer())
+    created = (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": "P1S 0.4"})).json()
+    assert_carries("printer_model_slicer_profile", created)
+    assert_carries("printer_model_slicer_profile", (await client.get(f"/api/v1/printer-models/{model}/slicer-profiles")).json()[0])
+
+    class Suggesting(FakeSlicingProvider):
+        SUGGEST_PROFILES = True
+
+        def suggest_machines(self, manufacturer, model, model_key=None):
+            return [MachineCandidate("P1S 0.4", 0.4, "standard", "machine:p1s", 0.9, "exact_model")]
+
+        def nozzle_variants(self, manufacturer, model, model_key=None):
+            return [NozzleVariantOption("P1S 0.4", 0.4, "standard", "machine:p1s", True)]
+
+    with patch("app.api.routes.printer_model_slicer_profiles.slicing_provider_for", lambda pid: Suggesting()):
+        body = (await client.get(f"/api/v1/printer-models/{model}/slicer-profiles/suggestions", params={"provider_plugin_id": "laminus"})).json()
+    assert_carries("slicer_profile_suggestions", body)
+    assert_carries("slicer_profile_candidate", body["candidates"][0])
+    assert_carries("slicer_profile_variant", body["variants"][0])
+
+
+async def test_job_model_targets_carry_the_model_target_keys(client, upload_3mf, create_printer, model_uuid_of):
+    from unittest.mock import patch
+    model = await model_uuid_of(await create_printer())
+    with patch("app.api.routes.jobs.queue_engine"):
+        job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": await upload_3mf(), "model_targets": [
+            {"model_uuid": model, "print_profile": "0.2"}]})).json()
+    assert_carries("model_target", (await client.get(f"/api/v1/jobs/{job['id']}/details")).json()["model_targets"][0])
+
+
+async def test_filament_match_and_slot_conflicts_carry_their_keys(client, create_job, create_printer):
+    pid = await create_printer(loaded_filaments=[{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+    job_id = await create_job(printer_id=pid, filament_type="PETG", filament_subtype="any")
+    (cfg,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert_carries("filament_match", cfg["filament_match"])
+    assert cfg["filament_match"]["reasons"], "an ineligible printer lists why (the frontend renders them)"
+    assert_carries("slot_conflicts", (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json())

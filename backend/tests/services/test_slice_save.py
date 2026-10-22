@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from app.services.artifact_store import ArtifactStoreError
 from sqlalchemy import select
 
 from app.models import GcodeFile, Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
@@ -36,11 +38,11 @@ def env(tmp_path, monkeypatch):
 
 
 async def _seed(factory, *, save=True, name=None, content_hash="srchash", printer_type="elegoo_centauri",
-                filament_type="PETG") -> int:
+                filament_type="PETG") -> int:    # the ask's base type (subtype any)
     async with factory() as s:
         if await s.get(Printer, 1) is None:
             s.add(Printer(id=1, name="P1", printer_type=printer_type, connection_config={},
-                          current_orca_printer_profile=MACHINE,
+                          machine_profile_override=MACHINE,
                           loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                              "filament_profile": "Generic PETG"}]))
             await s.flush()
@@ -52,12 +54,12 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
                              size_bytes=st.st_size, mtime=st.st_mtime)   # indexed as it is on disk
             s.add(f)
             await s.flush()
-        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", created_at=_now(),
+        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True, created_at=_now(),
                 updated_at=_now(), save_slice=save, save_slice_name=name)
         s.add(j)
         await s.flush()
         s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="0.20mm Standard",
-                               filament_type=filament_type, filament_color="#000000"))
+                               ask_type=filament_type, ask_subtype="any", ask_color="#000000"))
         await s.commit()
         return j.id
 
@@ -185,7 +187,7 @@ async def test_a_failed_save_never_stops_the_print(session_factory, tmp_path, en
     qe, mgr = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory)
 
-    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
+    with patch("app.services.artifact_store.LocalDiskArtifactStore.put_file", side_effect=ArtifactStoreError("disk full")):
         await _run_to_printing(qe, session_factory, job_id)
 
     mgr.get_client.return_value.start_print.assert_called_once()
@@ -254,7 +256,7 @@ async def test_a_save_that_fails_midway_leaves_no_half_registered_file(session_f
     qe, _ = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory)
 
-    with patch("app.services.slice_saver.LibraryScanner._parse_plates", side_effect=RuntimeError("bad zip")):
+    with patch("app.services.slice_saver.LibraryScanner.parse_plates", side_effect=RuntimeError("bad zip")):
         await _run_to_printing(qe, session_factory, job_id)
 
     async with session_factory() as s:
@@ -307,14 +309,13 @@ async def test_the_key_uses_the_resolved_filament_map_and_the_merged_config(sess
                               {"slot": 1, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]
         (await s.get(Job, job_id)).overrides = {"sparse_infill_density": "25%"}
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-        cfg.filament_map = [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000"}]
+        cfg.filament_map = [{"model_filament": 1, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#000000"}]
         await s.commit()
 
     await _run_to_printing(qe, session_factory, job_id)
 
     (version,) = await _versions(session_factory)
-    assert version.filament_map == [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000",
-                                     "tool_index": 1}]
+    assert version.filament_map == [{"model_filament": 1, "tool_index": 1}]      # only the routing: the ask must not split the cache
     assert version.extra_config == {"curr_bed_type": "Textured PEI Plate", "sparse_infill_density": "25%"}
     req = qe._slicer.slice.call_args.args[0]
     assert version.cache_key == slice_cache.cache_key(
@@ -412,15 +413,49 @@ def test_safe_display_name_limits_bytes_not_characters():
     assert len(out.encode()) <= 180 and set(out) == {"é"}
 
 
-def test_the_copy_never_clobbers_a_file_that_appears_between_choosing_and_writing(tmp_path):
-    """Two saves can pick the same free name at once; the exclusive create makes the loser take the next one."""
-    from app.services import slice_saver
-    src = tmp_path / "src.gcode"
-    src.write_bytes(GCODE)
-    raced = tmp_path / "x.gcode"
-    raced.write_bytes(b"the other save")
-    picks = iter([raced, tmp_path / "x (2).gcode"])
-    with patch("app.services.slice_saver.LibraryScanner.unique_path", side_effect=lambda *_: next(picks)):
-        dest = slice_saver._copy_exclusive(str(src), tmp_path, "x.gcode")
-    assert dest.name == "x (2).gcode" and dest.read_bytes() == GCODE
-    assert raced.read_bytes() == b"the other save"
+@pytest.mark.asyncio
+async def test_a_saved_slice_is_eligible_for_its_target_model_and_only_its_declared_equivalents(session_factory, tmp_path, env):
+    """BIZ-263: the slice's file records the model it was sliced for + registry-declared equivalents (never inferred)."""
+    from app import plugins
+    from app.models import FileMachineEligibility
+    from app.plugins.manifest import Manufacturer, PrinterModel
+    from app.services import printer_model_registry as registry
+    from tests.plugins.dummy_plugin import make_manifest
+    saved = dict(plugins._REGISTRY)
+    plugins.register_plugin(make_manifest("fake_printers", default_enabled=True, manufacturers=(
+        Manufacturer("acme", "Acme", (PrinterModel("x1", "X1", equivalents=("x1_pro",)), PrinterModel("x1_pro", "X1 Pro"),
+                                      PrinterModel("x2", "X2"))),)))
+    try:
+        async with session_factory() as s:
+            await registry.sync_registry(s)
+            models = {m["model_id"]: m["id"] for m in await registry.list_models(s, plugin_id="fake_printers")}
+            s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}, model_uuid=models["x1"],
+                          machine_profile_override=MACHINE,
+                          loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]))
+            await s.commit()
+        qe, _ = _engine(session_factory, tmp_path)
+        job_id = await _seed(session_factory)
+
+        await _run_to_printing(qe, session_factory, job_id)
+
+        (version,) = await _versions(session_factory)
+        async with session_factory() as s:
+            f = await s.get(UploadedFile, version.file_id)
+            rows = (await s.execute(select(FileMachineEligibility).where(FileMachineEligibility.file_id == f.id))).scalars().all()
+        assert f.eligibility_known is True
+        assert {(r.model_uuid, r.source) for r in rows} == {(models["x1"], "target"), (models["x1_pro"], "equivalent")}
+    finally:
+        plugins._REGISTRY.clear()
+        plugins._REGISTRY.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_slice_from_a_printer_with_no_registered_model_stays_unknown(session_factory, tmp_path, env):
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory)               # the seeded printer has no model_uuid
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    (version,) = await _versions(session_factory)
+    async with session_factory() as s:
+        assert (await s.get(UploadedFile, version.file_id)).eligibility_known is False

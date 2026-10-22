@@ -5,34 +5,30 @@ import { MemoryRouter } from 'react-router-dom';
 import { NewJobScreen } from './NewJobScreen';
 import * as queueApi from '../api/queue';
 
-// ── Spoolman mock helpers ─────────────────────────────────────────────────────
+// ── Inventory mock helpers ─────────────────────────────────────────────────────
 
 const MOCK_FILAMENTS = [
-  { id: 7, name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
-  { id: 19, name: 'White',   vendor: { id: 3, name: 'Sunlu'  }, material: 'PLA+', color_hex: 'FFFFFF' },
+  mkMaterial({ ref: '7', name: 'Sky Blue', vendor: 'ELEGOO', material: 'PLA', color_hex: '#5B9BD5' }),
+  mkMaterial({ ref: '19', name: 'White', vendor: 'Sunlu', material: 'PLA', subtype: 'plus', color_hex: '#FFFFFF' }),
 ];
 
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn(),
-  useFilaments:      vi.fn(),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
-  parseOrcaProfiles: vi.fn(() => ({})),
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(),
+  useMaterials: vi.fn(),
 }));
 
-import * as spoolmanApi from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
 
 function mockSpoolmanConnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({
-    config: { enabled: true, url: 'http://artemis:7912', has_api_key: false, sync_interval_minutes: 15 },
-    refetch: vi.fn(),
-  });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue(MOCK_FILAMENTS as never);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(activeInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue(MOCK_FILAMENTS);
 }
 
 function mockSpoolmanDisconnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({ config: null, refetch: vi.fn() });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue([]);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
 }
 
 // ── API mocks ─────────────────────────────────────────────────────────────────
@@ -57,7 +53,7 @@ const MOCK_PRINTER = {
   connection_config: {},
   awaiting_plate_clear: false,
   orca_printer_profiles: ['Elegoo Centauri Carbon'],
-  current_orca_printer_profile: 'Elegoo Centauri Carbon',
+  machine_profile: 'Elegoo Centauri Carbon',
   enabled: true,
   connected: true,
   loaded_filaments: [],
@@ -126,12 +122,6 @@ async function selectPrintProfile(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(profileSelect, '0.20mm Standard @ECC');
 }
 
-/** Switch the filament mode to "type-color" so filament inputs (including color) are shown. */
-async function switchToRequireFilament(user: ReturnType<typeof userEvent.setup>) {
-  const modeSelect = await screen.findByTestId('filament-mode');
-  await user.selectOptions(modeSelect, 'type-color');
-}
-
 // ── Basic rendering ───────────────────────────────────────────────────────────
 
 describe('NewJobScreen — rendering', () => {
@@ -148,143 +138,95 @@ describe('NewJobScreen — rendering', () => {
   });
 });
 
-// ── Filament UI — Spoolman disconnected ───────────────────────────────────────
+// ── Filament ask (manufacturer / type / subtype / color) ─────────────────────────────────────
 
-describe('Filament input — Spoolman not configured', () => {
+const ASK_NONE = { filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null };
+
+describe('Filament ask — no inventory', () => {
   beforeEach(() => mockSpoolmanDisconnected());
 
-  it('shows filament-mode select (defer by default) when Spoolman is off; switching to type-color shows manual inputs', async () => {
-    const user = userEvent.setup();
-    render(<NewJobScreen />, { wrapper });
-    await uploadAndExpand(user);
-    await selectPrinter(user);
-
-    // Defer is the default — filament inputs hidden
-    const modeSelect = await screen.findByTestId('filament-mode');
-    expect((modeSelect as HTMLSelectElement).value).toBe('defer');
-    expect(screen.queryByTestId('filament-type-input')).toBeNull();
-    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
-
-    // Switch to type-color — manual inputs (type + color) appear
-    await user.selectOptions(modeSelect, 'type-color');
-    expect(screen.getByTestId('filament-type-input')).toBeTruthy();
-    expect(screen.getByTestId('filament-color-input')).toBeTruthy();
-  });
-
-  it('submits job with filament_type and filament_color, filament_id null', async () => {
+  it('starts undefined ("any loaded filament"): the editor is there, no catalog is offered, and the job is created with a null ask', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
-    await switchToRequireFilament(user);
 
-    await user.type(screen.getByTestId('filament-type-input'), 'PETG');
+    expect(await screen.findByTestId('filament-ask-type')).toBeTruthy();
+    expect(screen.queryByTestId('filament-ask-pick')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /add.*job/i }));
+    await waitFor(() => expect(vi.mocked(queueApi.createJob)).toHaveBeenCalled());
+    expect(vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0]).toMatchObject(ASK_NONE);
+  });
+
+  it('submits a hand-typed tuple: a type gets subtype "any" until changed, and no material reference is sent', async () => {
+    const user = userEvent.setup();
+    render(<NewJobScreen />, { wrapper });
+    await uploadAndExpand(user);
+    await selectPrinter(user);
+    await selectPrintProfile(user);
+
+    await user.type(await screen.findByTestId('filament-ask-manufacturer'), 'Acme');
+    await user.selectOptions(screen.getByTestId('filament-ask-type'), 'PETG');
+    await user.selectOptions(screen.getByTestId('filament-ask-subtype'), 'silk');
+    await user.click(screen.getByTestId('filament-ask-color'));
 
     await user.click(screen.getByRole('button', { name: /add.*job/i }));
     await waitFor(() => expect(vi.mocked(queueApi.createJob)).toHaveBeenCalled());
 
-    const call = vi.mocked(queueApi.createJob).mock.calls[0][0];
-    const cfg = call.printer_configs[0];
-    expect(cfg.filament_type).toBe('PETG');
-    expect(cfg.filament_id).toBeNull();
-    expect(cfg.filament_color).toBeTruthy();
+    const cfg = vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0];
+    expect(cfg).toMatchObject({ filament_manufacturer: 'Acme', filament_type: 'PETG', filament_subtype: 'silk', filament_color: '#1a73e8' });
+    expect(Object.keys(cfg).filter(k => /material|filament_id/.test(k))).toEqual([]);
   });
 });
 
-// ── Filament UI — Spoolman connected ─────────────────────────────────────────
-
-describe('Filament input — Spoolman connected', () => {
+describe('Filament ask — with an inventory', () => {
   beforeEach(() => mockSpoolmanConnected());
 
-  it('shows catalog select with filament options when Spoolman is active (after switching to require)', async () => {
+  it('offers "pick…" with the inventory\'s materials', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
-    await switchToRequireFilament(user);
 
-    const sel = screen.getByTestId('filament-catalog-select');
-    expect(sel).toBeTruthy();
-    const options = Array.from(sel.querySelectorAll('option')).map(o => o.textContent);
-    expect(options).toContain('ELEGOO Sky Blue · PLA');
-    expect(options).toContain('Sunlu White · PLA+');
+    await user.click(await screen.findByTestId('filament-ask-pick'));
+    const options = Array.from(screen.getByTestId('filament-ask-material').querySelectorAll('option')).map(o => o.textContent);
+    expect(options).toContain('ELEGOO Sky Blue (PLA)');
+    expect(options).toContain('Sunlu White (PLA plus)');
   });
 
-  it('catalog select includes "Enter manually…" option', async () => {
-    const user = userEvent.setup();
-    render(<NewJobScreen />, { wrapper });
-    await uploadAndExpand(user);
-    await selectPrinter(user);
-    await switchToRequireFilament(user);
-
-    const options = Array.from(
-      screen.getByTestId('filament-catalog-select').querySelectorAll('option')
-    ).map(o => o.textContent);
-    expect(options).toContain('Enter manually…');
-  });
-
-  it('submits job with filament_id, filament_type, filament_color from catalog selection', async () => {
+  it('picking a material fills the tuple only: manufacturer, type, subtype and colour, with no reference to the material', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
-    await switchToRequireFilament(user);
 
-    await user.selectOptions(
-      screen.getByTestId('filament-catalog-select'),
-      'Sunlu White'
-    );
+    await user.click(await screen.findByTestId('filament-ask-pick'));
+    await user.selectOptions(screen.getByTestId('filament-ask-material'), '19');
+    expect((screen.getByTestId('filament-ask-type') as HTMLSelectElement).value).toBe('PLA');       // the fields show what was filled
+    expect((screen.getByTestId('filament-ask-subtype') as HTMLSelectElement).value).toBe('plus');
 
     await user.click(screen.getByRole('button', { name: /add.*job/i }));
     await waitFor(() => expect(vi.mocked(queueApi.createJob)).toHaveBeenCalled());
 
     const cfg = vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0];
-    expect(cfg.filament_id).toBe(19);
-    expect(cfg.filament_type).toBe('PLA+');
-    expect(cfg.filament_color).toBe('#FFFFFF');
-    expect(cfg.filament_profile).toBe('Sunlu White');
+    expect(cfg).toMatchObject({ filament_manufacturer: 'Sunlu', filament_type: 'PLA', filament_subtype: 'plus', filament_color: '#FFFFFF' });
+    expect(Object.keys(cfg).filter(k => /material|filament_id/.test(k))).toEqual([]);
   });
 
-  it('switching to manual clears filament_id', async () => {
+  it('the picked tuple can be edited afterwards (it is just four fields)', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
-    await switchToRequireFilament(user);
 
-    // First pick a catalog item
-    await user.selectOptions(screen.getByTestId('filament-catalog-select'), 'Sunlu White');
-    // Then switch to manual
-    await user.selectOptions(screen.getByTestId('filament-catalog-select'), '__manual__');
-
-    await waitFor(() => expect(screen.getByTestId('filament-type-input')).toBeTruthy());
-    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
-
-    await user.type(screen.getByTestId('filament-type-input'), 'ABS');
+    await user.click(await screen.findByTestId('filament-ask-pick'));
+    await user.selectOptions(screen.getByTestId('filament-ask-material'), '19');
+    await user.selectOptions(screen.getByTestId('filament-ask-subtype'), 'any');
     await user.click(screen.getByRole('button', { name: /add.*job/i }));
     await waitFor(() => expect(vi.mocked(queueApi.createJob)).toHaveBeenCalled());
-
-    const cfg = vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0];
-    expect(cfg.filament_id).toBeNull();
-    expect(cfg.filament_type).toBe('ABS');
-  });
-
-  it('"↩ Catalog" button returns to catalog select and clears manual fields', async () => {
-    const user = userEvent.setup();
-    render(<NewJobScreen />, { wrapper });
-    await uploadAndExpand(user);
-    await selectPrinter(user);
-    await switchToRequireFilament(user);
-
-    await user.selectOptions(screen.getByTestId('filament-catalog-select'), '__manual__');
-    await waitFor(() => expect(screen.getByTestId('filament-type-input')).toBeTruthy());
-
-    await user.click(screen.getByRole('button', { name: /↩ Catalog/i }));
-    await waitFor(() => expect(screen.getByTestId('filament-catalog-select')).toBeTruthy());
-    expect(screen.queryByTestId('filament-type-input')).toBeNull();
+    expect(vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0]).toMatchObject({ filament_type: 'PLA', filament_subtype: 'any' });
   });
 });
-

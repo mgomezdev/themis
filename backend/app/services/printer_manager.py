@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import time
 from dataclasses import asdict
 from typing import Any, Callable
 
@@ -8,86 +9,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
+from .events import event_bus
+from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
+from .printer_events import AlarmsReported, AmsChanged, PrinterStateChanged, PrintCompleted
+from .printer_identity import dormant_reason
 
 logger = logging.getLogger(__name__)
 
 
-def _serialize_bambu(state, printer_id: int) -> dict:
-    return {
-        "printer_type": "bambu",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": getattr(state, "remaining_time", 0),
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_elegoo(state, printer_id: int) -> dict:
-    total_ticks = getattr(state, "total_ticks", 0)
-    current_ticks = getattr(state, "current_ticks", 0)
-    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
-        remaining_time = int((total_ticks - current_ticks) / 60)
-    else:
-        remaining_time = getattr(state, "remaining_time", 0) or 0
-    return {
-        "printer_type": "elegoo_centauri",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "filename", None) or getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": remaining_time,
-        "layer_num": getattr(state, "layer_num", None),
-        "total_layers": getattr(state, "total_layers", None),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": getattr(state, "print_speed_pct", 100) / 100.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_snapmaker(state, printer_id: int) -> dict:
-    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", False))
-    return {
-        "printer_type": "snapmaker_extended",
-        "id": printer_id,
-        "connected": conn,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0) * 100.0,  # Klipper display_status.progress is 0..1; the API is 0..100
-        "remaining_time": getattr(state, "remaining_time", 0) or 0,
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": 0,
-        "fan_aux": 0,
-        "fan_box": 0,
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if conn else "disconnected",
-        "cover_url": None,
-    }
-
-
-_STATUS_SERIALIZERS: dict[str, Callable] = {
-    "bambu": _serialize_bambu,
-    "elegoo_centauri": _serialize_elegoo,
-    "snapmaker_extended": _serialize_snapmaker,
-}
+def _slots_signature(slots: list) -> list[dict]:
+    """Slots without their unset (None) keys: a first report and the same report merged with the stored slot differ only by Themis-owned keys
+    that are None, which is not a change in what is loaded."""
+    return [{k: v for k, v in slot.items() if v is not None} for slot in slots]
 
 
 class PrinterManager:
@@ -98,6 +32,26 @@ class PrinterManager:
         self._on_job_complete: Callable | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session_factory: async_sessionmaker | None = None
+        self._subscribed = False
+        self._printer_plugin: dict[int, str | None] = {}
+        # Liveness: when each currently-offline printer was first seen offline, and the ones past the user's cutoff ("dead"). Held in
+        # memory (a restart restarts the clock); sampled from `client.connected`, which is the authoritative connection state.
+        self._clock: Callable[[], float] = time.monotonic
+        self._offline_since: dict[int, float] = {}
+        self._dead: set[int] = set()
+        self._on_connectivity: Callable | None = None
+
+    def subscribe_events(self) -> None:
+        """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
+        lifespan runs once per client in tests."""
+        if self._subscribed:
+            return
+        self._subscribed = True
+        event_bus.subscribe(PrinterStateChanged, lambda e: self.on_state_change(e.printer_id, e.state))
+        # completing a job (DB commit, inventory deduction, webhooks) must never be cut short by the bus's handler timeout
+        event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state), timeout=None)
+        event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
+        event_bus.subscribe(AlarmsReported, lambda e: self.on_alarms(e.printer_id, e.alarms))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
         self._on_state_broadcast = cb
@@ -132,6 +86,7 @@ class PrinterManager:
             )
             printers = result.scalars().all()
         for printer in printers:
+            self.set_printer_plugin(printer.id, printer.plugin_id)
             try:
                 client = create_client(printer)
                 self.connect_printer(printer.id, client)
@@ -140,6 +95,77 @@ class PrinterManager:
 
     def register_client(self, printer_id: int, client: AbstractPrinterClient) -> None:
         self._clients[printer_id] = client
+        self._offline_since.pop(printer_id, None)
+        self._dead.discard(printer_id)
+        self.sample_connectivity(printer_id)            # a printer that is not up at registration starts its offline clock now
+
+    # --- liveness: online / undead (offline, under the cutoff) / dead (offline for the cutoff or longer) ---------------
+
+    def set_connectivity_callback(self, cb: Callable | None) -> None:
+        """`async cb(printer_id, edge, was_dead)` for each offline->online edge seen on telemetry, so the queue can react promptly."""
+        self._on_connectivity = cb
+
+    def sample_connectivity(self, printer_id: int) -> tuple[str | None, bool]:
+        """Compare `client.connected` with what was last seen: `("offline", False)` on the first sight of an outage, `("online", was_dead)`
+        when a printer that was offline is back, else `(None, False)`. No other effects."""
+        client = self._clients.get(printer_id)
+        if client is None:
+            self._offline_since.pop(printer_id, None)
+            self._dead.discard(printer_id)
+            return None, False
+        if getattr(client, "connected", True):          # a client without the property is treated as up
+            if printer_id in self._offline_since:
+                del self._offline_since[printer_id]
+                was_dead = printer_id in self._dead
+                self._dead.discard(printer_id)
+                return "online", was_dead
+            return None, False
+        if printer_id not in self._offline_since:
+            self._offline_since[printer_id] = self._clock()
+            return "offline", False
+        return None, False
+
+    def sample_all(self) -> list[tuple[int, str, bool]]:
+        """`sample_connectivity` for every printer; only the ones that changed: `(printer_id, edge, was_dead)`."""
+        out = []
+        for pid in list(self._clients):
+            edge, was_dead = self.sample_connectivity(pid)
+            if edge is not None:
+                out.append((pid, edge, was_dead))
+        return out
+
+    def offline_seconds(self, printer_id: int) -> float | None:
+        since = self._offline_since.get(printer_id)
+        return None if since is None else max(0.0, self._clock() - since)
+
+    def liveness(self, printer_id: int, cutoff_minutes: int) -> str | None:
+        """`online`, `undead` (offline but under the cutoff: still part of queue processing), `dead` (offline for the cutoff or longer;
+        never when the cutoff is 0), or None for a printer Themis has no client for."""
+        if printer_id not in self._clients:
+            return None
+        offline = self.offline_seconds(printer_id)
+        if offline is None:
+            return "online"
+        return "dead" if cutoff_minutes > 0 and offline >= cutoff_minutes * 60 else "undead"
+
+    def newly_dead(self, cutoff_minutes: int) -> list[int]:
+        """Printers that crossed the cutoff since the last call (each is reported once per outage); with cutoff 0 nobody is dead."""
+        if cutoff_minutes <= 0:
+            self._dead.clear()
+            return []
+        fresh = [pid for pid in list(self._offline_since) if pid not in self._dead and self.liveness(pid, cutoff_minutes) == "dead"]
+        self._dead.update(fresh)
+        return fresh
+
+    def is_dead(self, printer_id: int) -> bool:
+        return printer_id in self._dead
+
+    def seconds_until_next_dead(self, cutoff_minutes: int) -> float | None:
+        """Seconds until the next offline printer crosses the cutoff (None when none will), floored at 1 s."""
+        if cutoff_minutes <= 0:
+            return None
+        waits = [cutoff_minutes * 60 - (self.offline_seconds(pid) or 0.0) for pid in self._offline_since if pid not in self._dead]
+        return max(1.0, min(waits)) if waits else None
 
     def get_client(self, printer_id: int) -> AbstractPrinterClient:
         return self._clients[printer_id]
@@ -150,9 +176,19 @@ class PrinterManager:
     def is_awaiting_plate_clear(self, printer_id: int) -> bool:
         return printer_id in self._awaiting_plate_clear
 
+    def set_printer_plugin(self, printer_id: int, plugin_id: str | None) -> None:
+        """Remember which plugin serves a printer, so a disabled or removed plugin makes its printers dormant (not ready)."""
+        self._printer_plugin[printer_id] = plugin_id
+
+    def forget_printer(self, printer_id: int) -> None:
+        """Drop a deleted printer's plugin mapping (ids can be reused, and a stale mapping would make the new printer dormant)."""
+        self._printer_plugin.pop(printer_id, None)
+
     def is_printer_ready(self, printer_id: int) -> bool:
         client = self._clients.get(printer_id)
         if client is None:
+            return False
+        if dormant_reason(self._printer_plugin.get(printer_id)) is not None:
             return False
         return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 
@@ -167,10 +203,7 @@ class PrinterManager:
 
     def get_normalized_state(self, printer_id: int) -> dict:
         client = self._clients[printer_id]
-        serializer = _STATUS_SERIALIZERS.get(client.printer_type)
-        if serializer is None:
-            return {"id": printer_id, "printer_type": client.printer_type, "connected": client.connected}
-        state = serializer(client.state, printer_id)
+        state = client.serialize_state(printer_id)
         # Override connected with the client-level property (authoritative source)
         state["connected"] = client.connected
         state["capabilities"] = asdict(client.get_capabilities())
@@ -178,20 +211,32 @@ class PrinterManager:
         return state
 
     async def on_state_change(self, printer_id: int, vendor_state) -> None:
-        await self._observe_alarms(printer_id)
+        edge, was_dead = self.sample_connectivity(printer_id)
+        if edge == "online" and self._on_connectivity is not None:
+            try:
+                await self._on_connectivity(printer_id, edge, was_dead)
+            except Exception:
+                logger.exception("Connectivity handler failed for printer %s", printer_id)
+        client = self._clients.get(printer_id)
+        if client is not None:
+            try:
+                alarms = client.get_alarms()
+            except Exception:
+                logger.exception("Reading alarms failed for printer %s", printer_id)   # never let it break telemetry
+            else:
+                await event_bus.publish(AlarmsReported(printer_id=printer_id, alarms=alarms))
         if self._on_state_broadcast:
             normalized = self.get_normalized_state(printer_id)
             await self._on_state_broadcast("printer_state", normalized)
 
-    async def _observe_alarms(self, printer_id: int) -> None:
+    async def on_alarms(self, printer_id: int, alarms: list) -> None:
         """Feed the printer's current problems to the alarm history. Never lets an alarm failure break telemetry."""
-        client = self._clients.get(printer_id)
-        if client is None or self._session_factory is None:
+        if self._session_factory is None:
             return
         try:
             from .alarms import tracker
             await tracker.observe(
-                self._session_factory, printer_id, client.get_alarms(), self._on_state_broadcast,
+                self._session_factory, printer_id, alarms, self._on_state_broadcast,
                 refresh=lambda: self._clients[printer_id].get_alarms() if printer_id in self._clients else [])
         except Exception:
             logger.exception("Alarm update failed for printer %s", printer_id)
@@ -215,7 +260,7 @@ class PrinterManager:
     async def on_ams_change(self, printer_id: int, trays: list) -> None:
         """AMS filament change → persist the printer's `loaded_filaments` from the
         auto-detected trays. User-set per-slot mappings (`filament_profile`,
-        `spoolman_spool_id`) are preserved by slot across AMS reports; slots no
+        `inventory`, legacy binding key) are preserved by slot across AMS reports; slots no
         longer reported drop with their mappings."""
         if self._session_factory:
             async with self._session_factory() as session:
@@ -227,16 +272,21 @@ class PrinterManager:
                     }
                     merged = []
                     for tray in trays:
+                        tray = {**tray, "reported": True}          # hardware facts: the tuple may now conflict with a bound spool
                         prev = prev_by_slot.get(tray.get("slot"))
                         if prev is not None:
-                            tray = {
-                                **tray,
-                                "filament_profile": prev.get("filament_profile"),
-                                "spoolman_spool_id": prev.get("spoolman_spool_id"),
-                            }
+                            # Keep EVERY Themis-owned key (profile, spool binding, inventory ref), not just two named ones:
+                            # a vendor AMS report only carries hardware facts and must never wipe a link.
+                            tray = inventory_refs.preserve_slot_keys(prev, tray)
                         merged.append(tray)
+                    slots_changed = _slots_signature(merged) != _slots_signature(printer.loaded_filaments or [])
                     printer.loaded_filaments = merged
                     await session.commit()
+                    if slots_changed and self._on_connectivity is not None:
+                        try:
+                            await self._on_connectivity(printer_id, "slots", False)   # a job may now match (or stop matching) this printer
+                        except Exception:
+                            logger.exception("Connectivity handler failed for printer %s", printer_id)
         if self._on_state_broadcast:
             try:
                 await self._on_state_broadcast("printer_state", self.get_normalized_state(printer_id))
@@ -251,13 +301,13 @@ class PrinterManager:
             logger.warning("connect_printer called before set_loop — callbacks will be disabled")
 
         async def _on_state(state):
-            await self.on_state_change(printer_id, state)
+            await event_bus.publish(PrinterStateChanged(printer_id=printer_id, state=state))
 
         async def _on_complete(state):
-            await self.on_print_complete(printer_id, state)
+            await event_bus.publish(PrintCompleted(printer_id=printer_id, state=state))
 
         async def _on_ams(trays):
-            await self.on_ams_change(printer_id, trays)
+            await event_bus.publish(AmsChanged(printer_id=printer_id, trays=trays))
 
         # Assign async functions directly — clients call run_coroutine_threadsafe on them
         client._on_state_change = _on_state
@@ -267,6 +317,8 @@ class PrinterManager:
         client.connect(loop=loop)
 
     def disconnect_printer(self, printer_id: int) -> None:
+        self._offline_since.pop(printer_id, None)
+        self._dead.discard(printer_id)
         client = self._clients.pop(printer_id, None)
         if client:
             client.disconnect()

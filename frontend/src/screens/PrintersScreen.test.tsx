@@ -4,6 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { PrintersScreen, EditForm } from './PrintersScreen';
 import type { ApiPrinter, PrinterType } from '../api/printers';
+import { mkPlugin, mkSpool, pluginsBody } from '../test/inventoryFixtures';
+import { resetPluginStore } from '../api/plugins';
+import { printerType } from '../test/printerTypes';
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <MemoryRouter>{children}</MemoryRouter>
@@ -14,10 +17,13 @@ const mockPrinters = [
     id: 1,
     name: 'Forge',
     printer_type: 'bambu',
+    plugin_id: 'bambu',
+    manufacturer_id: 'bambu',
+    model_id: 'p1s',
     connection_config: { ip_address: '192.168.1.100', access_code: '12345678', serial_number: 'SN001' },
     awaiting_plate_clear: false,
     orca_printer_profiles: [],
-    current_orca_printer_profile: null,
+    machine_profile_override: null,
     enabled: true,
     connected: true,
     loaded_filaments: [],
@@ -31,22 +37,21 @@ const mockPrinters = [
 ];
 
 const mockTypes = [
-  {
-    printer_type: 'bambu',
-    display_name: 'Bambu Lab',
+  printerType({
+    plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
       { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
       { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
       { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
     ],
-  },
+  }),
 ];
 
 function makeFetch(url: string) {
   if (url.includes('/types')) return Promise.resolve({ ok: true, json: () => Promise.resolve(mockTypes) });
   if (url === '/api/v1/printers') return Promise.resolve({ ok: true, json: () => Promise.resolve(mockPrinters) });
   if (url.includes('/orca-machine-catalog')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
-  if (url.includes('/spoolman')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false, url: null, has_api_key: false }) });
+  if (url === '/api/v1/plugins') return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins: [], selections: {} }) });
   if (url.includes('/profiles')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ print_profiles: [], filament_profiles: [] }) });
   return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
 }
@@ -75,7 +80,7 @@ describe('PrintersScreen', () => {
     await waitFor(() => expect(screen.getByText(/1 connected/i)).toBeTruthy());
   });
 
-  it('clicking Add printer shows wizard step 1 with type tiles', async () => {
+  it('clicking Add printer shows wizard step 1 with the manufacturer and model pickers', async () => {
     const user = userEvent.setup();
     render(<PrintersScreen />, { wrapper });
     await waitFor(() => screen.getByRole('button', { name: /add printer/i }));
@@ -170,10 +175,18 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   id: 7,
   name: 'Prism',
   printer_type: 'bambu',
+  plugin_id: 'bambu',
+  manufacturer_id: 'bambu',
+  model_id: 'p1s',
+  model_uuid: null,
   connection_config: { ip_address: '192.168.2.50', access_code: 'xyz', serial_number: 'SN007' },
   awaiting_plate_clear: false,
   orca_printer_profiles: [],
-  current_orca_printer_profile: null,
+  machine_profile_override: null,
+  nozzle_variant: null,
+  machine_profile: null,
+  machine_profile_reason: null,
+  model_label: null,
   enabled: true,
   queue_on: true,
   connected: true,
@@ -183,45 +196,44 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   bed_x_mm: 256,
   bed_y_mm: 256,
   machine_rate_per_hour: null,
+  preferred_slicer_plugin_id: null,
   quiet_start: null,
   quiet_end: null,
 };
 
 const INTEGRATION_TYPES: PrinterType[] = [
-  {
-    printer_type: 'bambu',
-    display_name: 'Bambu Lab',
+  printerType({
+    plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
       { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
     ],
-  },
+  }),
 ];
 
-const INTEGRATION_SPOOL = {
-  id: 7,
-  remaining_weight: 800,
-  used_weight: 0,
-  filament: { id: 30, vendor: { name: 'Bambu' }, name: 'Basic White PLA', material: 'PLA', color_hex: 'FFFFFF' },
-};
+const INTEGRATION_SPOOL = mkSpool('7', {
+  remaining_g: 800,
+  material: { vendor: 'Bambu', name: 'Basic White PLA', material: 'PLA', color_hex: '#FFFFFF' },
+});
 
 describe('PrintersScreen EditForm + SlotSpoolPicker integration', () => {
   let patchCalls: Array<[string, RequestInit]>;
 
   beforeEach(() => {
+    resetPluginStore();
     patchCalls = [];
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
       if (init?.method === 'PATCH') {
         patchCalls.push([url, init as RequestInit]);
         return Promise.resolve({ ok: true, json: () => Promise.resolve(INTEGRATION_PRINTER) });
       }
-      if (url === '/api/v1/settings/spoolman') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', has_api_key: false }) });
+      if (url === '/api/v1/plugins') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(pluginsBody(mkPlugin({ id: 'spoolman' }))) });
       }
-      if (url === '/api/v1/spoolman/spools') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([INTEGRATION_SPOOL]) });
+      if (url === '/api/v1/inventory/spools') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [INTEGRATION_SPOOL] }) });
       }
-      if (url === '/api/v1/spoolman/filaments') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      if (url === '/api/v1/inventory/materials') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [] }) });
       }
       if (url.includes('orca-machine-catalog')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
@@ -268,7 +280,7 @@ describe('PrintersScreen EditForm + SlotSpoolPicker integration', () => {
     expect(patchCalls.length).toBeGreaterThan(0);
     const body = JSON.parse(patchCalls[0][1].body as string);
     const slot = body.loaded_filaments[0];
-    expect(slot.spoolman_spool_id).toBe('7');
+    expect(slot.inventory).toEqual({ provider: 'spoolman', spool_ref: '7' });
     expect(slot.type).toBe('PLA');
     expect(slot.color).toBe('#FFFFFF');
   });

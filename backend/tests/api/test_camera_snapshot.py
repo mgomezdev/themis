@@ -6,6 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.services.abstract_printer_client import AbstractPrinterClient
 from app.services.printer_manager import printer_manager
 
 JPEG = b"\xff\xd8snapshot\xff\xd9"
@@ -23,6 +24,8 @@ def _cam(*, connected=True, camera=True, mjpeg="http://192.168.1.20:3031/video",
     cam.get_capabilities.return_value = MagicMock(camera=camera)
     cam.camera_mjpeg_url = mjpeg
     cam.camera_rtsp_url = rtsp
+    cam.camera_unavailable_reason.return_value = None
+    cam.camera_snapshot = lambda: AbstractPrinterClient.camera_snapshot(cam)      # the real default (MJPEG URL grab)
     return cam
 
 
@@ -64,13 +67,12 @@ async def test_snapshot_returns_the_frame_as_an_uncached_jpeg_after_waking_the_c
     order = []
     fake.start_video_stream.side_effect = lambda: order.append("activate")
 
-    async def grab(c):
+    async def grab():
         order.append("grab")
-        assert c is fake
         return JPEG
 
-    with patch("app.api.routes.printers.grab_snapshot_from_client", grab):
-        resp = await client.get(f"/api/v1/printers/{printer_id}/snapshot")
+    fake.camera_snapshot = grab
+    resp = await client.get(f"/api/v1/printers/{printer_id}/snapshot")
 
     assert resp.status_code == 200
     assert resp.content == JPEG
@@ -100,10 +102,11 @@ async def test_snapshot_404_when_the_camera_capable_printer_has_no_source(client
 @pytest.mark.parametrize("error", [ValueError("No complete JPEG frame found in stream"),
                                    TimeoutError("timed out"), FileNotFoundError("ffmpeg")])
 async def test_snapshot_turns_grab_failures_into_503_with_the_reason(client, printer_id, error):
-    printer_manager._clients[printer_id] = _cam()
+    fake = _cam()
+    fake.camera_snapshot = AsyncMock(side_effect=error)
+    printer_manager._clients[printer_id] = fake
 
-    with patch("app.api.routes.printers.grab_snapshot_from_client", new=AsyncMock(side_effect=error)):
-        resp = await client.get(f"/api/v1/printers/{printer_id}/snapshot")
+    resp = await client.get(f"/api/v1/printers/{printer_id}/snapshot")
 
     assert resp.status_code == 503
     assert resp.json()["detail"] == f"Camera unavailable: {error}"
@@ -112,14 +115,15 @@ async def test_snapshot_turns_grab_failures_into_503_with_the_reason(client, pri
 async def test_snapshot_accepts_the_key_as_a_query_parameter_but_other_routes_do_not(client, printer_id):
     """<img src> cannot send headers, so /snapshot (only) honours ?key= — exercised on the real route."""
     raw = client.headers["X-Api-Key"]
-    printer_manager._clients[printer_id] = _cam()
+    fake = _cam()
+    fake.camera_snapshot = AsyncMock(return_value=JPEG)
+    printer_manager._clients[printer_id] = fake
     remote = ASGITransport(app=app, client=("203.0.113.7", 50000))  # off the local network: no keyless admin
 
     async with AsyncClient(transport=remote, base_url="http://test") as anon:
-        with patch("app.api.routes.printers.grab_snapshot_from_client", new=AsyncMock(return_value=JPEG)):
-            no_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot")
-            with_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot", params={"key": raw})
-            bad_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot", params={"key": "thm_wrong"})
+        no_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot")
+        with_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot", params={"key": raw})
+        bad_key = await anon.get(f"/api/v1/printers/{printer_id}/snapshot", params={"key": "thm_wrong"})
         other_route = await anon.get(f"/api/v1/printers/{printer_id}", params={"key": raw})
 
     assert (no_key.status_code, bad_key.status_code, other_route.status_code) == (401, 401, 401)

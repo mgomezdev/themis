@@ -1,0 +1,249 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  fetchPlugin, setCapabilityProvider, testPlugin, updatePlugin, usePlugins,
+  type ConnectionState, type JsonSchemaProperty, type PluginDetail,
+} from '../api/plugins';
+import { SCHEMA_VERSION, settingsKind, type SettingsKind } from '../api/uiSchema';
+import { FieldRow, PageHeader, Toggle } from './settingsUi';
+import { INVENTORY_CAPABILITY } from '../api/inventory';
+import { InventoryProviderPanel } from './InventoryProviderPanel';
+
+/** The default plugin page every plugin can reference: header (name, version, docs, enable, health), a connection form
+ *  generated from the plugin's settings model (secrets are write-only), a Test connection button and, for an active
+ *  inventory provider, its sync / pending-writes / suspended-tracking panel. */
+
+type Draft = Record<string, unknown>;
+
+/** A settings property outside the declarative contract (nested objects, lists of non-strings, ...) renders as a notice, never a guessed input. */
+type PropKind = SettingsKind | 'unsupported';
+
+const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+
+/** The persistent connection pill (`ui.connection_status` plugins): what the backend's test named, or "Checking" until it answers. */
+const CONNECTION_PILL: Record<ConnectionState | 'checking' | 'unknown', { tone: string; label: string }> = {
+  healthy: { tone: 'ok', label: 'Healthy' },
+  unavailable: { tone: 'err', label: 'Unavailable' },
+  unconfigured: { tone: 'warn', label: 'Not configured' },
+  checking: { tone: 'idle', label: 'Checking…' },
+  unknown: { tone: 'idle', label: 'Unknown' },          // the probe was refused (no permission): say nothing about the service
+};
+
+export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
+  const { refresh } = usePlugins();
+  const [plugin, setPlugin] = useState<PluginDetail | null>(null);
+  const [draft, setDraft] = useState<Draft>({});
+  const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
+  const [listText, setListText] = useState<Record<string, string>>({});       // what the user typed in a comma-separated list field
+  const [loadError, setLoadError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [connState, setConnState] = useState<ConnectionState | 'checking' | 'unknown' | null>(null);
+  const probeSeq = useRef(0);                      // only the newest probe / Test result may set the pill
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const adopt = useCallback((d: PluginDetail) => { setPlugin(d); setDraft(d.settings); setSecretDraft({}); setListText({}); }, []);
+
+  useEffect(() => {
+    let alive = true;
+    setPlugin(null); setLoadError('');
+    fetchPlugin(pluginId).then(d => { if (alive) adopt(d); })
+      .catch(e => { if (alive) setLoadError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [pluginId, adopt]);
+
+  // Persistent state pill: probe the saved settings once when the page opens (and again after a save / enable change).
+  const watchConnection = !!plugin?.ui?.connection_status && !!plugin.enabled;
+  const settle = (seq: number, r: { ok: boolean; state?: ConnectionState }) => {
+    if (seq === probeSeq.current) setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable'));
+  };
+  const probeKey = plugin ? `${plugin.id}:${JSON.stringify(plugin.settings)}` : '';
+  useEffect(() => {
+    const seq = ++probeSeq.current;                 // any change (or unmount) invalidates the probes still in flight
+    if (!watchConnection || !plugin) { setConnState(null); return () => { probeSeq.current++; }; }
+    setConnState('checking');
+    testPlugin(plugin.id, {}).then(r => settle(seq, r))
+      .catch(e => { if (seq === probeSeq.current) setConnState((e as { status?: number }).status === 403 ? 'unknown' : 'unavailable'); });
+    return () => { probeSeq.current++; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchConnection, probeKey]);
+
+  // A settings schema of a version this build does not know is not rendered at all (fail closed); the enable switch still works.
+  const schemaSupported = (plugin?.settings_schema_version ?? SCHEMA_VERSION) === SCHEMA_VERSION;
+  const propType = (p: JsonSchemaProperty): PropKind => settingsKind(p, plugin?.settings_schema?.$defs) ?? 'unsupported';
+  const fields = useMemo(() => {
+    if (!plugin || !schemaSupported) return [];
+    const props = plugin.settings_schema?.properties ?? {};
+    return Object.entries(props).filter(([k]) => !(plugin.secret_fields ?? []).includes(k));
+  }, [plugin, schemaSupported]);
+
+  if (loadError) return <div role="alert" style={{ color: 'var(--err)' }}>{loadError}</div>;
+  if (!plugin) return <div className="muted small">Loading…</div>;
+  const pluginId_ = plugin.id;
+
+  const required = new Set(plugin.settings_schema?.required ?? []);
+  // Capabilities this plugin could serve but is not the chosen provider of. (`routed` / `fan_out` ones have no choice to make:
+  // every enabled provider serves them, so there is nothing to select.)
+  const unselected = plugin.provides.filter(p => !p.selected && p.mode !== 'fan_out' && p.mode !== 'routed');
+  const isSelected = plugin.provides.some(p => p.selected);
+  const health: { tone: string; label: string } = plugin.error ? { tone: 'err', label: 'Problem' }
+    : !plugin.enabled ? { tone: 'idle', label: 'Disabled' }
+    : isSelected ? { tone: 'ok', label: 'Active' } : { tone: 'info', label: 'Enabled, not selected' };
+
+  const patchBody = () => {
+    const settings: Draft = {};
+    for (const [k, p] of fields) {
+      const v = draft[k];
+      const kind = propType(p);
+      if (kind === 'unsupported') continue;                // never sent: the page cannot edit it, so it keeps its stored value
+      settings[k] = kind === 'number' ? (v === '' || v == null ? null : Number(v))
+        : kind === 'choices' || kind === 'list' ? asList(v)
+        : (v === '' ? null : v);
+    }
+    return { settings, secrets: secretDraft };
+  };
+
+  async function run(label: string, fn: () => Promise<PluginDetail | void>) {
+    setBusy(true); setMsg(null);
+    try {
+      const d = await fn();
+      if (d) adopt(d);
+      setMsg({ ok: true, text: label });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
+  const save = () => run('Saved', () => updatePlugin(pluginId_, patchBody()));
+  const setEnabled = (enabled: boolean) => run(enabled ? 'Enabled' : 'Disabled', () => updatePlugin(pluginId_, { enabled }));
+  const makeActive = (capability: string) => run('Selected as the active provider', async () => {
+    await setCapabilityProvider(capability, pluginId_);
+    refresh();
+    return fetchPlugin(pluginId_);                    // the page reads its selection state from the detail: re-adopt it
+  });
+
+  async function test() {
+    setBusy(true); setTestMsg(null);
+    const seq = watchConnection ? ++probeSeq.current : 0;
+    try {
+      const r = await testPlugin(pluginId_, patchBody());
+      if (watchConnection) settle(seq, r);
+      setTestMsg({ ok: r.ok, text: r.ok ? `Connected${r.version ? ` (version ${r.version})` : ''}` : r.message || 'Could not connect' });
+    } catch (e) {
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div data-testid="plugin-page">
+      <PageHeader
+        title={plugin.name}
+        sub={`${plugin.description || plugin.provides.map(p => p.capability).join(', ')} · v${plugin.version}`}
+        actions={<span className="row gap-2">
+          <span className={`pill ${health.tone}`} data-testid="plugin-health"><span className="dot" />{health.label}</span>
+          {watchConnection && connState && <span className={`pill ${CONNECTION_PILL[connState].tone}`} data-testid="plugin-connection"
+                              title="Connection state, checked against the saved settings">
+            <span className="dot" />{CONNECTION_PILL[connState].label}</span>}
+        </span>}
+      />
+      {plugin.docs_url && <div className="small" style={{ marginBottom: 12 }}><a href={plugin.docs_url} target="_blank" rel="noreferrer">Documentation</a></div>}
+      {plugin.error && <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{plugin.error}</div>}
+      {(plugin.diagnostics ?? []).length > 0 && (
+        <div data-testid="plugin-diagnostics" role="group" aria-label="Plugin diagnostics" className="small" style={{ color: 'var(--warn)', marginBottom: 12 }}>
+          <div>Parts of this plugin's interface were left out:</div>
+          <ul style={{ margin: '4px 0 0 18px' }}>
+            {(plugin.diagnostics ?? []).map(d => <li key={d.scope}><code>{d.scope}</code>: {d.message}</li>)}
+          </ul>
+        </div>
+      )}
+      {!schemaSupported && (
+        <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>
+          This plugin's settings form uses schema version {plugin.settings_schema_version}, which this Themis cannot display.
+        </div>
+      )}
+
+      <FieldRow label={`Enable ${plugin.name}`} hint="When off, Themis ignores this plugin entirely.">
+        <Toggle checked={plugin.enabled} onChange={setEnabled} />
+      </FieldRow>
+      {plugin.enabled && unselected.map(p => (
+        <FieldRow key={p.capability} label={`Use for ${p.capability}`}
+                  hint={`Another provider is selected for ${p.capability} (or none). Only the selected one is used.`}>
+          <button className="btn sm" onClick={() => makeActive(p.capability)} disabled={busy}
+                  aria-label={unselected.length > 1 ? `Use ${plugin.name} for ${p.capability}` : `Use ${plugin.name}`}>Use {plugin.name}</button>
+        </FieldRow>
+      ))}
+      {plugin.provides.filter(p => p.status === 'waiting').map(p => (
+        <div key={p.capability} role="status" className="small muted" style={{ marginBottom: 8 }}>
+          {p.capability}: waiting on {p.waiting_on.join(', ')}
+        </div>
+      ))}
+
+      {fields.map(([key, prop]) => {
+        const type = propType(prop);
+        const label = prop.title ?? humanize(key);
+        return (
+          <FieldRow key={key} label={`${label}${required.has(key) ? ' *' : ''}`} hint={prop.description}>
+            {type === 'unsupported'
+              ? <div className="small muted" data-testid={`unsupported-${key}`}>Not editable here.</div>
+              : type === 'boolean'
+              ? <Toggle checked={!!draft[key]} onChange={v => setDraft(d => ({ ...d, [key]: v }))} />
+              : type === 'choices'
+              ? <div className="col" style={{ gap: 10 }} role="group" aria-label={label}>
+                  {(prop.items?.enum ?? []).map(choice => (
+                    <label key={choice} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                      <Toggle checked={asList(draft[key]).includes(choice)}
+                              onChange={on => setDraft(d => {
+                                const cur = asList(d[key]);
+                                return { ...d, [key]: on ? [...cur, choice] : cur.filter(c => c !== choice) };
+                              })} />
+                      <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-1)' }}>{choice}</span>
+                    </label>
+                  ))}
+                </div>
+              : type === 'list'
+              ? <input className="input" aria-label={label} type="text" placeholder="a, b, c"
+                       value={listText[key] ?? asList(draft[key]).join(', ')}
+                       onChange={e => {
+                         const text = e.target.value;
+                         setListText(t => ({ ...t, [key]: text }));          // keep exactly what was typed (commas, spaces) on screen
+                         setDraft(d => ({ ...d, [key]: text.split(',').map(x => x.trim()).filter(Boolean) }));
+                       }} />
+              : <input className="input" aria-label={label} type={type === 'number' ? 'number' : 'text'}
+                       min={type === 'number' ? prop.minimum : undefined} max={type === 'number' ? prop.maximum : undefined}
+                       value={draft[key] == null ? '' : String(draft[key])}
+                       placeholder={prop.default != null ? String(prop.default) : ''}
+                       onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} />}
+          </FieldRow>
+        );
+      })}
+
+      {(schemaSupported ? plugin.secret_fields ?? [] : []).map(key => {
+        const prop = plugin.settings_schema?.properties?.[key] ?? {};
+        const label = prop.title ?? humanize(key);
+        const stored = plugin.secrets?.[key];
+        const touched = key in secretDraft;
+        return (
+          <FieldRow key={key} label={label} hint={prop.description}>
+            <div className="row gap-2">
+              <input className="input" type="password" autoComplete="new-password" aria-label={label}
+                     value={secretDraft[key] ?? ''}
+                     placeholder={stored ? 'Set ✓ — type to replace' : 'Not set'}
+                     onChange={e => setSecretDraft(d => ({ ...d, [key]: e.target.value }))} />
+              {stored && !touched && <button className="btn ghost sm" aria-label={`Clear ${label}`} onClick={() => setSecretDraft(d => ({ ...d, [key]: '' }))}>Clear</button>}
+            </div>
+            {touched && secretDraft[key] === '' && <div className="tiny muted" style={{ marginTop: 4 }}>Will be cleared on save</div>}
+          </FieldRow>
+        );
+      })}
+
+      <div className="row gap-2" style={{ padding: '16px 0', alignItems: 'center' }}>
+        <button className="btn primary sm" onClick={save} disabled={busy}>Save</button>
+        <button className="btn sm" onClick={test} disabled={busy}>Test connection</button>
+        {msg && <span role={msg.ok ? 'status' : 'alert'} className="small" style={{ color: msg.ok ? 'var(--ok)' : 'var(--err)' }}>{msg.text}</span>}
+        {testMsg && <span data-testid="test-result" className="small" style={{ color: testMsg.ok ? 'var(--ok)' : 'var(--err)' }}>{testMsg.text}</span>}
+      </div>
+
+      {plugin.provides.some(p => p.capability === INVENTORY_CAPABILITY && p.status === 'serving') && <InventoryProviderPanel plugin={plugin} />}
+    </div>
+  );
+}

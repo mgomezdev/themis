@@ -1,4 +1,4 @@
-from app.services.providers.filament_inventory import Filament, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import InvMaterial, InventoryProviderError
 from tests.catalog_helpers import cached_raw, prime_catalog
 from tests.fake_providers import FakeInventoryProvider
 from app.services import catalog_service
@@ -172,18 +172,18 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(c
 
 
 def _bound(ref, name, bindings):
-    return Filament(ref=str(ref), name=name, profile_bindings=bindings)
+    return InvMaterial(ref=str(ref), name=name, profile_links=bindings)
 
 
 def _patch_inventory(provider):
-    return patch("app.api.routes.settings.make_inventory_provider", return_value=provider)
+    return patch("app.plugins.host.plugin_host.build_candidate", return_value=provider)
 
 
 async def test_spoolman_test_connection_all_names_valid_returns_ok(client):
     """All profile names bound in Spoolman present in the catalog → normal success response."""
     original_pending = catalog_service._pending_sync
     prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]})
-    provider = FakeInventoryProvider(filaments=[_bound(1, "PLA Red", {"Bambu X1C": ["PLA"]})])
+    provider = FakeInventoryProvider(materials=[_bound(1, "PLA Red", {"Bambu X1C": ["PLA"]})])
 
     try:
         with _patch_inventory(provider):
@@ -192,7 +192,7 @@ async def test_spoolman_test_connection_all_names_valid_returns_ok(client):
         assert resp.status_code == 200
         body = resp.json()
         assert body.get("status") == "ok" and body.get("ok") is True
-        assert provider.calls == ["test_connection", "list_filaments"]
+        assert provider.calls == ["test_connection", "list_materials"]
         assert catalog_service._pending_sync is original_pending       # nothing parked
     finally:
         catalog_service._pending_sync = original_pending
@@ -205,7 +205,7 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
     prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]})
     catalog_service._pending_sync = None
     stale = {"Bambu X1C 0.4 nozzle": ["PLA Old"]}
-    provider = FakeInventoryProvider(filaments=[
+    provider = FakeInventoryProvider(materials=[
         _bound(9, "Red PLA", stale), _bound(14, "Blue PLA", stale), _bound(22, "White PLA", stale),
         _bound(30, "Fine PLA", {"Bambu X1C 0.4 nozzle": ["PLA New"]}),     # valid binding: not flagged
     ])
@@ -218,7 +218,7 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
         body = resp.json()
         assert body["status"] == "pending_remaps"
         assert "sync_id" in body
-        spool_entries = body["pending"]["spoolman_filaments"]
+        spool_entries = body["pending"]["inventory_filaments"]
         assert len(spool_entries) == 1
         entry = spool_entries[0]
         assert entry["printer_preset"] == "Bambu X1C 0.4 nozzle"
@@ -247,8 +247,8 @@ async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
 
 async def test_spoolman_test_connection_skips_the_name_check_without_profile_bindings(client):
     prime_catalog({"machine": [], "process": [], "filament": []})
-    provider = FakeInventoryProvider(filaments=[_bound(1, "x", {"P": ["gone"]})])
-    provider.PROFILE_BINDINGS = False
+    provider = FakeInventoryProvider(materials=[_bound(1, "x", {"P": ["gone"]})])
+    provider.capabilities = frozenset()
 
     with _patch_inventory(provider):
         resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
@@ -267,243 +267,24 @@ async def test_spoolman_test_connection_reports_a_failed_connection_and_survives
 
     flaky = FakeInventoryProvider()
 
-    async def list_filaments():
+    async def list_materials():
         raise InventoryProviderError("boom")
 
-    flaky.list_filaments = list_filaments
+    flaky.list_materials = list_materials
     with _patch_inventory(flaky):
         resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
     assert resp.json()["ok"] is True and resp.json()["status"] == "ok"      # best-effort: connection still ok
 
 
-# ---------------------------------------------------------------------------
-# Notification config
-# ---------------------------------------------------------------------------
+async def test_printer_dead_after_minutes_defaults_to_30_round_trips_and_rejects_out_of_range(client: AsyncClient):
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 30
 
-async def test_get_notifications_fresh_db_all_channels_present_disabled(client: AsyncClient):
-    resp = await client.get("/api/v1/settings/notifications")
+    resp = await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": 45})
+    assert resp.status_code == 200 and resp.json()["printer_dead_after_minutes"] == 45
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 45
 
-    assert resp.status_code == 200
-    body = resp.json()
-
-    assert body["ntfy"] == {"enabled": False, "server_url": None, "topic": None, "priority": None, "events": []}
-    assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
-    assert body["email"] == {
-        "enabled": False, "host": None, "port": None, "username": None,
-        "password": None, "from_addr": None, "to_addrs": [], "events": [],
-    }
-
-
-async def test_put_notifications_only_ntfy_leaves_others_default(client: AsyncClient):
-    resp = await client.put("/api/v1/settings/notifications", json={
-        "ntfy": {
-            "enabled": True,
-            "server_url": "https://ntfy.sh",
-            "topic": "themis-test",
-            "events": ["job.complete"],
-        }
-    })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ntfy"] == {
-        "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
-        "priority": None, "events": ["job.complete"],
-    }
-    assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
-    assert body["email"]["enabled"] is False
-
-
-async def test_put_notifications_ntfy_priority_round_trips(client: AsyncClient):
-    """The ntfy 'priority' field must actually persist — it was previously
-    accepted by the request body but silently dropped (no matching DB column),
-    so real job-event notifications never honored a configured priority."""
-    resp = await client.put("/api/v1/settings/notifications", json={
-        "ntfy": {
-            "enabled": True,
-            "server_url": "https://ntfy.sh",
-            "topic": "themis-test",
-            "priority": 4,
-            "events": ["job.complete"],
-        }
-    })
-    assert resp.status_code == 200
-    assert resp.json()["ntfy"]["priority"] == 4
-
-    resp = await client.get("/api/v1/settings/notifications")
-    assert resp.status_code == 200
-    assert resp.json()["ntfy"]["priority"] == 4
-
-
-async def test_put_notifications_second_put_other_channel_preserves_first(client: AsyncClient):
-    await client.put("/api/v1/settings/notifications", json={
-        "ntfy": {
-            "enabled": True,
-            "server_url": "https://ntfy.sh",
-            "topic": "themis-test",
-            "events": ["job.complete"],
-        }
-    })
-
-    resp = await client.put("/api/v1/settings/notifications", json={
-        "discord": {
-            "enabled": True,
-            "webhook_url": "https://discord.com/api/webhooks/xyz",
-            "events": ["job.failed"],
-        }
-    })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ntfy"] == {
-        "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
-        "priority": None, "events": ["job.complete"],
-    }
-    assert body["discord"] == {
-        "enabled": True, "webhook_url": "https://discord.com/api/webhooks/xyz",
-        "events": ["job.failed"],
-    }
-
-
-async def test_notifications_test_ntfy_success(client: AsyncClient):
-    with patch("app.api.routes.settings.send_ntfy", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = None
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "ntfy",
-            "config": {"server_url": "https://ntfy.sh", "topic": "themis-test", "priority": None},
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    mock_send.assert_called_once()
-
-
-async def test_notifications_test_ntfy_failure(client: AsyncClient):
-    with patch("app.api.routes.settings.send_ntfy", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = "ntfy server responded 500"
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "ntfy",
-            "config": {"server_url": "https://ntfy.sh", "topic": "themis-test"},
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert body["message"] == "ntfy server responded 500"
-
-
-async def test_notifications_test_ntfy_missing_field(client: AsyncClient):
-    resp = await client.post("/api/v1/settings/notifications/test", json={
-        "channel": "ntfy",
-        "config": {},
-    })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert "message" in body
-
-
-async def test_notifications_test_discord_success(client: AsyncClient):
-    with patch("app.api.routes.settings.send_discord", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = None
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "discord",
-            "config": {"webhook_url": "https://discord.com/api/webhooks/xyz"},
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    mock_send.assert_called_once()
-
-
-async def test_notifications_test_discord_failure(client: AsyncClient):
-    with patch("app.api.routes.settings.send_discord", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = "Discord webhook responded 404"
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "discord",
-            "config": {"webhook_url": "https://discord.com/api/webhooks/xyz"},
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert body["message"] == "Discord webhook responded 404"
-
-
-async def test_notifications_test_discord_missing_field(client: AsyncClient):
-    resp = await client.post("/api/v1/settings/notifications/test", json={
-        "channel": "discord",
-        "config": {},
-    })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert "message" in body
-
-
-async def test_notifications_test_email_success(client: AsyncClient):
-    with patch("app.api.routes.settings.send_email", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = None
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "email",
-            "config": {
-                "host": "smtp.example.com", "port": 587, "username": None, "password": None,
-                "from_addr": "themis@example.com", "to_addrs": ["me@example.com"],
-            },
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is True
-    mock_send.assert_called_once()
-
-
-async def test_notifications_test_email_failure(client: AsyncClient):
-    with patch("app.api.routes.settings.send_email", new_callable=AsyncMock) as mock_send:
-        mock_send.return_value = "Connection refused"
-        resp = await client.post("/api/v1/settings/notifications/test", json={
-            "channel": "email",
-            "config": {
-                "host": "smtp.example.com", "port": 587, "username": None, "password": None,
-                "from_addr": "themis@example.com", "to_addrs": ["me@example.com"],
-            },
-        })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert body["message"] == "Connection refused"
-
-
-async def test_notifications_test_email_missing_field(client: AsyncClient):
-    resp = await client.post("/api/v1/settings/notifications/test", json={
-        "channel": "email",
-        "config": {"host": "smtp.example.com"},
-    })
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert "message" in body
-
-
-async def test_slice_cache_stale_policy_defaults_on_and_round_trips(client: AsyncClient, session_factory):
-    """BIZ-191: 'always use latest slicer settings' is on by default; turning it off persists and leaves the other
-    queue settings alone."""
-    from app.models import QueueConfig
-    assert (await client.get("/api/v1/settings/queue")).json()["slice_cache_use_latest_settings"] is True
-
-    resp = await client.put("/api/v1/settings/queue", json={"slice_cache_use_latest_settings": False})
-
-    assert resp.status_code == 200
-    assert resp.json()["slice_cache_use_latest_settings"] is False
-    async with session_factory() as s:
-        row = await s.get(QueueConfig, 1)
-        assert row.slice_cache_use_latest_settings is False
-        assert row.check_interval_minutes == 5
-    resp = await client.put("/api/v1/settings/queue", json={"operator_name": "x"})
-    assert resp.json()["slice_cache_use_latest_settings"] is False   # omitted ⇒ unchanged
+    assert (await client.put("/api/v1/settings/queue", json={"check_interval_minutes": 7})).json()["printer_dead_after_minutes"] == 45   # untouched
+    assert (await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": 0})).json()["printer_dead_after_minutes"] == 0   # 0 = never
+    for bad in (-1, 1441):
+        assert (await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": bad})).status_code == 422
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 0

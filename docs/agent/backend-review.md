@@ -10,11 +10,13 @@ shape, not generic advice.
 This codebase has more "filament identifiers" than it looks like at first, and they are not
 interchangeable:
 
-- `job_printer_configs.filament_id` — a Spoolman **filament** (catalog spec) ID.
+- `job_printer_configs.filament_id`, `material_provider`, `material_ref` — legacy columns, **no longer read or written** (a job's ask
+  is the tuple below and never references a material).
 - `printer.loaded_filaments[slot].spoolman_spool_id` — a Spoolman **spool** (physical instance) ID.
   Not the same thing as the above, despite the similar name.
-- `job_printer_configs.filament_type`/`filament_color` — the eligibility **ask**, matched against a
-  printer's loaded slots. Not what actually gets used for slicing.
+- `job_printer_configs.ask_manufacturer/ask_type/ask_subtype/ask_color` — the eligibility **ask** (a tuple; NULL = undefined, subtype
+  `any` = wildcard), matched against a printer's loaded slots (`services/filament_matching.py`). The legacy `filament_type`/`filament_color`
+  columns hold `"any"` strings and are history only. Not what actually gets used for slicing.
 - `filament_profile` (on a config, or a loaded slot) — the **OrcaSlicer preset name**, a string, used
   for slicing. Legacy fallback on the config; the real source is the matched slot's own value.
 - `printer.loaded_filaments[slot].filament_id` — for Bambu, this is the **AMS tray code**, not a
@@ -59,11 +61,8 @@ awaiting it. Any new fire-and-forget delivery mechanism should follow the same s
 Every DB read/write in a request handler goes through `Depends(get_session)` — never a raw import of
 `SessionLocal`/`engine` from `database.py`. Code that imports the module-level session factory
 directly bypasses the test suite's per-test-DB override and silently depends on whatever's actually in
-`<repo-root>/data/themis.db`. `printer_manager` (via `set_session_factory()`) and `thumbnail_regen.py`
-(same pattern, added later) both take an injectable session factory instead of a direct `SessionLocal`
-import. Only `thumbnail_regen.py` is actually wired up in tests — `conftest.py`'s `client` fixture calls
-`thumbnail_regen.set_session_factory(factory)` with the per-test SQLite-file engine. `printer_manager`'s
-factory defaults to `None` and is only set to the real `SessionLocal` in `app/main.py`'s lifespan, which
+`<repo-root>/data/themis.db`. `printer_manager` (via `set_session_factory()`) takes an injectable session factory
+instead of a direct `SessionLocal` import. Its factory defaults to `None` and is only set to the real `SessionLocal` in `app/main.py`'s lifespan, which
 the test client's `ASGITransport` never runs, so it stays `None` under test and its factory-gated
 methods (`if not self._session_factory: return`) just no-op rather than touching any DB — harmless, but
 means printer_manager's own DB-dependent behavior isn't exercised by the shared `client` fixture; tests
@@ -166,7 +165,8 @@ core import of an adapter-internal module, a vendor symbol, or a new `httpx` imp
   `asyncio.to_thread`, or `run_in_executor` — never on the event loop. Inventory methods are awaited.
 - **Legacy shapes.** Routes that return vendor JSON use the DTO's `raw` (`[f.raw for f in …]`) so
   `openapi.json` / `contracts/response-keys.json` don't move. Persisted ids stay opaque strings/ints as stored.
-- **Format knowledge** (gcode estimates, override inspection, curated keys) goes through
-  `get_format_provider()` — it works with no server configured; `get_slicing_provider()` returns `None` then.
+- **Format knowledge** (gcode estimates, override inspection, curated settings + labels) goes through
+  `get_format_provider()` (offline `FormatProvider`, returns frozen DTOs; the route serializes them) — it works with no
+  server configured; `get_slicing_provider()` returns `None` then. `compatible_presets` needs a catalog: it stays on `SlicingProvider`.
 - Tests patch the accessor in the module under test with a `tests/fake_providers.py` fake; assert resulting
   state (re-read the bindings / the job's estimate), not just that a mock was called.

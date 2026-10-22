@@ -314,6 +314,13 @@ async def _dump(conn, tables) -> dict:
             for t in tables}
 
 
+async def _v042_backfill(conn):
+    from app.migrations.v042_printer_model_identity import up
+    from app.migrations.v043_printer_model_registry import up as up43
+    await up(conn)
+    await up43(conn)       # v043 registers the model keys v042 just backfilled (also a one-shot data step)
+
+
 async def test_every_migration_up_twice_is_a_noop():
     """Direct second `up()` on a fully migrated DB: schema and rows unchanged, nothing raises."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -325,6 +332,9 @@ async def test_every_migration_up_twice_is_a_noop():
         await conn.execute(ApiKey.__table__.insert().values(
             id=1, name="k", key_prefix="pfx", key_hash="h", scopes=["apikeys:write", "customers:read", "customers:write"],
             created_at="2026-01-01T00:00:00"))
+        # The printer above is written without a plugin identity, as a pre-v042 writer would. v042's backfill is a one-shot
+        # data step: settle it once, then check that a further up() changes nothing.
+        await _v042_backfill(conn)
         tables = list(await _schema(conn))
         baseline_schema = await _schema(conn)
         baseline_rows = await _dump(conn, tables)
@@ -423,7 +433,8 @@ async def test_rollback_last_undoes_only_the_newest_migration(monkeypatch):
     so adding one doesn't break it (migrations without a `down` are cut off the end of the chain)."""
     from app.migrations import runner
 
-    chain = _MIGRATIONS[: max(i for i, m in enumerate(_MIGRATIONS) if hasattr(m, "down")) + 1]
+    chain = _MIGRATIONS[: max(i for i, m in enumerate(_MIGRATIONS) if hasattr(m, "down") and not getattr(m, "data_only", False)
+                                                              and not getattr(m, "reshapes_schema", False)) + 1]
     monkeypatch.setattr(runner, "_MIGRATIONS", chain)
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -650,4 +661,21 @@ async def test_v033_upgrades_an_existing_queue_config_row_to_use_latest_settings
         row = (await conn.execute(text(
             "SELECT check_interval_minutes, slice_cache_use_latest_settings FROM queue_config WHERE id=1"))).one()
     assert tuple(row) == (7, 1)
+    await engine.dispose()
+
+
+async def test_v050_adds_preferred_slicer_column_idempotently_and_down_drops_it():
+    from app.migrations import v050_printer_preferred_slicer as v50
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)"))
+        await conn.execute(text("INSERT INTO printers (id, name) VALUES (1, 'a')"))
+        await v50.up(conn)
+        await v50.up(conn)                                   # idempotent
+        cols = {r[1]: r for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+        assert "preferred_slicer_plugin_id" in cols and cols["preferred_slicer_plugin_id"][3] == 0   # nullable
+        assert (await conn.execute(text("SELECT preferred_slicer_plugin_id FROM printers"))).scalar() is None
+        await v50.down(conn)
+        await v50.down(conn)
+        assert "preferred_slicer_plugin_id" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
     await engine.dispose()

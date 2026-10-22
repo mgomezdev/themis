@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ._filament_ask import AskFields, FIELDS as ASK_FIELDS
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Order, Project
@@ -31,14 +32,12 @@ def _no_new_customer_orders(order_type: str | None) -> None:
         raise HTTPException(422, CUSTOMER_WORK_MESSAGE)
 
 
-class OrderPartIn(BaseModel):
+class OrderPartIn(AskFields):
     id: str | None = None
     name: str
     qty: int = 1
     material: str = ""
     est_minutes: int = 0
-    filament_id: int | None = None
-    filament_color: str | None = None
 
 
 class OrderCreate(BaseModel):
@@ -83,8 +82,7 @@ def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
             "qty": p.qty,
             "material": p.material,
             "est_minutes": p.est_minutes,
-            "filament_id": p.filament_id,
-            "filament_color": p.filament_color,
+            **{f: getattr(p, f) for f in ASK_FIELDS},
         })
     return out
 

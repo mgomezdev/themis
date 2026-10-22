@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -13,11 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
+from ...models import CostConfig, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
+from ...services import slicer_profiles, webhook_service
+from ...services import printer_model_registry as model_registry
 from ...services import catalog_service
-from ...services.providers.filament_inventory import make_inventory_provider
-from ...services.notification_service import send_discord, send_email, send_ntfy
-from ...services.printer_client_factory import REGISTRY, create_client
+from ...services.inventory import refs as inventory_refs
+from ...services.printer_client_factory import client_class, create_client
+from ...services.printer_identity import IdentityError, LEGACY_IDENTITY, resolve_legacy
 from ...services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -25,8 +26,13 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 _BACKUP_VERSION = 1
 
 
+MAX_DEAD_AFTER_MINUTES = 1440
+
+
 class QueueConfigOut(BaseModel):
     check_interval_minutes: int
+    # Minutes a printer may be offline before it counts as dead (its running job fails and is requeued at the top). 0 = never.
+    printer_dead_after_minutes: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -36,6 +42,7 @@ class QueueConfigOut(BaseModel):
 
 class QueueConfigIn(BaseModel):
     check_interval_minutes: int | None = None
+    printer_dead_after_minutes: int | None = Field(default=None, ge=0, le=MAX_DEAD_AFTER_MINUTES)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -73,7 +80,7 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False,
+        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
         await session.flush()
@@ -98,6 +105,8 @@ async def update_queue_config(
     row = await _get_or_create_queue(session)
     if body.check_interval_minutes is not None:
         row.check_interval_minutes = max(1, body.check_interval_minutes)
+    if body.printer_dead_after_minutes is not None:
+        row.printer_dead_after_minutes = body.printer_dead_after_minutes
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:
@@ -116,142 +125,6 @@ async def update_queue_config(
     return row
 
 
-class SpoolmanConfigOut(BaseModel):
-    enabled: bool
-    url: str | None
-    has_api_key: bool
-    sync_interval_minutes: int
-
-
-class SpoolmanConfigIn(BaseModel):
-    enabled: bool | None = None
-    url: str | None = None
-    api_key: str | None = None
-    sync_interval_minutes: int | None = None
-
-
-async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
-    row = await session.get(SpoolmanConfig, 1)
-    if row is None:
-        row = SpoolmanConfig(id=1, enabled=False)
-        session.add(row)
-        await session.flush()
-    return row
-
-
-def _spoolman_out(row: SpoolmanConfig) -> SpoolmanConfigOut:
-    return SpoolmanConfigOut(
-        enabled=row.enabled, url=row.url, has_api_key=row.api_key is not None,
-        sync_interval_minutes=row.sync_interval_minutes,
-    )
-
-
-@router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config",
-           dependencies=[Depends(require_scope("settings:read"))])
-async def get_spoolman_config(session: AsyncSession = Depends(get_session)):
-    """Spoolman integration settings: enabled flag, base URL, and whether an API key is set.
-    The key itself never round-trips - omit `api_key` on PUT to leave it unchanged."""
-    return _spoolman_out(await _get_or_create(session))
-
-
-@router.put("/spoolman", response_model=SpoolmanConfigOut, summary="Update Spoolman config",
-           dependencies=[Depends(require_scope("settings:write"))])
-async def update_spoolman_config(
-    body: SpoolmanConfigIn,
-    session: AsyncSession = Depends(get_session),
-):
-    """Update Spoolman integration settings. Omitted fields (including `api_key`) are left
-    unchanged; an empty string for `api_key` clears it."""
-    row = await _get_or_create(session)
-    if body.enabled is not None:
-        row.enabled = body.enabled
-    if body.url is not None:
-        row.url = body.url or None
-    if body.api_key is not None:
-        row.api_key = body.api_key or None
-    if body.sync_interval_minutes is not None:
-        row.sync_interval_minutes = max(1, body.sync_interval_minutes)
-    await session.commit()
-    await session.refresh(row)
-    return _spoolman_out(row)
-
-
-@router.post("/spoolman/test", summary="Test Spoolman connection",
-            dependencies=[Depends(require_scope("settings:write"))])
-async def test_spoolman_connection(
-    body: SpoolmanConfigIn,
-    session: AsyncSession = Depends(get_session),
-):
-    """Verify connectivity to Spoolman. Uses the supplied URL/key if provided,
-    falling back to the saved config. Returns `{ok, version}` or `{ok, message}`.
-    If the catalog is warm and stale UUIDs are detected in Spoolman filaments,
-    returns `{status: "pending_remaps", ...}` instead."""
-    url = body.url
-    api_key = body.api_key
-    if not url or api_key is None:
-        row = await _get_or_create(session)
-        if not url:
-            url = row.url
-        if api_key is None:
-            api_key = row.api_key
-    if not url:
-        return {"ok": False, "message": "No URL configured"}
-    inventory = make_inventory_provider(url, api_key)
-    try:
-        info = await inventory.test_connection()
-    except Exception as e:
-        return {"ok": False, "message": str(e)}
-
-    # --- Spoolman profile-name sanity check (best-effort) ---
-    # Check that profile name strings bound to each filament exist in the catalog.
-    from ...services.catalog_utils import catalog_name_sets, stale_binding_groups
-
-    _catalog = catalog_service.cached_catalog()
-    if _catalog is not None and inventory.PROFILE_BINDINGS:
-        try:
-            _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
-            spoolman_groups = stale_binding_groups(
-                await inventory.list_filaments(), lambda name: name not in catalog_filaments)
-
-            if spoolman_groups:
-                import uuid as _uuid
-                import time as _time
-                sync_id = str(_uuid.uuid4())
-                pending_entries = list(spoolman_groups.values())
-                catalog_service.set_pending_sync({
-                    "sync_id": sync_id,
-                    "raw": None,
-                    "catalog": None,
-                    "pending": {
-                        "printers": [],
-                        "jobs": [],
-                        "spoolman_filaments": pending_entries,
-                    },
-                    "created_at": _time.time(),
-                })
-                return {
-                    "status": "pending_remaps",
-                    "ok": True,
-                    "sync_id": sync_id,
-                    "pending": {
-                        "printers": [],
-                        "jobs": [],
-                        "spoolman_filaments": pending_entries,
-                    },
-                    "options": {
-                        "machine": [],
-                        "process": [],
-                        "filament": sorted(catalog_filaments),
-                    },
-                    "spoolman_error": None,
-                }
-        except Exception:
-            # Best-effort: if fetch_filaments fails, fall through to normal success
-            pass
-
-    return {"ok": True, "status": "ok", "version": info.get("version", "unknown")}
-
-
 # ---------------------------------------------------------------------------
 # Webhook config
 # ---------------------------------------------------------------------------
@@ -268,25 +141,17 @@ class WebhookConfigIn(BaseModel):
     events: list[str] | None = None
 
 
-async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
-    row = await session.get(WebhookConfig, 1)
-    if row is None:
-        row = WebhookConfig(id=1, events=[])
-        session.add(row)
-        await session.flush()
-    return row
-
-
-def _webhook_out(row: WebhookConfig) -> WebhookConfigOut:
-    return WebhookConfigOut(url=row.url, has_secret=row.secret is not None, events=row.events)
+def _webhook_out(row) -> WebhookConfigOut:
+    return WebhookConfigOut(url=row.url if row else None, has_secret=bool(row and row.secret is not None),
+                            events=list(row.events or []) if row else [])
 
 
 @router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_webhook_config(session: AsyncSession = Depends(get_session)):
-    """Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed
-    event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged."""
-    return _webhook_out(await _get_or_create_webhook(session))
+    """The `default` outbound webhook (see `/api/v1/webhooks` for any number of destinations): endpoint URL, whether an HMAC secret is
+    set, and subscribed event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged."""
+    return _webhook_out(await webhook_service.default_destination(session))
 
 
 @router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config",
@@ -297,13 +162,14 @@ async def update_webhook_config(
 ):
     """Update webhook settings. Omitted fields (including `secret`) are left unchanged; an
     empty string for `secret` clears it."""
-    row = await _get_or_create_webhook(session)
+    row = await webhook_service.default_destination(session, create=True)
     if body.url is not None:
         row.url = body.url or None
     if body.secret is not None:
         row.secret = body.secret or None
     if body.events is not None:
         row.events = body.events
+    row.updated_at = webhook_service.now_iso()
     await session.commit()
     await session.refresh(row)
     return _webhook_out(row)
@@ -311,168 +177,6 @@ async def update_webhook_config(
 
 # ---------------------------------------------------------------------------
 # Notification config (ntfy / Discord / email)
-# ---------------------------------------------------------------------------
-
-_TEST_TITLE = "Themis test notification"
-_TEST_MESSAGE = "This is a test notification from Themis."
-
-
-class NtfyChannelConfig(BaseModel):
-    enabled: bool = False
-    server_url: str | None = None
-    topic: str | None = None
-    priority: int | None = None
-    events: list[str] = []
-
-
-class DiscordChannelConfig(BaseModel):
-    enabled: bool = False
-    webhook_url: str | None = None
-    events: list[str] = []
-
-
-class EmailChannelConfig(BaseModel):
-    enabled: bool = False
-    host: str | None = None
-    port: int | None = None
-    username: str | None = None
-    password: str | None = None
-    from_addr: str | None = None
-    to_addrs: list[str] = []
-    events: list[str] = []
-
-
-class NotificationConfigOut(BaseModel):
-    ntfy: NtfyChannelConfig
-    discord: DiscordChannelConfig
-    email: EmailChannelConfig
-
-
-class NotificationConfigIn(BaseModel):
-    ntfy: NtfyChannelConfig | None = None
-    discord: DiscordChannelConfig | None = None
-    email: EmailChannelConfig | None = None
-
-
-class NotificationTestIn(BaseModel):
-    channel: Literal["ntfy", "discord", "email"]
-    config: dict
-
-
-async def _get_or_create_notifications(session: AsyncSession) -> NotificationConfig:
-    row = await session.get(NotificationConfig, 1)
-    if row is None:
-        row = NotificationConfig(id=1, ntfy_events=[], discord_events=[], email_to_addrs=[], email_events=[])
-        session.add(row)
-        await session.flush()
-    return row
-
-
-def _to_notification_out(row: NotificationConfig) -> NotificationConfigOut:
-    return NotificationConfigOut(
-        ntfy=NtfyChannelConfig(
-            enabled=row.ntfy_enabled,
-            server_url=row.ntfy_server_url,
-            topic=row.ntfy_topic,
-            priority=row.ntfy_priority,
-            events=row.ntfy_events or [],
-        ),
-        discord=DiscordChannelConfig(
-            enabled=row.discord_enabled,
-            webhook_url=row.discord_webhook_url,
-            events=row.discord_events or [],
-        ),
-        email=EmailChannelConfig(
-            enabled=row.email_enabled,
-            host=row.email_host,
-            port=row.email_port,
-            username=row.email_username,
-            password=row.email_password,
-            from_addr=row.email_from_addr,
-            to_addrs=row.email_to_addrs or [],
-            events=row.email_events or [],
-        ),
-    )
-
-
-@router.get("/notifications", response_model=NotificationConfigOut, summary="Get notification config",
-           dependencies=[Depends(require_scope("settings:read"))])
-async def get_notification_config(session: AsyncSession = Depends(get_session)):
-    """Built-in notification channel settings (ntfy, Discord, email). All three
-    channels are always present in the response, even when unconfigured."""
-    row = await _get_or_create_notifications(session)
-    return _to_notification_out(row)
-
-
-@router.put("/notifications", response_model=NotificationConfigOut, summary="Update notification config",
-           dependencies=[Depends(require_scope("settings:write"))])
-async def update_notification_config(
-    body: NotificationConfigIn,
-    session: AsyncSession = Depends(get_session),
-):
-    """Update notification channel settings. A channel key omitted from the request
-    body leaves that channel's stored config unchanged; a channel key present
-    replaces that whole channel's config."""
-    row = await _get_or_create_notifications(session)
-    if body.ntfy is not None:
-        row.ntfy_enabled = body.ntfy.enabled
-        row.ntfy_server_url = body.ntfy.server_url
-        row.ntfy_topic = body.ntfy.topic
-        row.ntfy_priority = body.ntfy.priority
-        row.ntfy_events = body.ntfy.events
-    if body.discord is not None:
-        row.discord_enabled = body.discord.enabled
-        row.discord_webhook_url = body.discord.webhook_url
-        row.discord_events = body.discord.events
-    if body.email is not None:
-        row.email_enabled = body.email.enabled
-        row.email_host = body.email.host
-        row.email_port = body.email.port
-        row.email_username = body.email.username
-        row.email_password = body.email.password
-        row.email_from_addr = body.email.from_addr
-        row.email_to_addrs = body.email.to_addrs
-        row.email_events = body.email.events
-    await session.commit()
-    await session.refresh(row)
-    return _to_notification_out(row)
-
-
-@router.post("/notifications/test", summary="Send a test notification",
-            dependencies=[Depends(require_scope("settings:write"))])
-async def test_notification_config(body: NotificationTestIn):
-    """Send a test notification for one channel using the supplied (unsaved) config,
-    without requiring it be saved first. Returns `{ok, message}` — including for a
-    missing required field, which is reported this way rather than as a 4xx."""
-    cfg = body.config
-
-    if body.channel == "ntfy":
-        server_url = cfg.get("server_url")
-        topic = cfg.get("topic")
-        if not server_url or not topic:
-            return {"ok": False, "message": "server_url and topic are required"}
-        error = await send_ntfy(server_url, topic, _TEST_TITLE, _TEST_MESSAGE, cfg.get("priority"))
-    elif body.channel == "discord":
-        webhook_url = cfg.get("webhook_url")
-        if not webhook_url:
-            return {"ok": False, "message": "webhook_url is required"}
-        error = await send_discord(webhook_url, f"{_TEST_TITLE}\n{_TEST_MESSAGE}")
-    else:  # email
-        host = cfg.get("host")
-        port = cfg.get("port")
-        from_addr = cfg.get("from_addr")
-        to_addrs = cfg.get("to_addrs")
-        if not host or not port or not from_addr or not to_addrs:
-            return {"ok": False, "message": "host, port, from_addr, and to_addrs are required"}
-        error = await send_email(
-            host, port, cfg.get("username"), cfg.get("password"),
-            from_addr, to_addrs, _TEST_TITLE, _TEST_MESSAGE,
-        )
-
-    if error is None:
-        return {"ok": True, "message": "Test notification sent"}
-    return {"ok": False, "message": error}
-
 
 # ---------------------------------------------------------------------------
 # Fleet backup / restore
@@ -484,7 +188,7 @@ def _redact_connection_config(printer_type: str, cfg: dict) -> dict:
     driven by each printer client's own `connection_fields()` declaration
     (`field_type == "password"`), not a hardcoded key list, so a new vendor client is
     covered automatically as long as it marks its own secret fields correctly."""
-    cls = REGISTRY.get(printer_type)
+    cls = client_class(printer_type)
     if cls is None:
         return dict(cfg)
     secret_names = {f.name for f in cls.connection_fields() if f.field_type == "password"}
@@ -514,6 +218,15 @@ async def fleet_backup(
     so browsers will prompt to save it. Import with `POST /settings/fleet-import`."""
     result = await session.execute(select(Printer))
     printers = result.scalars().all()
+    # The model -> slicer machine profile mappings (BIZ-294) are what a restored fleet slices with: keyed by the model's
+    # plugin/manufacturer/model identity, since the registry UUID is local to this install.
+    models = {m.id: m for m in (await session.execute(select(PrinterModelRecord))).scalars()}
+    mappings = [
+        {"plugin_id": models[r.model_uuid].plugin_id, "manufacturer_id": models[r.model_uuid].manufacturer_id,
+         "model_id": models[r.model_uuid].model_id, "provider_plugin_id": r.provider_plugin_id,
+         "nozzle_diameter_mm": r.nozzle_diameter_mm, "flow": r.flow, "machine_profile": r.machine_profile,
+         "is_default": r.is_default}
+        for r in await slicer_profiles.mapping_rows(session) if r.model_uuid in models]
 
     data = {
         "themis_backup_version": _BACKUP_VERSION,
@@ -523,12 +236,16 @@ async def fleet_backup(
             {
                 "name": p.name,
                 "printer_type": p.printer_type,
+                "plugin_id": p.plugin_id,
+                "manufacturer_id": p.manufacturer_id,
+                "model_id": p.model_id,
                 "connection_config": (
                     (p.connection_config or {}) if include_credentials
                     else _redact_connection_config(p.printer_type, p.connection_config or {})
                 ),
                 "orca_printer_profiles": p.orca_printer_profiles or [],
-                "current_orca_printer_profile": p.current_orca_printer_profile,
+                "machine_profile_override": p.machine_profile_override,
+                "nozzle_variant": p.nozzle_variant,
                 "loaded_filaments": p.loaded_filaments or [],
                 "build_plate_type": p.build_plate_type,
                 "enabled": p.enabled,
@@ -536,6 +253,7 @@ async def fleet_backup(
             }
             for p in printers
         ],
+        "slicer_profiles": mappings,
     }
 
     payload = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
@@ -603,21 +321,48 @@ async def fleet_import(
     imported = 0
     skipped = 0
 
+    await model_registry.sync_registry(session)
+    for m in data.get("slicer_profiles") or []:
+        try:
+            provider = m["provider_plugin_id"]
+            uuid_ = await model_registry.model_uuid_for(session, m["plugin_id"], m["manufacturer_id"], m["model_id"])
+            variant = slicer_profiles.NozzleVariant(float(m["nozzle_diameter_mm"]), m.get("flow") or "standard")
+            if uuid_ is None or variant.flow not in slicer_profiles.FLOWS or not m.get("machine_profile") or variant.diameter_mm <= 0:
+                raise ValueError("unknown model or malformed row")
+        except (KeyError, TypeError, ValueError):
+            warnings.append(f"slicer profile mapping skipped — {m!r}")
+            continue
+        rows = await slicer_profiles.mapping_rows(session, uuid_)
+        mine = [r for r in rows if r.provider_plugin_id == provider]
+        if any(slicer_profiles.variant_of(r) == variant for r in mine):
+            continue                                  # an existing mapping on this install wins
+        # the file's default wins only when this install has none; a model/provider is never left without a default, so the first
+        # imported row is promoted when the file marks none
+        session.add(PrinterModelSlicerProfile(
+            model_uuid=uuid_, provider_plugin_id=provider, nozzle_diameter_mm=variant.diameter_mm,
+            flow=variant.flow, machine_profile=m["machine_profile"],
+            is_default=not mine or (bool(m.get("is_default")) and not any(r.is_default for r in mine))))
+        await session.flush()
+
     for pr in data.get("printers", []):
         pname = pr.get("name") or "Unnamed Printer"
         ptype = pr.get("printer_type", "")
 
-        if ptype not in REGISTRY:
+        has_identity = bool(pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"))
+        # An old backup carries only the legacy `printer_type`; one with no legacy mapping must not be adopted by whichever plugin
+        # happens to share that key now (that would silently pick a connection provider): it is skipped, never guessed.
+        if client_class(ptype) is None or (not has_identity and ptype not in LEGACY_IDENTITY):
             warnings.append(f"'{pname}': skipped — unknown printer type '{ptype}'")
             skipped += 1
             continue
 
         orca_profiles: list[str] = pr.get("orca_printer_profiles") or []
-        current_profile: str | None = pr.get("current_orca_printer_profile")
+        # `current_orca_printer_profile` is the pre-BIZ-294 name of the override
+        current_profile: str | None = pr.get("machine_profile_override") or pr.get("current_orca_printer_profile")
         loaded: list[dict] = pr.get("loaded_filaments") or []
         conn_cfg: dict = pr.get("connection_config") or {}
 
-        secret_names = {f.name for f in REGISTRY[ptype].connection_fields() if f.field_type == "password"}
+        secret_names = {f.name for f in client_class(ptype).connection_fields() if f.field_type == "password"}
         blank_secrets = sorted(n for n in secret_names if not conn_cfg.get(n))
         if blank_secrets:
             warnings.append(
@@ -638,19 +383,36 @@ async def fleet_import(
                         f"'{pname}' slot {slot.get('slot', '?')}: filament profile '{fp}' not found in catalog"
                     )
 
+        if pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"):
+            # a backup's own identity is kept as written: if its plugin is not installed here the printer is imported dormant
+            # (plugin_removed) rather than lost or guessed
+            identity = (pr["plugin_id"], pr["manufacturer_id"], pr["model_id"])
+        else:                                   # an older backup only has the legacy printer_type
+            try:
+                identity = resolve_legacy(ptype)
+            except IdentityError:               # a type with no legacy mapping (only a hand-edited file): no identity to invent
+                identity = (None, None, None)
+        model_uuid = await model_registry.model_uuid_for(session, *identity) if identity[0] else None
         printer = Printer(
             name=pname,
             printer_type=ptype,
+            model_uuid=model_uuid,
+            plugin_id=identity[0],
+            manufacturer_id=identity[1],
+            model_id=identity[2],
             connection_config=conn_cfg,
             orca_printer_profiles=orca_profiles,
-            current_orca_printer_profile=current_profile,
-            loaded_filaments=loaded,
+            machine_profile_override=current_profile,
+            nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()
+            if slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")) else None,
+            loaded_filaments=inventory_refs.normalize_slots(loaded),
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),
             queue_on=pr.get("queue_on", True),
         )
         session.add(printer)
         await session.flush()
+        printer_manager.set_printer_plugin(printer.id, printer.plugin_id)
 
         try:
             client = create_client(printer)

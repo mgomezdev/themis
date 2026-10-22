@@ -22,10 +22,37 @@ export interface ConnectionField {
   help_text: string;
 }
 
+/** One printer model a plugin declares. The add-printer flow picks manufacturer -> model; the plugin serves the printer. */
 export interface PrinterType {
-  printer_type: string;
-  display_name: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  manufacturer_name: string;
+  model_id: string;
+  display_name: string;               // the model's name
+  bed_mm: [number, number];
+  toolheads: number;
   connection_fields: ConnectionField[];
+  plugin_enabled: boolean;            // a disabled plugin's models are listed but cannot be added
+  model_uuid: string | null;          // the core registry's stable id for this model
+  model_enabled: boolean;             // the user's subset: only enabled models are offered when adding a printer
+  custom: boolean;                    // a user-defined model: the add flow asks for its bed size (stored with the printer)
+}
+
+/** A registry entry (`GET /printer-models`): a stable UUID plus whether the model is usable right now. */
+export interface PrinterModelEntry {
+  id: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  manufacturer_name: string;
+  model_id: string;
+  display_name: string;
+  bed_mm: [number, number];
+  toolheads: number;
+  enabled: boolean;
+  dormant: boolean;
+  dormant_reason: 'plugin_removed' | 'plugin_disabled' | 'model_removed' | null;
+  printer_count: number;              // printers that reference this model (a dormant model stays while referenced)
+  slicer_profile_count?: number;      // slicer machine profiles mapped for this model (BIZ-294); absent on a PATCH response
 }
 
 export interface LoadedFilament {
@@ -34,18 +61,53 @@ export interface LoadedFilament {
   name: string;
   type: string;
   color: string;
+  subtype?: string | null;             // "standard" (plain), "plus", "silk", "cf"... — the server always supplies one for a typed slot
+  manufacturer?: string | null;        // the maker, null = unknown
+  reported?: boolean;                  // the printer's hardware reports this slot (telemetry replaces its tuple on every report)
+  empty?: boolean;                     // a tool-changer placeholder for an empty tool
   filament_profile?: string | null;    // OrcaSlicer filament preset used to slice with this filament
-  spoolman_spool_id?: string | null;   // optional mapped Spoolman spool id
+  /** The inventory spool loaded here: `{provider, spool_ref}` (null = unbound). Write this one. */
+  inventory?: { provider: string; spool_ref: string } | null;
+  spoolman_spool_id?: string | null;   // legacy mirror of `inventory.spool_ref` (read-only here; the server keeps it in sync)
 }
+
+/** The provider every pre-namespacing row (a bare numeric `filament_id`, a `spoolman_spool_id`) belongs to. */
+export const LEGACY_PROVIDER = 'spoolman';
+
+/** What a slot is bound to: the `inventory` pair, else the legacy mirror (an older server / row that predates it). */
+export function slotBinding(slot: Pick<LoadedFilament, 'inventory' | 'spoolman_spool_id'>): { provider: string; ref: string } | null {
+  if (slot.inventory === null) return null;                     // explicitly unbound (the legacy mirror may still be echoed)
+  if (slot.inventory?.spool_ref) return { provider: slot.inventory.provider, ref: slot.inventory.spool_ref };
+  if (slot.spoolman_spool_id) return { provider: LEGACY_PROVIDER, ref: String(slot.spoolman_spool_id) };
+  return null;
+}
+
+/** A physical nozzle: diameter and flow. A model maps one slicer machine profile per variant (BIZ-294). */
+export interface NozzleVariant {
+  diameter_mm: number;
+  flow: 'standard' | 'high_flow';
+}
+
+export const variantLabel = (v: NozzleVariant): string => `${v.diameter_mm}mm${v.flow === 'high_flow' ? ' high-flow' : ''}`;
+export const sameVariant = (a: NozzleVariant | null | undefined, b: NozzleVariant | null | undefined): boolean =>
+  !!a && !!b && a.diameter_mm === b.diameter_mm && a.flow === b.flow;
 
 export interface ApiPrinter {
   id: number;
   name: string;
   printer_type: string;
+  plugin_id: string | null;
+  manufacturer_id: string | null;
+  model_id: string | null;
+  model_uuid: string | null;
   connection_config: Record<string, unknown>;
   awaiting_plate_clear: boolean;
   orca_printer_profiles: string[];
-  current_orca_printer_profile: string | null;
+  machine_profile_override: string | null;   // advanced: a raw slicer machine profile that wins over the model's mapping
+  nozzle_variant: NozzleVariant | null;      // the physical nozzle; null = the model's default variant
+  machine_profile: string | null;            // what this printer slices with now (override, else model mapping + variant)
+  machine_profile_reason: string | null;     // why `machine_profile` is null ("no machine profile for P1S 0.6mm")
+  model_label: string | null;                // "<manufacturer> <model>" of the printer's registry model
   enabled: boolean;
   queue_on: boolean;
   connected: boolean;
@@ -55,24 +117,33 @@ export interface ApiPrinter {
   bed_x_mm: number;
   bed_y_mm: number;
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
+  preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
   quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
   quiet_end: string | null;
 }
 
 export interface CreatePrinterBody {
   name: string;
-  printer_type: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  model_id: string;
   connection_config: Record<string, unknown>;
+  bed_x_mm?: number;                    // default: the declared model's bed (a custom model's is the user's input)
+  bed_y_mm?: number;
   orca_printer_profiles?: string[];
-  current_orca_printer_profile?: string | null;
+  machine_profile_override?: string | null;
+  nozzle_variant?: NozzleVariant | null;
   loaded_filaments?: LoadedFilament[];
 }
 
 export interface UpdatePrinterBody {
   name?: string;
+  manufacturer_id?: string;
+  model_id?: string;
   connection_config?: Record<string, unknown>;
   orca_printer_profiles?: string[];
-  current_orca_printer_profile?: string | null;
+  machine_profile_override?: string | null;
+  nozzle_variant?: NozzleVariant | null;   // null = the model's default variant; omit to leave unchanged
   enabled?: boolean;
   queue_on?: boolean;
   loaded_filaments?: LoadedFilament[];
@@ -81,6 +152,7 @@ export interface UpdatePrinterBody {
   bed_x_mm?: number;
   bed_y_mm?: number;
   machine_rate_per_hour?: number | null;
+  preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
   quiet_start?: string | null;
   quiet_end?: string | null;
 }
@@ -105,8 +177,24 @@ export function fetchPrinterTypes(): Promise<PrinterType[]> {
   return request(`${BASE}/types`);
 }
 
+export function fetchPrinterModels(): Promise<PrinterModelEntry[]> {
+  return request('/api/v1/printer-models');
+}
+
+export function setPrinterModelEnabled(id: string, enabled: boolean): Promise<PrinterModelEntry> {
+  return request(`/api/v1/printer-models/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+  });
+}
+
 export function fetchPrinters(): Promise<ApiPrinter[]> {
   return request(BASE);
+}
+
+/** Indexes of the slots whose bound spool differs from what the printer reports (skipped by the queue's filament matching). */
+export interface SlotConflicts { conflicts: number[] }
+export function fetchSlotConflicts(id: number): Promise<SlotConflicts> {
+  return request(`${BASE}/${id}/slot-conflicts`);
 }
 
 export function fetchPrinter(id: number): Promise<ApiPrinter> {
@@ -247,7 +335,9 @@ export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> 
 }
 
 export interface DiscoveredPrinter {
+  model_uuid: string | null;       // the registry model the announcement matched, or null (the user picks a model / custom)
   printer_type: string;
+  plugin_id: string | null;
   display_name: string;
   ip: string;
   model: string | null;

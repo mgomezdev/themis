@@ -11,7 +11,9 @@ export interface ApiOrderPart {
   qty: number;
   material: string;
   est_minutes: number;
-  filament_id: number | null;
+  filament_manufacturer?: string | null;
+  filament_type?: string | null;
+  filament_subtype?: string | null;
   filament_color: string | null;
 }
 
@@ -52,7 +54,9 @@ export interface OrderPartInput {
   qty: number;
   material: string;
   est_minutes: number;
-  filament_id?: number | null;
+  filament_manufacturer?: string | null;
+  filament_type?: string | null;
+  filament_subtype?: string | null;
   filament_color?: string | null;
 }
 

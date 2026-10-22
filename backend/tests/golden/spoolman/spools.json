@@ -1,0 +1,67 @@
+{
+  "ok": {
+    "body": [
+      {
+        "archived": false,
+        "comment": null,
+        "extra": {},
+        "filament": {
+          "color_hex": "FFFFFF",
+          "density": 1.24,
+          "diameter": 1.75,
+          "extra": {},
+          "id": 1,
+          "material": "PLA",
+          "name": "PLA White",
+          "registered": "2024-01-01T00:00:00Z",
+          "spool_weight": 250.0,
+          "vendor": {
+            "id": 1,
+            "name": "Elegoo",
+            "registered": "2024-01-01T00:00:00Z"
+          },
+          "weight": 1000.0
+        },
+        "first_used": null,
+        "id": 1,
+        "last_used": null,
+        "location": "Slot 1",
+        "lot_nr": null,
+        "registered": "2024-01-01T00:00:00Z",
+        "remaining_weight": 800.0,
+        "used_weight": 200.0
+      },
+      {
+        "archived": false,
+        "comment": null,
+        "extra": {},
+        "filament": {
+          "color_hex": "000000",
+          "density": 1.24,
+          "diameter": 1.75,
+          "extra": {},
+          "id": 2,
+          "material": "PLA",
+          "name": "PLA Black",
+          "registered": "2024-01-01T00:00:00Z",
+          "spool_weight": 250.0,
+          "vendor": {
+            "id": 1,
+            "name": "Elegoo",
+            "registered": "2024-01-01T00:00:00Z"
+          },
+          "weight": 1000.0
+        },
+        "first_used": null,
+        "id": 2,
+        "last_used": null,
+        "location": "Slot 2",
+        "lot_nr": null,
+        "registered": "2024-01-01T00:00:00Z",
+        "remaining_weight": 500.0,
+        "used_weight": 500.0
+      }
+    ],
+    "status": 200
+  }
+}

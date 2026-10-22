@@ -5,12 +5,14 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from app.services.artifact_store import ArtifactStoreError
 from sqlalchemy import select
 
 from app.models import GcodeFile, Job, JobPrinterConfig, SlicedVersion, UploadedFile
 from app.services import slice_cache
 from app.services.library_scanner import library_abs_path
-from tests.conftest import make_sliced_archive
+from tests.conftest import make_sliced_archive, slice_info_xml
 
 
 async def test_job_details_carry_the_cache_flags_and_the_last_decision(client, create_job, session_factory):
@@ -78,6 +80,8 @@ def library(tmp_path, monkeypatch):
 
 
 async def _post_job(client, body):
+    # These legacy files carry no machine eligibility; the tests here are about other behaviour, so the user "confirms" it (BIZ-263).
+    body = {"confirm_unknown_eligibility": True, **body}
     with patch("app.api.routes.jobs.queue_engine"):
         return await client.post("/api/v1/jobs", json=body)
 
@@ -212,9 +216,7 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(packed)
         resp = await client.post(f"/api/v1/projects/{project_id}/generate",
@@ -231,7 +233,7 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
 
 async def test_resending_the_flag_retries_a_failed_save(client, library, create_job, session_factory, tmp_path):
     job_id, _ = await _sliced_job(client, create_job, session_factory, tmp_path)
-    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
+    with patch("app.services.artifact_store.LocalDiskArtifactStore.put_file", side_effect=ArtifactStoreError("disk full")):
         first = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
     assert first.json()["slice_cache_info"]["save"]["outcome"] == "failed"
 
@@ -287,7 +289,7 @@ async def _version_for(session_factory, library, model_id, *, plate=1, name="cac
 
 async def test_sliced_versions_lists_a_models_versions_with_their_flags(
         client, library, upload_3mf, create_printer, session_factory):
-    await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])   # a Bambu: takes archives
+    await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])   # a Bambu: takes archives
     model = await upload_3mf("benchy.3mf")
     other = await upload_3mf("other.3mf", make_3mf_bytes_variant())
     fresh, fresh_file = await _version_for(session_factory, library, model, name="fresh.gcode.3mf",
@@ -314,8 +316,26 @@ async def test_sliced_versions_lists_a_models_versions_with_their_flags(
         "printable_now": True}
     assert (by["stale.gcode.3mf"]["stale"], by["stale.gcode.3mf"]["stale_reasons"]) == (True, ["presets_changed"])
     assert by["plate2.gcode.3mf"]["printable_now"] is False   # no "Other Printer" in the fleet
+    assert by["fresh.gcode.3mf"]["model_uuids"] == []         # no model maps that machine profile
     assert [v["name"] for v in (await client.get(f"/api/v1/files/{model}/sliced-versions?plate=2")).json()] == [
         "plate2.gcode.3mf"]
+
+
+async def test_a_version_is_printable_now_on_a_printer_whose_model_maps_to_its_machine_profile(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    """BIZ-294: no per-printer profile; the printer's MODEL (default variant here) names the machine profile the version was sliced for."""
+    pid = await create_printer(machine_profile_override=None)
+    assert (await client.post(f"/api/v1/printer-models/{await model_uuid_of(pid)}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": P1S})).status_code == 201
+    model = await upload_3mf("benchy.3mf")
+    await _version_for(session_factory, library, model, name="mapped.gcode.3mf")
+    await _version_for(session_factory, library, model, plate=2, name="unmapped.gcode.3mf", machine="Other Printer")
+
+    with patch("app.services.slicer_profiles.effective_provider_id", lambda preferred: preferred or "laminus"):
+        by = {v["name"]: v for v in (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()}
+
+    assert (by["mapped.gcode.3mf"]["printable_now"], by["unmapped.gcode.3mf"]["printable_now"]) == (True, False)
+    assert by["mapped.gcode.3mf"]["model_uuids"] == [await model_uuid_of(pid)] and by["unmapped.gcode.3mf"]["model_uuids"] == []
 
 
 def make_3mf_bytes_variant() -> bytes:
@@ -326,7 +346,7 @@ def make_3mf_bytes_variant() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(zipfile.ZipInfo("Metadata/slice_info.config", date_time=(2026, 1, 1, 0, 0, 0)),
-                    json.dumps({"plate": [{"index": 1, "prediction": 99, "weight": [1.0]}]}))
+                    slice_info_xml([(1, 99, 1.0)]))
     return buf.getvalue()
 
 
@@ -362,11 +382,11 @@ async def test_a_job_on_a_cached_version_records_the_hand_picked_hit(
         client, library, upload_3mf, create_printer, session_factory, caplog):
     import logging
     caplog.set_level(logging.INFO, logger="app.services.slice_cache")
-    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    pid = await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])
     version_id, cached = await _version_for(session_factory, library, await upload_3mf())
 
     resp = await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
-        {"printer_id": pid, "filament_type": "PETG", "filament_color": "#112233"}]})
+        {"printer_id": pid, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#112233"}]})
 
     assert resp.status_code == 201, resp.text
     async with session_factory() as s:
@@ -377,18 +397,31 @@ async def test_a_job_on_a_cached_version_records_the_hand_picked_hit(
 
 
 async def test_a_cached_version_is_refused_for_another_printer_model(
-        client, library, upload_3mf, create_printer, session_factory):
-    other = await create_printer(name="X1C", current_orca_printer_profile="Bambu Lab X1 Carbon 0.4",
-                                 orca_printer_profiles=["Bambu Lab X1 Carbon 0.4"])
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    other = await create_printer(name="X1C", printer_type=None, plugin_id="bambu", manufacturer_id="bambu", model_id="x1c",
+                                 machine_profile_override="Bambu Lab X1 Carbon 0.4")
     _, cached = await _version_for(session_factory, library, await upload_3mf())
 
     by_printer = await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
         {"printer_id": other, "filament_type": "any", "filament_color": "any"}]})
     by_target = await _post_job(client, {"uploaded_file_id": cached, "model_targets": [
-        {"machine_profile": "Bambu Lab X1 Carbon 0.4"}]})
+        {"model_uuid": await model_uuid_of(other)}]})
 
     assert by_printer.status_code == 422 and "sliced for that printer model" in by_printer.json()["detail"]
-    assert by_target.status_code == 422
+    assert by_target.status_code == 422 and "This cached version was sliced for" in by_target.json()["detail"]
+
+
+async def test_a_cached_version_is_accepted_for_a_model_target_whose_mapping_names_its_machine_profile(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    pid = await create_printer(machine_profile_override=None)
+    model = await model_uuid_of(pid)
+    _, cached = await _version_for(session_factory, library, await upload_3mf())
+    body = {"uploaded_file_id": cached, "model_targets": [{"model_uuid": model, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#112233"}]}
+
+    assert (await _post_job(client, body)).status_code == 422             # the model maps nothing yet: not what the version was sliced for
+    assert (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": P1S})).status_code == 201
+    assert (await _post_job(client, body)).status_code == 201
 
 
 async def _generate(client, tmp_path, project_id, body):
@@ -397,9 +430,7 @@ async def _generate(client, tmp_path, project_id, body):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], **body})
@@ -481,6 +512,31 @@ async def test_the_legacy_cleanup_never_deletes_a_reusable_pack(client, tmp_path
     assert pack is not None and (tmp_path / "library" / pack.relative_path).exists()
 
 
+async def test_the_legacy_cleanup_removes_an_unneeded_old_result_pack_through_the_store(client, tmp_path, session_factory):
+    from app.models import Project
+    from tests.api.test_projects_api import _setup_project_with_stl
+    project_id, stl_id = await _setup_project_with_stl(client, tmp_path)
+    first, _ = await _generate(client, tmp_path, project_id, {})
+    pack_id = first["files"][0]["id"]
+    async with session_factory() as s:   # an old install's result file: no recipe, no cached slices, no job still on it
+        pack = await s.get(UploadedFile, pack_id)
+        pack.pack_recipe_hash = None
+        old_key = pack.relative_path
+        (await s.get(Project, project_id)).result_file_id = pack_id
+        for j in first["jobs"]:
+            (await s.get(Job, j["id"])).uploaded_file_id = stl_id   # (and done: the FK would otherwise keep the row)
+            (await s.get(Job, j["id"])).status = "complete"
+        await s.commit()
+    assert (tmp_path / "library" / old_key).exists()
+
+    await _generate(client, tmp_path, project_id, {})
+
+    async with session_factory() as s:
+        assert (await s.get(Project, project_id)).result_file_id is None
+        assert old_key not in [f.relative_path for f in (await s.execute(select(UploadedFile))).scalars().all()]
+    assert not (tmp_path / "library" / old_key).exists()
+
+
 async def test_a_job_printing_a_cached_version_cannot_be_flagged_to_save(client, library, create_job, session_factory):
     job_id = await create_job()
     async with session_factory() as s:
@@ -495,8 +551,8 @@ async def test_a_job_printing_a_cached_version_cannot_be_flagged_to_save(client,
 
 async def test_editing_a_cached_version_job_onto_another_model_is_refused(
         client, library, upload_3mf, create_printer, session_factory):
-    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
-    other = await create_printer(name="X1C", current_orca_printer_profile="Bambu Lab X1 Carbon 0.4",
+    pid = await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])
+    other = await create_printer(name="X1C", machine_profile_override="Bambu Lab X1 Carbon 0.4",
                                  orca_printer_profiles=["Bambu Lab X1 Carbon 0.4"])
     _, cached = await _version_for(session_factory, library, await upload_3mf())
     job_id = (await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [

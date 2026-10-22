@@ -9,6 +9,18 @@ from typing import Optional
 
 _RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _START_PART_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+_PROJECT_SETTINGS_PART = "metadata/project_settings.config"
+
+
+def source_has_project_settings(source_3mf: str | Path) -> bool:
+    """True if the 3MF carries embedded slicer settings (a real project, not a bare
+    geometry 3MF). Case-insensitive; False for a bad zip or missing file. Used to
+    decide whether the override check runs."""
+    try:
+        with zipfile.ZipFile(source_3mf) as z:
+            return any(n.lower() == _PROJECT_SETTINGS_PART for n in z.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
 
 
 def _find_model_part(names: set[str], zf: zipfile.ZipFile) -> str | None:
@@ -60,6 +72,37 @@ def _plates_from_model_settings(names: set[str], zf: zipfile.ZipFile) -> set[int
     except Exception:
         return set()
 
+_PLATE_PNG_RE = re.compile(r"Metadata/plate_(\d+)\.png$")
+_GLOBAL_THUMBNAILS = ("Metadata/thumbnail.png", "Metadata/preview.png")
+
+
+def plate_thumbnail_member(names, plate_number: int) -> str | None:
+    """Zip member holding a plate's thumbnail: its own `Metadata/plate_N.png`, else the file-wide
+    `Metadata/thumbnail.png`, else `Metadata/preview.png` (PrusaSlicer / eufyMake carry only a global one). None if absent."""
+    own = f"Metadata/plate_{plate_number}.png"
+    if own in names:
+        return own
+    return next((n for n in _GLOBAL_THUMBNAILS if n in names), None)
+
+
+def plate_thumbnail_bytes(zf: zipfile.ZipFile, plate_number: int) -> bytes | None:
+    """PNG bytes for a plate (plate_N.png -> thumbnail.png -> preview.png fallback), unvalidated; None if the archive has none."""
+    member = plate_thumbnail_member(set(zf.namelist()), plate_number)
+    return zf.read(member) if member else None
+
+
+def plate_numbers(zf: zipfile.ZipFile) -> list[int]:
+    """Sorted plate numbers of a 3MF: the union of `Metadata/plate_N.png` names, `slice_info.config` plates and
+    `model_settings.config` plates, else 1 for any file with a declared StartPart model. [] if none."""
+    names = set(zf.namelist())
+    found = {int(m.group(1)) for n in names if (m := _PLATE_PNG_RE.match(n))}
+    found |= set(_sliced_plate_meta(zf, names))
+    found |= _plates_from_model_settings(names, zf)
+    if not found and _find_model_part(names, zf) is not None:
+        found = {1}
+    return sorted(found)
+
+
 from .providers.slicing import get_format_provider
 
 
@@ -90,24 +133,6 @@ def parse_model_filaments(file_path: str) -> list[dict]:
     return out
 
 
-_SETTING_LABELS: dict[str, str] = {
-    "enable_support": "Enable supports",
-    "support_type": "Support type",
-    "support_threshold_angle": "Support threshold angle",
-    "support_on_build_plate_only": "Support on build plate only",
-    "raft_layers": "Raft layers",
-    "brim_type": "Brim type",
-    "brim_width": "Brim width",
-    "sparse_infill_density": "Infill density",
-    "sparse_infill_pattern": "Infill pattern",
-    "wall_loops": "Wall loops",
-    "top_shell_layers": "Top layers",
-    "bottom_shell_layers": "Bottom layers",
-    "layer_height": "Layer height",
-    "ironing_type": "Ironing type",
-}
-
-
 def parse_embedded_settings(file_path: str) -> list[dict]:
     """Return curated print settings baked into the 3MF's project_settings.config."""
     try:
@@ -124,7 +149,8 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
         return []
 
     out = []
-    for key in get_format_provider().curated_override_keys():
+    for setting in get_format_provider().curated_settings():
+        key = setting.key
         if key not in ps:
             continue
         val = ps[key]
@@ -132,7 +158,7 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
             val = ", ".join(str(v) for v in val)
         else:
             val = str(val)
-        out.append({"key": key, "label": _SETTING_LABELS.get(key, key), "value": val})
+        out.append({"key": key, "label": setting.label, "value": val})
     return out
 
 
@@ -149,74 +175,35 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
     with zf:
         names = set(zf.namelist())
 
-        # Load timing/weight data from slice_info.config if present
-        meta: dict[int, dict] = {}
-        if "Metadata/slice_info.config" in names:
-            try:
-                data = json.loads(zf.read("Metadata/slice_info.config"))
-                for p in data.get("plate", []):
-                    idx = int(p.get("index", 0))
-                    raw_weight = p.get("weight", [0])
-                    if not isinstance(raw_weight, list):
-                        raw_weight = [raw_weight]
-                    meta[idx] = {
-                        "estimated_time": int(p.get("prediction", 0)),
-                        "filament_g": sum(float(w) for w in raw_weight),
-                    }
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-                pass
+        # Load timing/weight data from slice_info.config (XML, as Orca/Bambu write it)
+        meta = _sliced_plate_meta(zf, names)
 
-        # Discover plate numbers from thumbnail files
-        thumb_re = re.compile(r"Metadata/plate_(\d+)\.png")
-        plate_numbers = {int(m.group(1)) for name in names if (m := thumb_re.match(name))}
+        # Union of every plate source (see plate_numbers), so a plate whose PNG is missing is not dropped.
+        nums = plate_numbers(zf)
 
-        # Fall back to plate numbers found in slice_info if no thumbnails
-        if not plate_numbers:
-            plate_numbers = set(meta.keys())
-
-        # Pre-slice 3MFs (e.g. gridfinity-customizer) may only have model_settings.config
-        if not plate_numbers:
-            plate_numbers = _plates_from_model_settings(names, zf)
-
-        # Last resort: any 3MF with a declared StartPart model is a single-plate file
-        # (e.g. PrusaSlicer exports). Per spec §2.1.1, discover via _rels/.rels.
-        if not plate_numbers and _find_model_part(names, zf) is not None:
-            plate_numbers = {1}
-
-        if not plate_numbers:
+        if not nums:
             return []
 
         if thumbnail_dir:
             Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
 
-        # Global thumbnail fallback (e.g. PrusaSlicer / eufyMake — no per-plate images)
-        global_thumb = next(
-            (n for n in ["Metadata/thumbnail.png", "Metadata/preview.png"] if n in names),
-            None,
-        )
-
-        for num in sorted(plate_numbers):
-            thumb_zip_path = f"Metadata/plate_{num}.png"
+        for num in nums:
+            member = plate_thumbnail_member(names, num)
             thumb_disk_path: Optional[str] = None
-
-            if thumb_zip_path in names and thumbnail_dir:
+            if member and thumbnail_dir:
                 dest = Path(thumbnail_dir) / f"plate_{num}.png"
-                dest.write_bytes(zf.read(thumb_zip_path))
-                thumb_disk_path = str(dest)
-            elif thumb_zip_path not in names and global_thumb and thumbnail_dir:
-                # Use the global thumbnail for all plates in non-Bambu 3MFs
-                dest = Path(thumbnail_dir) / f"plate_{num}.png"
-                if not dest.exists():
-                    dest.write_bytes(zf.read(global_thumb))
+                # A file-wide thumbnail is shared by every plate: write it once. A plate's own PNG always overwrites.
+                if member == f"Metadata/plate_{num}.png" or not dest.exists():
+                    dest.write_bytes(zf.read(member))
                 thumb_disk_path = str(dest)
             # If no thumbnail available, leave path as None
 
-            m_data = meta.get(num, {})
+            secs, grams = meta.get(num, (0, 0.0))
             plates.append(PlateInfo(
                 plate_number=num,
                 thumbnail_path=thumb_disk_path,
-                estimated_time=m_data.get("estimated_time", 0),
-                filament_g=m_data.get("filament_g", 0.0),
+                estimated_time=secs,
+                filament_g=grams,
             ))
 
     return plates
@@ -255,7 +242,7 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
             if thumbnail_dir:
                 Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
                 for num in plate_numbers:
-                    if f"Metadata/plate_{num}.png" in names:
+                    if f"Metadata/plate_{num}.png" in names:   # own PNG only: no file-wide fallback for sliced archives
                         dest = Path(thumbnail_dir) / f"plate_{num}.png"
                         dest.write_bytes(zf.read(f"Metadata/plate_{num}.png"))
                         thumbs[num] = str(dest)
@@ -265,7 +252,8 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
     for num in plate_numbers:
         secs, grams = meta.get(num, (0, 0.0))
         if not secs or not grams:
-            g_grams, g_secs, _ = get_format_provider().parse_estimates(file_path, num)
+            est = get_format_provider().parse_estimates(file_path, num)
+            g_grams, g_secs = est.grams, est.seconds
             secs, grams = secs or g_secs or 0, grams or g_grams or 0.0
         plates.append(PlateInfo(plate_number=num, thumbnail_path=thumbs.get(num),
                                 estimated_time=secs, filament_g=grams))

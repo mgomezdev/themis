@@ -1,4 +1,5 @@
 import logging
+from app.plugins.elegoo_centauri.client import serialize_elegoo
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -59,7 +60,8 @@ async def test_fleet_includes_loaded_filaments(client: AsyncClient) -> None:
 
     resp = await client.get("/api/v1/fleet")
     assert resp.status_code == 200
-    assert resp.json()[0]["loaded_filaments"] == [filament]
+    # a written slot is stored as the tuple: the combined "PA-CF" type is split into PA / cf, manufacturer unknown
+    assert resp.json()[0]["loaded_filaments"] == [{**filament, "type": "PA", "subtype": "cf", "manufacturer": None}]
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +83,9 @@ class _FakeElegoo:
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(pause_resume=True)
+
+    def serialize_state(self, printer_id: int) -> dict:
+        return serialize_elegoo(self.state, printer_id)       # as the Elegoo client does
 
 
 async def _add_printer(client: AsyncClient, name: str) -> int:

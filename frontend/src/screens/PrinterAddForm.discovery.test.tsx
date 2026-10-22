@@ -4,25 +4,26 @@ import userEvent from '@testing-library/user-event';
 import { PrinterAddForm } from './PrintersScreen';
 import type { PrinterType } from '../api/printers';
 import { stubFetch } from '../test/fetchStub';
+import { printerType } from '../test/printerTypes';
 
 const TYPES: PrinterType[] = [
-  { printer_type: 'elegoo_centauri', display_name: 'Elegoo Centauri', connection_fields: [
+  printerType({ plugin_id: 'elegoo_centauri', manufacturer_id: 'elegoo', manufacturer_name: 'Elegoo', model_id: 'centauri', display_name: 'Centauri Carbon', connection_fields: [
     { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
     { name: 'port', label: 'Port', field_type: 'number', required: false, default: 3030, placeholder: '', help_text: '' },
-  ] },
-  { printer_type: 'bambu', display_name: 'Bambu Lab', connection_fields: [
+  ] }),
+  printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S', connection_fields: [
     { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
     { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
     { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
-  ] },
+  ] }),
 ];
 
 const FOUND = {
   ranges: ['192.168.7.0/24'], scanned: 254, truncated: false,
   found: [{
-    printer_type: 'bambu', display_name: 'Bambu Lab', ip: '192.168.7.20', model: 'P1S', name: 'Bambu-P1S',
+    printer_type: 'bambu', plugin_id: 'bambu', display_name: 'Bambu Lab', ip: '192.168.7.20', model: 'P1S', name: 'Bambu-P1S',
     serial: '01P00A111111111', connection_config: { ip_address: '192.168.7.20', serial_number: '01P00A111111111' },
-    note: null, already_added: false,
+    note: null, already_added: false, model_uuid: null,
   }],
 };
 
@@ -39,11 +40,39 @@ describe('PrinterAddForm — discovery', () => {
     await user.click(screen.getByRole('button', { name: 'Scan' }));
     await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
 
-    expect(screen.getByText('Connect to Bambu Lab')).toBeTruthy();                       // step 2 of a Bambu, not the default first type
+    expect(screen.getByText('Connect to P1S')).toBeTruthy();                       // step 2 of a Bambu, not the default first type
     const field = (label: string) => screen.getByText(label).parentElement!.querySelector('input') as HTMLInputElement;
     expect(field('IP Address').value).toBe('192.168.7.20');
     expect(field('Serial Number').value).toBe('01P00A111111111');
     expect(field('Access Code').value).toBe('');                                          // secret: never discovered
+  });
+
+  it("prefers the server's registry match (model_uuid) over name guessing when the announced text names no declared model", async () => {
+    const user = userEvent.setup();
+    const types = [TYPES[0], { ...TYPES[1], model_uuid: 'uuid-p1s' }, printerType({ ...TYPES[1], model_id: 'x1c', display_name: 'X1 Carbon', model_uuid: 'uuid-x1c' })];
+    const found = { ...FOUND, found: [{ ...FOUND.found[0], model: 'Codename C12', model_uuid: 'uuid-x1c' }] };
+    stubFetch({ 'GET /api/v1/printers/orca-machine-catalog': [], 'POST /api/v1/printers/discover': found });
+    render(<PrinterAddForm types={types} onCancel={() => {}} onCreated={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+
+    expect(screen.getByText('Connect to X1 Carbon')).toBeTruthy();
+  });
+
+  it('an announcement the registry and the name match both miss stays on the model step with an explicit "choose the model" notice', async () => {
+    const user = userEvent.setup();
+    const found = { ...FOUND, found: [{ ...FOUND.found[0], model: 'Codename C99', model_uuid: null }] };
+    stubFetch({ 'GET /api/v1/printers/orca-machine-catalog': [], 'POST /api/v1/printers/discover': found });
+    render(<PrinterAddForm types={TYPES} onCancel={() => {}} onCreated={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+
+    expect(screen.getByRole('status').textContent).toMatch(/could not tell which model/);
+    expect(screen.queryByText(/^Connect to /)).toBeNull();                                // not advanced to the connect step
   });
 
   it('keeps a nickname the user already typed', async () => {

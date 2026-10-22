@@ -1,4 +1,7 @@
 from tests.catalog_helpers import patch_cached_catalog, prime_catalog
+from tests.fake_providers import FakeFormatProvider
+from app.services.providers.contract import OverrideInspection, SettingChange, SlotWarning
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -117,11 +120,11 @@ def test_extra_config_forwarded_to_sidecar():
 
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "sidecar-job-1"
-    mock_client.poll_status.return_value = {"sliced_file": "out.gcode"}
+    mock_client.poll_status.return_value = {"artifact": {"name": "out.gcode"}}
     mock_client.download.return_value = Path("/tmp/out.gcode")
 
     with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
-         patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+         patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         mock_exec.return_value = "/tmp/out.gcode"
         svc.slice(req)
 
@@ -139,12 +142,12 @@ def test_slice_raises_without_sidecar():
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="m", process_preset="p", filament_presets=["f"],
     )
-    with patch("app.config.get_laminus_sidecar_url", return_value=None):
+    with patch("app.services.providers.slicing.configured_server_url", return_value=None):
         try:
             svc.slice(req)
             assert False, "expected SliceError"
         except SliceError as e:
-            assert "LAMINUS_SIDECAR_URL" in str(e)
+            assert "Settings -> Laminus" in str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +162,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.providers.slicing import SlicingProviderError
-from app.services.providers.laminus import LaminusSlicingProvider
+from tests.conftest import slice_info_xml
+
 from tests.fake_providers import FakeSlicingProvider
 
 _KEYS = {"has_embedded_settings", "has_findings", "setting_changes", "slot_warning"}  # what the frontend reads
@@ -177,7 +181,7 @@ def _project_3mf(settings: dict, model_xml: str | None = None) -> bytes:
     """A 3MF that carries embedded slicer settings (what makes the override check run)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]}))
+        zf.writestr("Metadata/slice_info.config", slice_info_xml([(1, 60, 5.0)]))
         zf.writestr("Metadata/plate_1.png", b"\x89PNG")
         zf.writestr("Metadata/project_settings.config", json.dumps(settings))
         if model_xml is not None:
@@ -195,22 +199,26 @@ def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
     `sidecar=None` means no slicing provider is configured."""
     async def _check(*, data: bytes | None = None, sidecar: str | None = "http://laminus.test",
                      catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None,
-                     real_inspector: bool = True, **body):
+                     real_inspector: bool = True, inspection=None, **body):
         file_id = await upload_3mf(data=data)
         printer_id = await create_printer(**(printer or {}))
         payload = {"uploaded_file_id": file_id, "printer_id": printer_id, "print_profile": "0.20mm Standard",
                    "filament_profile": "Bambu PLA Basic", **body}
         provider = FakeSlicingProvider()
-        if real_inspector:   # exercise the Laminus (OrcaSlicer) inspection logic through the route
-            provider.inspect_overrides = LaminusSlicingProvider("").inspect_overrides
+        fmt = FakeFormatProvider()
+        if inspection is not None:
+            fmt.inspection = inspection
+        fmt_patch = patch("app.api.routes.jobs.get_format_provider", return_value=fmt) if not real_inspector \
+            else nullcontext()    # real: exercise the Laminus (OrcaSlicer) inspection logic through the route
         if isinstance(merged, Exception):
             provider.fail_on["merged_config"] = merged
         else:
             provider.merged = merged if merged is not None else {}
         with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
              patch("app.services.providers.slicing.get_slicing_provider", return_value=provider if sidecar else None), \
-             patch_cached_catalog(catalog):
+             patch_cached_catalog(catalog), fmt_patch:
             resp = await client.post("/api/v1/jobs/check-overrides", json=payload)
+        provider.fmt = fmt
         return resp, provider
     return _check
 
@@ -238,7 +246,7 @@ async def test_check_overrides_bare_3mf_has_nothing_to_lose_and_never_calls_the_
 
 async def test_check_overrides_printer_without_active_preset_skips_the_diff(check):
     resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}),
-                                printer={"current_orca_printer_profile": None})
+                                printer={"machine_profile_override": None})
 
     assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
                            "has_embedded_settings": True}
@@ -307,12 +315,23 @@ async def test_check_overrides_warns_when_the_file_uses_more_slots_than_the_prin
     assert (body["has_findings"], body["setting_changes"]) == (True, [])
 
 
-async def test_check_overrides_returns_whatever_the_provider_inspects(check):
-    """The route delegates the file-format comparison to the slicing provider and passes its result through
-    unchanged, handing it the file, the merged config of the chosen presets and the printer's slot count."""
+async def test_check_overrides_serializes_the_providers_inspection_dto_to_the_unchanged_json(check):
+    """The route delegates the file-format comparison to the offline FormatProvider and serializes its
+    `OverrideInspection` DTO to the JSON the frontend reads (`from`/`to`, nested `slot_warning`), handing the provider
+    the file, the merged config of the chosen presets and the printer's slot count."""
+    inspection = OverrideInspection(
+        has_embedded_settings=True,
+        setting_changes=(SettingChange("layer_height", "0.2", "0.3"),),
+        slot_warning=SlotWarning(used_slots=3, printer_slots=1),
+    )
     resp, provider = await check(data=_project_3mf({"layer_height": "0.2"}), merged={"layer_height": "0.3"},
-                                 real_inspector=False)
+                                 real_inspector=False, inspection=inspection)
     assert resp.status_code == 200
-    assert resp.json() == provider.override_findings
-    (call,) = [c for c in provider.calls if c[0] == "inspect_overrides"]
+    assert resp.json() == {
+        "has_embedded_settings": True,
+        "setting_changes": [{"key": "layer_height", "from": "0.2", "to": "0.3"}],
+        "slot_warning": {"used_slots": 3, "printer_slots": 1},
+        "has_findings": True,
+    }
+    (call,) = [c for c in provider.fmt.calls if c[0] == "inspect_overrides"]
     assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one

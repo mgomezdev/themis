@@ -5,29 +5,42 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import select
 
-from app.models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from app.models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
 from app.services import model_targets
 from app.services.queue_engine import QueueEngine
 from tests.services.test_queue_engine import _make_mock_printer_manager
 from tests.waiting import settle_background_tasks
 
-P1S = "Bambu Lab P1S 0.4 nozzle"
-X1C = "Bambu Lab X1 Carbon 0.4 nozzle"
+P1S = "model-p1s"      # printer-model UUIDs (BIZ-294: targets are keyed by model, not by machine profile)
+X1C = "model-x1c"
+
+
+async def _models(factory) -> None:
+    async with factory() as s:
+        for uid in (P1S, X1C):
+            if await s.get(PrinterModelRecord, uid) is None:
+                s.add(PrinterModelRecord(id=uid, plugin_id="bambu", manufacturer_id="bambu", model_id=uid, display_name=uid))
+        await s.commit()
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _printer(factory, pid: int, profile: str | None) -> None:
+PLA_SLOT = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FFFFFF"}]
+
+
+async def _printer(factory, pid: int, model: str | None, loaded=None) -> None:
+    await _models(factory)
     async with factory() as s:
-        s.add(Printer(id=pid, name=f"P{pid}", printer_type="bambu", connection_config={},
-                      current_orca_printer_profile=profile))
+        s.add(Printer(id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, model_uuid=model,
+                      loaded_filaments=loaded or []))
         await s.commit()
 
 
-async def _targeted_job(factory, profile: str = P1S, status: str = "queued") -> tuple[int, int]:
+async def _targeted_job(factory, model: str = P1S, status: str = "queued") -> tuple[int, int]:
     """A job with a model target and no explicit configs -> (job_id, target_id)."""
+    await _models(factory)
     async with factory() as s:
         f = UploadedFile(original_filename="t.3mf", plates=[], uploaded_at=_now())
         s.add(f)
@@ -36,8 +49,8 @@ async def _targeted_job(factory, profile: str = P1S, status: str = "queued") -> 
                 created_at=_now(), updated_at=_now())
         s.add(j)
         await s.flush()
-        t = JobModelTarget(job_id=j.id, machine_profile=profile, print_profile="0.20mm",
-                           filament_type="PLA", filament_color="any")
+        t = JobModelTarget(job_id=j.id, model_uuid=model, print_profile="0.20mm",
+                           ask_type="PLA", ask_subtype="any")
         s.add(t)
         await s.commit()
         return j.id, t.id
@@ -63,7 +76,7 @@ async def test_materialize_job_creates_configs_only_for_matching_printers(sessio
 
     cfgs = await _configs(session_factory, job_id)
     assert [c.printer_id for c in cfgs] == [1, 3]
-    assert all(c.model_target_id == target_id and c.print_profile == "0.20mm" and c.filament_type == "PLA"
+    assert all(c.model_target_id == target_id and c.print_profile == "0.20mm" and (c.ask_type, c.ask_subtype) == ("PLA", "any")
                for c in cfgs)
 
 
@@ -102,7 +115,7 @@ async def test_sync_removes_config_when_printer_changes_model(session_factory):
         await s.commit()
     async with session_factory() as s:
         p = await s.get(Printer, 1)
-        p.current_orca_printer_profile = X1C
+        p.model_uuid = X1C
         await model_targets.sync_targets_for_printer(s, p)
         await s.commit()
     assert await _configs(session_factory, job_id) == []
@@ -118,7 +131,7 @@ async def test_sync_keeps_config_of_a_job_already_slicing(session_factory):
         await s.commit()
     async with session_factory() as s:
         p = await s.get(Printer, 1)
-        p.current_orca_printer_profile = X1C
+        p.model_uuid = X1C
         await model_targets.sync_targets_for_printer(s, p)
         await s.commit()
     assert [c.printer_id for c in await _configs(session_factory, job_id)] == [1]
@@ -140,7 +153,7 @@ async def test_explicit_config_wins_over_target_for_same_printer(session_factory
 
 
 @pytest.mark.asyncio
-async def test_printer_without_profile_matches_nothing(session_factory):
+async def test_printer_without_a_model_matches_nothing(session_factory):
     await _printer(session_factory, 1, None)
     job_id, _ = await _targeted_job(session_factory)
     async with session_factory() as s:
@@ -161,7 +174,7 @@ async def test_engine_claims_targeted_job_on_matching_printer_only(session_facto
         assert (await s.get(Job, job_id)).status == "queued"
     assert await _configs(session_factory, job_id) == []
 
-    await _printer(session_factory, 2, P1S)      # a P1S shows up later and is ready
+    await _printer(session_factory, 2, P1S, PLA_SLOT)      # a P1S with PLA loaded shows up later and is ready
     qe = QueueEngine(session_factory, _make_mock_printer_manager([1, 2]), MagicMock())
     await qe._process_queue()
     await settle_background_tasks()
@@ -174,11 +187,8 @@ async def test_engine_claims_targeted_job_on_matching_printer_only(session_facto
 
 
 @pytest.mark.asyncio
-async def test_engine_blocks_targeted_job_on_filament_mismatch(session_factory):
-    await _printer(session_factory, 1, P1S)
-    async with session_factory() as s:
-        (await s.get(Printer, 1)).loaded_filaments = [{"slot": 0, "type": "PETG", "color": "#FFFFFF"}]
-        await s.commit()
+async def test_engine_leaves_a_targeted_job_queued_on_filament_mismatch_until_the_right_filament_is_loaded(session_factory):
+    await _printer(session_factory, 1, P1S, [{"slot": 0, "type": "PETG", "subtype": "standard", "color": "#FFFFFF"}])
     job_id, _ = await _targeted_job(session_factory)  # asks for PLA
     qe = QueueEngine(session_factory, _make_mock_printer_manager([1]), MagicMock())
 
@@ -187,7 +197,15 @@ async def test_engine_blocks_targeted_job_on_filament_mismatch(session_factory):
 
     async with session_factory() as s:
         job = await s.get(Job, job_id)
-        assert job.status == "blocked" and "filament" in (job.block_reason or "").lower()
+        assert (job.status, job.block_reason) == ("queued", None)        # never blocked or failed for filament alone
+
+    async with session_factory() as s:                                    # PLA gets loaded: claimable on the next cycle
+        (await s.get(Printer, 1)).loaded_filaments = PLA_SLOT
+        await s.commit()
+    await qe._process_queue()
+    await settle_background_tasks()
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).status != "queued"
 
 
 @pytest.mark.asyncio
@@ -237,8 +255,8 @@ async def test_target_dicts_by_job_groups_per_job_and_keys_targetless_jobs(sessi
         bare_id = bare.id
     async with session_factory() as s:
         got = await model_targets.target_dicts_by_job(s, [a, b, bare_id])
-    assert [t["machine_profile"] for t in got[a]] == [P1S]
-    assert [t["machine_profile"] for t in got[b]] == [X1C]
+    assert [t["model_uuid"] for t in got[a]] == [P1S]
+    assert [t["model_uuid"] for t in got[b]] == [X1C]
     assert got[bare_id] == []
     async with session_factory() as s:
         assert await model_targets.target_dicts_by_job(s, []) == {}

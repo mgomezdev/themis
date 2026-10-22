@@ -1,17 +1,21 @@
-# Themis Agent Docs — Index
+# Current architecture references
 
-The canonical contributor and architecture reference is `/CONTRIBUTING.md` at the repo root.
+These references describe the implementation in this checkout. For operator-facing material, start with the [user guide](../user-guide.md), [operations guide](../operations.md), and [integrations guide](../integrations.md). For exact HTTP paths and schemas, use the running `/docs` or the committed [`openapi.json`](../../openapi.json).
 
-Start there. It covers stack, repo layout, running locally, the three core singletons, job state machine, all routes, data model, key code paths, how to add routes and printer types, DB migrations, environment variables, and known gotchas.
+| Document | Use it for |
+|---|---|
+| [backend.md](backend.md) | Backend routes, services, queue and slicing flow, and major code paths. Check OpenAPI for the exact live route contract. |
+| [frontend.md](frontend.md) | Browser routes, screens, API clients, and UI architecture. |
+| [data-model.md](data-model.md) | Core database tables, relationships, and migrations. Plugin-owned tables are plugin-specific. |
+| [printers.md](printers.md) and [printer-interface.md](../printer-interface.md) | Printer plugin/model declarations, client boundary, protocol behavior, and capabilities. |
+| [provider-interfaces.md](../provider-interfaces.md) | Slicing and filament-inventory provider contracts and adapter boundaries. |
+| [conventions.md](conventions.md) | Implementation invariants and local development gotchas. |
+| [recipes.md](recipes.md) | Common maintenance and implementation tasks. |
+| [styling.md](styling.md) | Frontend styling and design tokens. |
+| [backend-review.md](backend-review.md), [frontend-review.md](frontend-review.md) | Change-review checklists. |
+| [events.md](../events.md) | Event contracts, durability, subscribers, and operator endpoints. |
+| [plugins.md](../plugins.md) | Plugin manifests, capabilities, lifecycle, and installation behavior. |
+| [linear-sync.md](linear-sync.md) | Linear status names, how an agent moves an issue, and when *Human review* applies. |
+| [mcp-server.md](../mcp-server.md) | Optional MCP package setup and tools. |
 
-Supplementary files in this directory (may be stale — verify against source if in doubt):
-- `backend.md` — deeper backend service notes
-- `../provider-interfaces.md` — the Laminus (slicing) / Spoolman (inventory) provider interfaces and the enforced boundary
-- `frontend.md` — deeper frontend notes
-- `data-model.md` — column-level model reference
-- `printers.md` — printer protocol implementation guide; also see `docs/printer-interface.md`
-- `recipes.md` — common task recipes
-- `conventions.md` — code style conventions
-- `styling.md` — frontend styling guide
-- `backend-review.md` — checklist for reviewing a backend change; reference during the review step
-- `frontend-review.md` — checklist for reviewing a frontend change; reference during the review step
+These are maintained architecture notes, not generated specifications. When details differ, current source code is authoritative; for REST request/response contracts, OpenAPI is authoritative. The dated design specs, implementation plans, and handoffs under `docs/superpowers/` are historical records and may describe behavior that was changed or never shipped.

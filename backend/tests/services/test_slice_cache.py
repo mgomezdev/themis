@@ -225,3 +225,44 @@ def test_the_fingerprint_memo_is_keyed_per_provider_identity():
         for provider in (a1, a2, b, None):
             sc.cached_fingerprint("M", "P", ["F"], provider)
     assert fp.call_count == 3
+
+
+# --- provider identity in the key (BIZ-250) --------------------------------------------------------------------------------------
+
+def _inputs(**over):
+    base = dict(source_content_hash="h", plate_number=1, machine_preset="M", process_preset="P", filament_presets=("F",),
+                extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+    return sc.CacheKeyInputs(**{**base, **over})
+
+
+def test_a_different_slicing_provider_never_shares_a_cache_key():
+    assert sc.cache_key(_inputs(provider="other_slicer")) != sc.cache_key(_inputs())
+    assert sc.cache_key(_inputs(provider="other_slicer")) == sc.cache_key(_inputs(provider="other_slicer"))
+
+
+def test_the_provider_is_always_part_of_the_key_even_the_default():
+    """BIZ-291: no omission for the default provider (the key must not depend on which provider is the default)."""
+    base = {"source_content_hash": "h", "plate_number": 1, "machine_preset": "M", "process_preset": "P", "filament_presets": ["F"],
+            "extra_config": {}, "tool_index": None, "filament_map": None, "artifact_kind": "gcode"}
+    assert sc.cache_key(_inputs()) == sc.sha256_of({**base, "provider": "laminus"})
+    assert sc.cache_key(_inputs(provider="laminus")) == sc.cache_key(_inputs())
+    assert sc.cache_key(_inputs()) != sc.sha256_of(base)                       # the pre-BIZ-291 shape no longer matches
+    assert _inputs(provider="b").as_dict()["provider"] == "b"
+
+
+def test_key_inputs_takes_the_provider_from_the_request_then_the_argument_then_the_default(monkeypatch):
+    req = _req()
+    monkeypatch.setattr(sc, "slicing_provider_name", lambda: "the_default")
+    assert sc.key_inputs(req, "h", None, None).provider == "the_default"
+    req.provider_id = "from_request"
+    assert sc.key_inputs(req, "h", None, None).provider == "from_request"
+    assert sc.key_inputs(req, "h", None, None, provider="explicit").provider == "explicit"
+
+
+def test_a_06_variant_and_a_04_variant_of_one_model_never_share_a_cache_key():
+    """BIZ-294: the machine profile resolved for the printer's nozzle variant is hashed, so 0.4 and 0.6 printers slice separately."""
+    four = sc.key_inputs(_req(machine_preset="P1S 0.4 nozzle"), "src", None, None)
+    six = sc.key_inputs(_req(machine_preset="P1S 0.6 nozzle"), "src", None, None)
+    assert four.machine_preset != six.machine_preset
+    assert sc.cache_key(four) != sc.cache_key(six)
+    assert sc.cache_key(four) == sc.cache_key(sc.key_inputs(_req(machine_preset="P1S 0.4 nozzle"), "src", None, None))

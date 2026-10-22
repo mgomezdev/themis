@@ -125,9 +125,9 @@ async def test_material_breakdown_prefers_per_extruder_profile_then_job_config(c
     await _seed(session_factory, file_id, printer_id=a, grams=30.0, breakdown=[
         {"extruder_index": 0, "filament_profile": "Bambu PLA Basic @BBL X1C", "grams": 20.0},
         {"extruder_index": 1, "filament_profile": "Generic PETG", "grams": 10.0}])
-    await _seed(session_factory, file_id, printer_id=a, grams=5.0, config={"printer_id": a, "filament_type": "ABS"})
+    await _seed(session_factory, file_id, printer_id=a, grams=5.0, config={"printer_id": a, "ask_type": "ABS", "ask_subtype": "any"})
     await _seed(session_factory, file_id, printer_id=a, grams=2.0,
-                config={"printer_id": a, "filament_type": "any", "filament_profile": "Elegoo TPU 95A"})
+                config={"printer_id": a, "filament_profile": "Elegoo TPU 95A"})
     await _seed(session_factory, file_id, printer_id=a, grams=1.0)  # nothing to name it by
 
     mats = (await _get(client)).json()["materials"]

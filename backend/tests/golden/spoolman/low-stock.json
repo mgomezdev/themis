@@ -1,0 +1,48 @@
+{
+  "after": {
+    "body": {
+      "default_g": 150.0,
+      "overrides": {
+        "12": 0.0,
+        "3": 40.5
+      }
+    },
+    "status": 200
+  },
+  "empty": {
+    "body": {
+      "default_g": null,
+      "overrides": {}
+    },
+    "status": 200
+  },
+  "invalid": {
+    "body": {
+      "detail": [
+        {
+          "ctx": {
+            "ge": 0.0
+          },
+          "input": -1,
+          "loc": [
+            "body",
+            "default_g"
+          ],
+          "msg": "Input should be greater than or equal to 0",
+          "type": "greater_than_equal"
+        }
+      ]
+    },
+    "status": 422
+  },
+  "put": {
+    "body": {
+      "default_g": 150.0,
+      "overrides": {
+        "12": 0.0,
+        "3": 40.5
+      }
+    },
+    "status": 200
+  }
+}

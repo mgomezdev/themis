@@ -12,6 +12,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Printer
 from ...services import fleet_analytics
+from ...services.printer_identity import dormant_reason
 from ...services.printer_manager import printer_manager
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ def _fleet_dict(p: Printer) -> dict:
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
         "loaded_filaments": p.loaded_filaments or [],
+        "plugin_id": p.plugin_id,
+        "dormant": dormant_reason(p.plugin_id) is not None,
+        "dormant_reason": dormant_reason(p.plugin_id),
     }
     client = printer_manager._clients.get(p.id)
     if client and client.connected:

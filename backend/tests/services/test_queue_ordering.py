@@ -65,7 +65,7 @@ async def seed(factory, printers: dict[int, dict], jobs: list[dict]) -> list[int
     async with factory() as s:
         for pid, spec in printers.items():
             s.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
-                          current_orca_printer_profile=spec.get("machine", f"Machine P{pid}"),
+                          machine_profile_override=spec.get("machine", f"Machine P{pid}"),
                           loaded_filaments=spec.get("loaded", [])))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
         s.add(f)
@@ -80,7 +80,9 @@ async def seed(factory, printers: dict[int, dict], jobs: list[dict]) -> list[int
                 failed = spec.get("failed", {}).get(pid)
                 s.add(JobPrinterConfig(
                     job_id=j.id, printer_id=pid, print_profile="0.20mm", filament_profile="PLA",
-                    filament_type=spec.get("type", "any"), filament_color=spec.get("color", "any"),
+                    ask_type=None if spec.get("type", "any") == "any" else spec["type"],
+                    ask_subtype=None if spec.get("type", "any") == "any" else "any",
+                    ask_color=None if spec.get("color", "any") == "any" else spec["color"],
                     slice_failed=failed is not None, slice_error=failed))
             ids.append(j.id)
         await s.commit()
@@ -96,8 +98,8 @@ PLA = [{"slot": 0, "type": "PLA", "color": "#FFFFFF"}]
 PETG = [{"slot": 0, "type": "PETG", "color": "#FFFFFF"}]
 
 
-async def test_a_blocked_job_at_the_head_of_the_line_holds_back_the_jobs_behind_it(engine, world, session_factory):
-    """Head-of-line: a job that can't run blocks; the engine must NOT skip ahead to one that can."""
+async def test_a_job_whose_filament_the_printer_cannot_supply_is_skipped_and_stays_queued(engine, world, session_factory):
+    """No head-of-line blocking on filament: the printer takes the first job it CAN print; the other waits, unblocked."""
     a, b = await seed(session_factory, {1: {"loaded": PLA}}, [
         {"position": 1.0, "printers": [1], "type": "PETG", "color": "#FFFFFF"},  # needs PETG, printer 1 has PLA
         {"position": 2.0, "printers": [1]},                    # would run fine
@@ -105,21 +107,42 @@ async def test_a_blocked_job_at_the_head_of_the_line_holds_back_the_jobs_behind_
     world.online = {1}
 
     await cycle(engine)
-    await cycle(engine)
 
     job_a, job_b = await job_state(session_factory, a), await job_state(session_factory, b)
-    assert job_a.status == "blocked" and "filament" in job_a.block_reason.lower()
-    assert job_b.status == "queued" and job_b.assigned_printer_id is None
-    world.slicer.slice.assert_not_called()
+    assert (job_a.status, job_a.block_reason, job_a.assigned_printer_id) == ("queued", None, None)
+    assert (job_b.status, job_b.assigned_printer_id) == ("printing", 1)
 
-    async with session_factory() as s:  # operator loads PETG: the head unblocks and goes first
+
+async def test_the_skipped_job_goes_first_once_its_filament_is_loaded(engine, world, session_factory):
+    a, b = await seed(session_factory, {1: {"loaded": PLA}}, [
+        {"position": 1.0, "printers": [1], "type": "PETG", "color": "#FFFFFF"},
+        {"position": 2.0, "printers": [1]},
+    ])
+    world.online = {1}
+    async with session_factory() as s:  # operator loads PETG before the first cycle
         (await s.get(Printer, 1)).loaded_filaments = PETG
         await s.commit()
+
     await cycle(engine)
 
     job_a, job_b = await job_state(session_factory, a), await job_state(session_factory, b)
     assert (job_a.status, job_a.assigned_printer_id) == ("printing", 1)
     assert job_b.status == "queued"
+
+
+async def test_a_job_blocked_for_another_reason_at_the_head_of_the_line_still_holds_back_the_jobs_behind_it(engine, world, session_factory):
+    """Head-of-line still applies to every other block (here a failed slice on this printer): the engine must NOT skip ahead."""
+    a, b = await seed(session_factory, {1: {"loaded": PLA}}, [
+        {"position": 1.0, "printers": [1], "failed": {1: "error"}},
+        {"position": 2.0, "printers": [1]},
+    ])
+    world.online = {1}
+
+    await cycle(engine)
+
+    job_a, job_b = await job_state(session_factory, a), await job_state(session_factory, b)
+    assert job_a.status == "blocked"
+    assert job_b.status == "queued" and job_b.assigned_printer_id is None
 
 
 async def test_jobs_are_claimed_in_queue_position_order_not_insertion_order(engine, world, session_factory):

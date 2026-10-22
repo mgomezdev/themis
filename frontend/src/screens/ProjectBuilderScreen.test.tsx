@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ProjectBuilderScreen } from './ProjectBuilderScreen';
@@ -10,7 +10,7 @@ const FILES = [
 ];
 
 const PRINTERS = [
-  { id: 1, name: 'Printer A', printer_type: 'bambu_x1c', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], current_orca_printer_profile: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [], build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256 },
+  { id: 1, name: 'Printer A', printer_type: 'bambu_x1c', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [], build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256 },
 ];
 
 function jsonResponse(data: unknown) {
@@ -20,7 +20,7 @@ function jsonResponse(data: unknown) {
 const mockFetch = vi.fn((input: unknown) => {
   const url = String(input);
   if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
-  if (url === '/api/v1/settings/spoolman') return jsonResponse({ enabled: false });
+  if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], selections: {} });
   if (url === '/api/v1/printers') return jsonResponse(PRINTERS);
   return jsonResponse({});
 });
@@ -31,11 +31,9 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
   <MemoryRouter initialEntries={['/projects/new']}>{children}</MemoryRouter>
 );
 
-/** Filament type <select> has an "any" option; the order-type select does not. */
-function filamentSelects() {
-  return screen.getAllByRole('combobox').filter(el =>
-    within(el as HTMLElement).queryByRole('option', { name: 'any' }),
-  ) as HTMLSelectElement[];
+/** One filament-type <select> per part (the editor's own `item-ask-*-type` control). */
+function typeSelects() {
+  return screen.getAllByLabelText('Filament type') as HTMLSelectElement[];
 }
 
 describe('ProjectBuilderScreen', () => {
@@ -67,11 +65,15 @@ describe('ProjectBuilderScreen', () => {
     await user.click(await screen.findByTitle('Add Bracket.stl'));
     await user.click(await screen.findByTitle('Add Widget.stl'));
 
-    const [firstSelect, secondSelect] = filamentSelects();
-    await user.selectOptions(firstSelect, 'PETG');
+    const [firstType, secondType] = typeSelects();
+    await user.type(screen.getAllByLabelText('Manufacturer')[0], 'Acme');
+    await user.selectOptions(firstType, 'PETG');
+    await user.selectOptions(screen.getAllByLabelText('Filament subtype')[0], 'silk');
     await user.click(screen.getAllByTitle('Apply this filament to every part')[0]);
 
-    expect(secondSelect).toHaveValue('PETG');
+    expect(secondType).toHaveValue('PETG');                                            // the whole tuple is copied, not just the type
+    expect(screen.getAllByLabelText('Filament subtype')[1]).toHaveValue('silk');
+    expect(screen.getAllByLabelText('Manufacturer')[1]).toHaveValue('Acme');
   });
 
   it('restores a removed part when Undo is clicked', async () => {
@@ -89,20 +91,20 @@ describe('ProjectBuilderScreen', () => {
     expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(1);
   });
 
-  it('labels Generate as "without dispatch" when no printers are selected', async () => {
+  it('labels Create as "without dispatch" when no printers are selected', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
     await user.type(screen.getByLabelText(/Project name/), 'Test Project');
     await user.click(await screen.findByTitle('Add Bracket.stl'));
-    await user.click(screen.getByRole('button', { name: 'Generate…' }));
+    await user.click(screen.getByRole('button', { name: 'Create…' }));
 
     await screen.findByText('Printer A');
-    expect(screen.getByRole('button', { name: 'Generate without dispatch' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create without dispatch' })).toBeTruthy();
   });
 });
 
 describe('ProjectBuilderScreen draft stage', () => {
-  it('disables Generate… for a draft project', async () => {
+  it('disables Create… for a draft project', async () => {
     const { Routes, Route } = await import('react-router-dom');
     mockFetch.mockImplementation((input: unknown) => {
       const url = String(input);
@@ -111,10 +113,10 @@ describe('ProjectBuilderScreen draft stage', () => {
         notes: null, amount_paid: null, price: null, payment_status: 'unpaid', stage: 'draft',
         customer_id: null, customer_name: null, links: [], parts: [],
         items: [{ id: 1, file_id: 1, file_name: 'Bracket.stl', quantity: 1, quantity_completed: 0, quantity_failed: 0,
-                  filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0 }],
+                  filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0 }],
       });
       if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
-      if (url === '/api/v1/settings/spoolman') return jsonResponse({ enabled: false });
+      if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], selections: {} });
       return jsonResponse([]);
     });
     render(
@@ -123,7 +125,7 @@ describe('ProjectBuilderScreen draft stage', () => {
       </MemoryRouter>,
     );
     await screen.findByDisplayValue('Customer Request');
-    const btn = screen.getByRole('button', { name: 'Generate…' }) as HTMLButtonElement;
+    const btn = screen.getByRole('button', { name: 'Create…' }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Promote to planning before creating jobs');
   });

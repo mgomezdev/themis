@@ -471,7 +471,7 @@ async def test_upload_needs_the_capability(client, printer_id):
 
 
 def test_default_client_commands_are_plain_gcode():
-    from app.services.mock_printer_client import MockPrinterClient
+    from app.plugins.mock.client import MockPrinterClient
     c = MockPrinterClient.__new__(MockPrinterClient)
     sent: list[str] = []
     c.send_gcode = lambda g: sent.append(g) or True          # type: ignore[method-assign]
@@ -537,9 +537,9 @@ async def test_upload_over_the_size_cap_is_413(client, printer_id):
 
 
 def test_vendor_capability_sets_match_what_each_client_can_actually_do():
-    from app.services.bambu_mqtt import BambuMQTTClient
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
-    from app.services.snapmaker_client import SnapmakerExtendedClient as SnapmakerClient
+    from app.plugins.bambu.client import BambuMQTTClient
+    from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient as SnapmakerClient
 
     def caps(cls):
         return cls.__new__(cls).get_capabilities()
@@ -553,7 +553,7 @@ def test_vendor_capability_sets_match_what_each_client_can_actually_do():
 
 
 def test_relative_jog_always_restores_absolute_mode_and_stops_if_it_cannot_enter_relative():
-    from app.services.mock_printer_client import MockPrinterClient
+    from app.plugins.mock.client import MockPrinterClient
     c = MockPrinterClient.__new__(MockPrinterClient)
     sent: list[str] = []
     c.send_gcode = lambda g: sent.append(g) or (g != "G1 X1")     # type: ignore[method-assign]
