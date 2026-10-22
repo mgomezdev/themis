@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
+from app.services.providers.slicing import PackItem
 
 
 def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:
@@ -149,8 +150,29 @@ def test_pack_stls_returns_bytes(tmp_path):
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
-    result = c.pack_stls([stl1, stl2], bed_x=220.0, bed_y=220.0)
+    result = c.pack_stls([PackItem(stl1), PackItem(stl2)], bed_x=220.0, bed_y=220.0)
     assert result == packed
+
+
+def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
+    import json, re
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y").mkdir()
+    a1, a2 = tmp_path / "x" / "bracket.stl", tmp_path / "y" / "bracket.stl"   # same basename, different library files
+    a1.write_bytes(b"solid 1\nendsolid 1\n")
+    a2.write_bytes(b"solid 2\nendsolid 2\n")
+    seen = {}
+
+    def handler(req):
+        body = req.content.decode("latin-1")
+        seen["names"] = re.findall(r'name="files"; filename="([^"]+)"', body)
+        seen["items"] = json.loads(re.search(r'name="items"\r\n\r\n(.*?)\r\n--', body, re.S).group(1))
+        return httpx.Response(200, content=b"PACKED")
+
+    c = _client(httpx.MockTransport(handler))
+    assert c.pack_stls_by_uuid([PackItem(a1, 5, "7"), PackItem(a2, 1, "9")], "m", "p", []) == b"PACKED"
+    assert seen["names"] == ["7_bracket.stl", "9_bracket.stl"]            # 5 copies, but one upload each; names unique
+    assert seen["items"] == [{"file": "7_bracket.stl", "quantity": 5}, {"file": "9_bracket.stl", "quantity": 1}]
 
 
 def test_pack_stls_raises_on_error(tmp_path):
@@ -162,7 +184,7 @@ def test_pack_stls_raises_on_error(tmp_path):
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
-        c.pack_stls([stl], bed_x=100.0, bed_y=100.0)
+        c.pack_stls([PackItem(stl)], bed_x=100.0, bed_y=100.0)
 
 
 # ── v1 contract ────────────────────────────────────────────────────────────────

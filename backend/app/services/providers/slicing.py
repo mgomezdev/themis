@@ -25,6 +25,15 @@ class SlicingProviderNotReady(SlicingProviderError):
     """The provider answered but says it can't slice yet (e.g. still starting / building its catalog)."""
 
 
+@dataclass(frozen=True)
+class PackItem:
+    """One loose model to pack: `quantity` copies of the STL at `path`. `ref` is a caller-stable unique id for it (Themis: the
+    library file id); a provider uses it to tell same-named models apart."""
+    path: Path
+    quantity: int = 1
+    ref: str = ""
+
+
 @dataclass
 class Preset:
     ref: str
@@ -162,10 +171,10 @@ class SlicingProvider(ABC):
         raise NotImplementedError("provider does not support ARRANGE")
 
     def pack_models(
-        self, paths: list[Path], *, machine_ref: str | None = None, process_ref: str | None = None,
+        self, items: list[PackItem], *, machine_ref: str | None = None, process_ref: str | None = None,
         filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
     ) -> bytes:
-        """Arrange loose models into a multi-plate project: by presets (machine/process/filaments refs)
+        """Arrange loose models (each `PackItem` = one STL x quantity) into a multi-plate project: by presets (machine/process/filaments refs)
         or, without presets, by explicit bed dimensions (x, y, z)."""
         raise NotImplementedError("provider does not support PACK_MODELS")
 

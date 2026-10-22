@@ -554,6 +554,20 @@ async def _generate_with(client, tmp_path, provider, project_id):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
 
 
+async def test_generate_packs_each_library_file_once_with_its_summed_quantity_and_id(client, tmp_path):
+    """One PackItem per library file (quantity = sum over its project items, ref = the file id), not one path per copy."""
+    from tests.fake_providers import fake_packer
+
+    project_id, file_id = await _setup_project_with_stl(client, tmp_path)
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"):
+        assert (await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 3})).status_code == 201
+    provider = fake_packer(_make_3mf_bytes(plate_count=1))
+    resp = await _generate_with(client, tmp_path, provider, project_id)
+    assert resp.status_code == 200, resp.text
+    ((call,),) = [c.args for c in provider.pack_models.call_args_list]
+    assert [(i.quantity, i.ref) for i in call] == [(4, str(file_id))]
+
+
 async def test_generate_maps_provider_pack_failures_to_502_and_timeouts_to_504(client, tmp_path):
     from app.services.providers.slicing import SlicingProviderError
     from tests.fake_providers import FakeSlicingProvider

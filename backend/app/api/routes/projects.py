@@ -32,7 +32,7 @@ from ...services.library_store import get_library_store
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
 )
-from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
+from ...services.providers.slicing import PackItem, SlicingProviderError, get_slicing_provider
 from ...services.queue_engine import queue_engine
 
 logger = logging.getLogger(__name__)
@@ -1163,12 +1163,12 @@ def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
         return _parse_plate_nums(local)
 
 
-def _pack_stored_models(store: ArtifactStore, slicing, keys: list[str], **options) -> bytes:
-    """Pack the STLs stored under `keys` (repeats = quantities). The packer takes paths, so each distinct artifact is
-    materialized once for the duration of the call. Blocking: call from a worker thread."""
+def _pack_stored_models(store: ArtifactStore, slicing, wanted: list[tuple[str, int, str]], **options) -> bytes:
+    """Pack the stored STLs `wanted` = (key, quantity, ref) once each. The packer takes paths, so each artifact is
+    materialized for the duration of the call. Blocking: call from a worker thread."""
     with contextlib.ExitStack() as stack:
-        local = {k: stack.enter_context(store.materialize(k)) for k in dict.fromkeys(keys)}
-        return slicing.pack_models([local[k] for k in keys], **options)
+        items = [PackItem(stack.enter_context(store.materialize(k)), qty, ref) for k, qty, ref in wanted]
+        return slicing.pack_models(items, **options)
 
 
 async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFile | None:
@@ -1296,10 +1296,10 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     library = get_library_store()
 
     # Resolve STL keys per group (+ what each group packs from, for pack reuse)
-    group_keys: dict[FilamentTuple, list[str]] = {}
+    group_keys: dict[FilamentTuple, list[tuple[str, int, str]]] = {}
     group_recipe: dict[FilamentTuple, list[tuple[str, int]]] = {}
     for key, group_items in groups.items():
-        keys: list[str] = []
+        wanted: dict[str, tuple[str, int, str]] = {}   # one entry per library file; repeats sum their quantity
         group_recipe[key] = []
         for item in group_items:
             f = await session.get(UploadedFile, item.file_id)
@@ -1309,11 +1309,12 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
             if not await _stored(library, f.relative_path):
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            keys.extend([f.relative_path] * item.quantity)
+            prior = wanted[f.relative_path][1] if f.relative_path in wanted else 0
+            wanted[f.relative_path] = (f.relative_path, prior + item.quantity, str(f.id))
             # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
             await refresh_content_hash(f, library)
             group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
-        group_keys[key] = keys
+        group_keys[key] = list(wanted.values())
     pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
                  if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
 
@@ -1348,7 +1349,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
-    for ask, stl_keys in group_keys.items():
+    for ask, stl_wanted in group_keys.items():
         group_items = groups[ask]
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
@@ -1366,13 +1367,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 if proj.machine_uuid and proj.process_uuid:
                     # Legacy path: project has OrcaSlicer profiles embedded
                     packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_keys,
+                        _pack_stored_models, library, slicing, stl_wanted,
                         machine_ref=proj.machine_uuid, process_ref=proj.process_uuid, filament_refs=[],
                     )
                 else:
                     # Geometry-only pack; slicing profiles applied at dispatch time
                     packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_keys, bed=(pack_bed_x, pack_bed_y, 250.0),
+                        _pack_stored_models, library, slicing, stl_wanted, bed=(pack_bed_x, pack_bed_y, 250.0),
                     )
             except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
                 raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc

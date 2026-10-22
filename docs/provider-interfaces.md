@@ -144,7 +144,7 @@ These are core routes, not routes a provider implements. The active `inventory.f
 | `merged_config(machine_ref, process_ref, filament_refs, timeout=None)` | Slice-cache fingerprint uses `timeout=10`. |
 | `slice(SliceSpec, output_dir) -> artifact path` | Start → poll (≤ ~620 s) → download. `SliceSpec.prepared` = a ready-to-slice project (`PREPARED_PROJECT`). |
 | `catalog_health(timeout)` / `request_catalog_rebuild(timeout)` | Catalog readiness (200 → body, 503 → "building" marker) and "rebuild now"; used by `catalog_service` status/rescan. |
-| `arrange(path, …)` / `pack_models(paths, machine_ref=…, process_ref=…, filament_refs=…, bed=…)` | `ARRANGE` / `PACK_MODELS`; project generation checks the flag. |
+| `arrange(path, …)` / `pack_models(items: list[PackItem], machine_ref=…, process_ref=…, filament_refs=…, bed=…)` | `ARRANGE` / `PACK_MODELS`; project generation checks the flag. |
 | `compatible_presets(catalog, machine_preset, kind)` | Default: presets naming the machine in `compatible_printers` (needs a catalog, so it stays here; `default_compatible_presets` is the pure rule). |
 
 Offline **`FormatProvider`** (`providers/format_provider.py`; Laminus: `providers/laminus/format.py`) — local file work, no network, no URL:

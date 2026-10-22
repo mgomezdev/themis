@@ -11,7 +11,7 @@ import pytest
 
 from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate, SettingChange
 from app.services.providers.laminus import LaminusFormatProvider, LaminusSlicingProvider
-from app.services.providers.slicing import SliceSpec, SlicingProviderError, configured_server_url, get_slicing_provider
+from app.services.providers.slicing import PackItem, SliceSpec, SlicingProviderError, configured_server_url, get_slicing_provider
 from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider, make_catalog
 
 URL = "http://laminus.test"
@@ -132,8 +132,8 @@ def test_arrange_and_pack_return_bytes(provider, tmp_path):
     stl = tmp_path / "a.stl"
     stl.write_bytes(b"solid")
     assert provider.arrange(proj) == b"ARRANGED"
-    assert provider.pack_models([stl], machine_ref="m-1", process_ref="p-1", filament_refs=["f-1"]) == b"PACKED"
-    assert provider.pack_models([stl], bed=(220.0, 220.0, 250.0)) == b"PACKED"
+    assert provider.pack_models([PackItem(stl)], machine_ref="m-1", process_ref="p-1", filament_refs=["f-1"]) == b"PACKED"
+    assert provider.pack_models([PackItem(stl, 2)], bed=(220.0, 220.0, 250.0)) == b"PACKED"
 
 
 # ---- Laminus-adapter specifics ----
@@ -195,7 +195,7 @@ def test_laminus_http_errors_map_to_neutral_error(sidecar):
 
 def test_laminus_pack_without_presets_or_bed_is_rejected(sidecar, tmp_path):
     with pytest.raises(SlicingProviderError):
-        LaminusSlicingProvider(URL).pack_models([tmp_path / "a.stl"])
+        LaminusSlicingProvider(URL).pack_models([PackItem(tmp_path / "a.stl")])
 
 
 # ---- accessor ----

@@ -13,26 +13,26 @@ from tests.fake_artifact_store import InMemoryArtifactStore
 from tests.fake_providers import fake_packer
 
 
-def test_the_packer_gets_local_paths_of_each_distinct_stl_once_and_they_are_released():
+def test_the_packer_gets_each_stl_once_with_its_quantity_and_ref_and_they_are_released():
     store = InMemoryArtifactStore()
     store.put("Models/a.stl", io.BytesIO(b"AAA"))
     store.put("Models/b.stl", io.BytesIO(b"BBB"))
     seen = {}
 
-    def pack(paths, **opts):
-        seen["paths"] = list(paths)
-        seen["bytes"] = [Path(p).read_bytes() for p in paths]
+    def pack(items, **opts):
+        seen["items"] = list(items)
+        seen["bytes"] = [Path(i.path).read_bytes() for i in items]
         seen["opts"] = opts
         return b"packed"
 
     slicing = MagicMock()
     slicing.pack_models.side_effect = pack
 
-    out = _pack_stored_models(store, slicing, ["Models/a.stl", "Models/a.stl", "Models/b.stl"], bed=(1.0, 2.0, 3.0))
+    out = _pack_stored_models(store, slicing, [("Models/a.stl", 2, "10"), ("Models/b.stl", 1, "11")], bed=(1.0, 2.0, 3.0))
 
     assert out == b"packed" and seen["opts"] == {"bed": (1.0, 2.0, 3.0)}
-    assert seen["bytes"] == [b"AAA", b"AAA", b"BBB"]                      # quantities repeat the path
-    assert seen["paths"][0] == seen["paths"][1] != seen["paths"][2]       # one materialization per distinct key
+    assert seen["bytes"] == [b"AAA", b"BBB"]                              # one entry per STL, not one per copy
+    assert [(i.quantity, i.ref) for i in seen["items"]] == [(2, "10"), (1, "11")]
     assert len(store.materialized_dirs) == 2
     assert not any(d.exists() for d in store.materialized_dirs)           # released once the packer returned
 
@@ -43,7 +43,7 @@ def test_a_packer_failure_still_releases_the_materialized_stls():
     slicing = MagicMock()
     slicing.pack_models.side_effect = RuntimeError("boom")
     try:
-        _pack_stored_models(store, slicing, ["a.stl"])
+        _pack_stored_models(store, slicing, [("a.stl", 1, "1")])
     except RuntimeError:
         pass
     assert store.materialized_dirs and not any(d.exists() for d in store.materialized_dirs)
@@ -86,8 +86,8 @@ async def test_generate_runs_entirely_on_the_store(client, tmp_path, session_fac
     provider = fake_packer(packed)
     stl_seen = {}
 
-    def pack(paths, **opts):
-        stl_seen["bytes"] = [Path(p).read_bytes() for p in paths]
+    def pack(items, **opts):
+        stl_seen["bytes"] = [Path(i.path).read_bytes() for i in items]
         return packed
 
     provider.pack_models.side_effect = pack
