@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import time
 import logging
 from pathlib import Path
 
 import httpx
+
+from ..slicing import PackItem
 
 logger = logging.getLogger(__name__)
 
@@ -306,36 +309,13 @@ class LaminusSidecarClient:
             raise SidecarError(f"arrange returned {r.status_code}: {_detail(r)}")
         return r.content
 
-    def pack_stls(
-        self,
-        stl_paths: list[Path],
-        bed_x: float,
-        bed_y: float,
-        bed_z: float = 250.0,
-    ) -> bytes:
+    def pack_stls(self, items: list[PackItem], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
         """POST /api/v1/pack → multi-plate arranged 3MF bytes."""
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
-        try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)}
-            try:
-                r = self._client.post("/api/v1/pack", files=files, data=data)
-            except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
-        finally:
-            for _, fh in file_handles:
-                fh.close()
-
-        if r.status_code != 200:
-            raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
-        return r.content
+        return self._pack(items, {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)})
 
     def pack_stls_by_uuid(
         self,
-        stl_paths: list[Path],
+        items: list[PackItem],
         machine_uuid: str,
         process_uuid: str,
         filament_uuids: list[str],
@@ -345,24 +325,26 @@ class LaminusSidecarClient:
         The sidecar resolves bed dimensions and profile settings from the given
         UUIDs, so no bed_x/bed_y is needed.
         """
-        import json as _json
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
+        return self._pack(items, {
+            "machine_uuid": machine_uuid,
+            "process_uuid": process_uuid,
+            "filament_uuids": json.dumps(filament_uuids),
+        })
+
+    def _pack(self, items: list[PackItem], data: dict[str, str]) -> bytes:
+        """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
+        filename and needs them unique, so a `ref` prefixes the name (same-named models stay distinct)."""
+        names = [f"{it.ref}_{it.path.name}" if it.ref else it.path.name for it in items]
+        data = {**data, "items": json.dumps([{"file": n, "quantity": it.quantity} for n, it in zip(names, items)])}
+        handles = [open(it.path, "rb") for it in items]
         try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {
-                "machine_uuid": machine_uuid,
-                "process_uuid": process_uuid,
-                "filament_uuids": _json.dumps(filament_uuids),
-            }
+            files = [("files", (n, fh, "application/octet-stream")) for n, fh in zip(names, handles)]
             try:
                 r = self._client.post("/api/v1/pack", files=files, data=data)
             except httpx.HTTPError as e:
                 raise SidecarError(f"pack request failed: {e}") from e
         finally:
-            for _, fh in file_handles:
+            for fh in handles:
                 fh.close()
 
         if r.status_code != 200:
