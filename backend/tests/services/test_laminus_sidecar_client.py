@@ -179,7 +179,7 @@ def test_pack_upload_names_drop_characters_the_sidecar_cannot_match(tmp_path):
     import json, re
     from app.services.providers.laminus.sidecar_client import _UNSAFE_UPLOAD_CHARS
     # quotes can't be Windows filenames, so the sanitizer is checked directly with one
-    assert _UNSAFE_UPLOAD_CHARS.sub("_", "a" + chr(34) + "b;c" + chr(10) + "d" + chr(13) + "e" + chr(0) + "f") == "a_b_c_d_e_f"
+    assert _UNSAFE_UPLOAD_CHARS.sub("_", "a" + chr(34) + "b;c" + chr(10) + "d" + chr(13) + "e" + chr(0) + "f" + chr(9) + "g" + chr(127) + "h") == "a_b_c_d_e_f_g_h"
     stl = tmp_path / "my; part.stl"
     stl.write_bytes(b"solid x\nendsolid x\n")
     seen = {}

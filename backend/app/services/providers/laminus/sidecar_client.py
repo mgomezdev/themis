@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT_S = 630.0  # seconds — slightly over sidecar's 600 s slice timeout
 DEFAULT_POLL_TIMEOUT_S = 620.0
 PROFILES_PAGE_SIZE = 200  # v1 max page size
-# Characters the sidecar rejects in an upload filename, plus `"` (escaped in the multipart header, so it would no longer match its `items` entry).
-_UNSAFE_UPLOAD_CHARS = re.compile(r'["\r\n;\x00]')
+# Characters that break a pack upload name: `;` is rejected by the sidecar; `"` and control characters are percent-encoded by httpx in
+# the multipart header and the sidecar doesn't decode them, so the name would no longer match its `items` entry.
+_UNSAFE_UPLOAD_CHARS = re.compile(r'[";\x00-\x1f\x7f]')
 
 
 def _detail(r: httpx.Response, limit: int = 300) -> str:
