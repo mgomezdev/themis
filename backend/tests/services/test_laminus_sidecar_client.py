@@ -150,7 +150,7 @@ def test_pack_stls_returns_bytes(tmp_path):
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
-    result = c.pack_stls([PackItem(stl1), PackItem(stl2)], bed_x=220.0, bed_y=220.0)
+    result = c.pack_stls([PackItem(stl1, 1, "1"), PackItem(stl2, 1, "2")], bed_x=220.0, bed_y=220.0)
     assert result == packed
 
 
@@ -184,7 +184,7 @@ def test_pack_stls_raises_on_error(tmp_path):
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
-        c.pack_stls([PackItem(stl)], bed_x=100.0, bed_y=100.0)
+        c.pack_stls([PackItem(stl, 1, "1")], bed_x=100.0, bed_y=100.0)
 
 
 # ── v1 contract ────────────────────────────────────────────────────────────────

@@ -333,8 +333,8 @@ class LaminusSidecarClient:
 
     def _pack(self, items: list[PackItem], data: dict[str, str]) -> bytes:
         """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
-        filename and needs them unique, so a `ref` prefixes the name (same-named models stay distinct)."""
-        names = [f"{it.ref}_{it.path.name}" if it.ref else it.path.name for it in items]
+        filename and needs them unique, so the item's `ref` prefixes the name (same-named models stay distinct)."""
+        names = [f"{it.ref}_{it.path.name}" for it in items]
         data = {**data, "items": json.dumps([{"file": n, "quantity": it.quantity} for n, it in zip(names, items)])}
         handles = [open(it.path, "rb") for it in items]
         try:
