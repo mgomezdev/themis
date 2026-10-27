@@ -1315,8 +1315,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             await refresh_content_hash(f, library)
             group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
         group_keys[key] = list(wanted.values())
-    pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
-                 if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
+    pack_mode = {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}
 
     # Clean up legacy single-result file unless an active job holds it
     if proj.result_file_id is not None:
@@ -1364,17 +1363,11 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                                   pack_content_hash=reused.content_hash)
         else:
             try:
-                if proj.machine_uuid and proj.process_uuid:
-                    # Legacy path: project has OrcaSlicer profiles embedded
-                    packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_wanted,
-                        machine_ref=proj.machine_uuid, process_ref=proj.process_uuid, filament_refs=[],
-                    )
-                else:
-                    # Geometry-only pack; slicing profiles applied at dispatch time
-                    packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_wanted, bed=(pack_bed_x, pack_bed_y, 250.0),
-                    )
+                # Geometry-only pack, whatever presets the project carries: slicing profiles are applied at dispatch time
+                # (and the sidecar's preset-UUID pack needs filament UUIDs Themis doesn't have at this point).
+                packed_bytes = await asyncio.to_thread(
+                    _pack_stored_models, library, slicing, stl_wanted, bed=(pack_bed_x, pack_bed_y, 250.0),
+                )
             except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
                 raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
             except SlicingProviderError as exc:

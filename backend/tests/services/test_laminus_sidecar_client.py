@@ -150,7 +150,7 @@ def test_pack_stls_returns_bytes(tmp_path):
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
-    result = c.pack_stls([PackItem(stl1), PackItem(stl2)], bed_x=220.0, bed_y=220.0)
+    result = c.pack_stls([PackItem(stl1, 1, "1"), PackItem(stl2, 1, "2")], bed_x=220.0, bed_y=220.0)
     assert result == packed
 
 
@@ -175,6 +175,27 @@ def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
     assert seen["items"] == [{"file": "7_bracket.stl", "quantity": 5}, {"file": "9_bracket.stl", "quantity": 1}]
 
 
+def test_pack_upload_names_drop_characters_the_sidecar_cannot_match(tmp_path):
+    import json, re
+    from app.services.providers.laminus.sidecar_client import _UNSAFE_UPLOAD_CHARS
+    # quotes can't be Windows filenames, so the sanitizer is checked directly with one
+    assert _UNSAFE_UPLOAD_CHARS.sub("_", "a" + chr(34) + "b;c" + chr(10) + "d" + chr(13) + "e" + chr(0) + "f" + chr(9) + "g" + chr(127) + "h") == "a_b_c_d_e_f_g_h"
+    stl = tmp_path / "my; part.stl"
+    stl.write_bytes(b"solid x\nendsolid x\n")
+    seen = {}
+
+    def handler(req):
+        body = req.content.decode("latin-1")
+        seen["names"] = re.findall(r'name="files"; filename="([^"]+)"', body)
+        seen["items"] = json.loads(re.search(r'name="items"\r\n\r\n(.*?)\r\n--', body, re.S).group(1))
+        return httpx.Response(200, content=b"PACKED")
+
+    c = _client(httpx.MockTransport(handler))
+    assert c.pack_stls([PackItem(stl, 2, "4")], bed_x=100.0, bed_y=100.0) == b"PACKED"
+    assert seen["names"] == ["4_my_ part.stl"]
+    assert seen["items"] == [{"file": "4_my_ part.stl", "quantity": 2}]   # same sanitized name on the wire and in items
+
+
 def test_pack_stls_raises_on_error(tmp_path):
     stl = tmp_path / "a.stl"
     stl.write_bytes(b"solid a\nendsolid a\n")
@@ -184,7 +205,7 @@ def test_pack_stls_raises_on_error(tmp_path):
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
-        c.pack_stls([PackItem(stl)], bed_x=100.0, bed_y=100.0)
+        c.pack_stls([PackItem(stl, 1, "1")], bed_x=100.0, bed_y=100.0)
 
 
 # ── v1 contract ────────────────────────────────────────────────────────────────

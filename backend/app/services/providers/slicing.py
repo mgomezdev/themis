@@ -27,11 +27,11 @@ class SlicingProviderNotReady(SlicingProviderError):
 
 @dataclass(frozen=True)
 class PackItem:
-    """One loose model to pack: `quantity` copies of the STL at `path`. `ref` is a caller-stable unique id for it (Themis: the
+    """One loose model to pack: `quantity` copies of the STL at `path`. `ref` (required) is a caller-stable id, unique within one pack call, (Themis: the
     library file id); a provider uses it to tell same-named models apart."""
     path: Path
-    quantity: int = 1
-    ref: str = ""
+    quantity: int
+    ref: str
 
 
 @dataclass
