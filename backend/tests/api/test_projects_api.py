@@ -568,6 +568,23 @@ async def test_generate_packs_each_library_file_once_with_its_summed_quantity_an
     assert [(i.quantity, i.ref) for i in call] == [(4, str(file_id))]
 
 
+async def test_generate_packs_by_bed_size_even_when_the_project_carries_preset_uuids(client, tmp_path, session_factory):
+    """The sidecar rejects UUID-mode packs without filament UUIDs, and Themis applies profiles at dispatch: always pack by bed."""
+    from app.models import Project
+    from tests.fake_providers import fake_packer
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    async with session_factory() as s:
+        proj = await s.get(Project, project_id)
+        proj.machine_uuid, proj.process_uuid = "machine-1", "process-1"
+        await s.commit()
+    provider = fake_packer(_make_3mf_bytes(plate_count=1))
+    resp = await _generate_with(client, tmp_path, provider, project_id)
+    assert resp.status_code == 200, resp.text
+    (call,) = provider.pack_models.call_args_list
+    assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}
+
+
 async def test_generate_maps_provider_pack_failures_to_502_and_timeouts_to_504(client, tmp_path):
     from app.services.providers.slicing import SlicingProviderError
     from tests.fake_providers import FakeSlicingProvider
