@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import logging
 from pathlib import Path
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT_S = 630.0  # seconds — slightly over sidecar's 600 s slice timeout
 DEFAULT_POLL_TIMEOUT_S = 620.0
 PROFILES_PAGE_SIZE = 200  # v1 max page size
+# Characters the sidecar rejects in an upload filename, plus `"` (escaped in the multipart header, so it would no longer match its `items` entry).
+_UNSAFE_UPLOAD_CHARS = re.compile(r'["\r\n;\x00]')
 
 
 def _detail(r: httpx.Response, limit: int = 300) -> str:
@@ -334,7 +337,7 @@ class LaminusSidecarClient:
     def _pack(self, items: list[PackItem], data: dict[str, str]) -> bytes:
         """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
         filename and needs them unique, so the item's `ref` prefixes the name (same-named models stay distinct)."""
-        names = [f"{it.ref}_{it.path.name}" for it in items]
+        names = [_UNSAFE_UPLOAD_CHARS.sub("_", f"{it.ref}_{it.path.name}") for it in items]
         data = {**data, "items": json.dumps([{"file": n, "quantity": it.quantity} for n, it in zip(names, items)])}
         handles = [open(it.path, "rb") for it in items]
         try:
