@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from ..slicing import PackItem
+from ..contract import ConstructInput
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,14 @@ class SidecarError(Exception):
 
 class SidecarNotReady(SidecarError):
     """The sidecar answered /api/v1/health with a non-200 (still starting or building its catalog)."""
+
+
+class SidecarTimeout(SidecarError):
+    """The request (or the sidecar's own work) ran out of time."""
+
+
+class SidecarUnreachable(SidecarError):
+    """No answer: connection refused/reset or another transport failure."""
 
 
 class LaminusSidecarClient:
@@ -281,61 +289,11 @@ class LaminusSidecarClient:
             raise SidecarError(f"profiles/merged-config returned {r.status_code}: {_detail(r)}")
         return r.json()
 
-    def arrange(
-        self,
-        threemf_path: Path,
-        arrange: bool = True,
-        orient: bool = True,
-        timeout: float = 130.0,
-    ) -> bytes:
-        """POST /api/v1/arrange → arranged multi-plate 3MF bytes.
-
-        Sends a pre-built 3MF (with model_settings.config extruder assignments) to
-        the sidecar for plate arrangement and returns the rearranged 3MF bytes.
-        Raises SidecarError on failure or timeout.
-        """
-        try:
-            with open(threemf_path, "rb") as fh:
-                r = self._client.post(
-                    "/api/v1/arrange",
-                    files={"file": (threemf_path.name, fh, "application/octet-stream")},
-                    data={
-                        "arrange": "1" if arrange else "0",
-                        "orient": "1" if orient else "0",
-                    },
-                    timeout=timeout,
-                )
-        except httpx.HTTPError as e:
-            raise SidecarError(f"arrange request failed: {e}") from e
-        if r.status_code == 408:
-            raise SidecarError("arrange timed out on sidecar")
-        if r.status_code != 200:
-            raise SidecarError(f"arrange returned {r.status_code}: {_detail(r)}")
-        return r.content
-
-    def pack_stls(self, items: list[PackItem], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
-        """POST /api/v1/pack → multi-plate arranged 3MF bytes."""
+    def pack_stls(self, items: list[ConstructInput], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
+        """POST /api/v1/pack by bed size -> multi-plate arranged 3MF bytes. STL uploads only (the sidecar rejects others)."""
         return self._pack(items, {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)})
 
-    def pack_stls_by_uuid(
-        self,
-        items: list[PackItem],
-        machine_uuid: str,
-        process_uuid: str,
-        filament_uuids: list[str],
-    ) -> bytes:
-        """POST /api/v1/pack (UUID mode) → multi-plate 3MF bytes with embedded settings.
-
-        The sidecar resolves bed dimensions and profile settings from the given
-        UUIDs, so no bed_x/bed_y is needed.
-        """
-        return self._pack(items, {
-            "machine_uuid": machine_uuid,
-            "process_uuid": process_uuid,
-            "filament_uuids": json.dumps(filament_uuids),
-        })
-
-    def _pack(self, items: list[PackItem], data: dict[str, str]) -> bytes:
+    def _pack(self, items: list[ConstructInput], data: dict[str, str]) -> bytes:
         """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
         filename and needs them unique, so the item's `ref` prefixes the name (same-named models stay distinct)."""
         names = [_UNSAFE_UPLOAD_CHARS.sub("_", f"{it.ref}_{it.path.name}") for it in items]
@@ -345,12 +303,18 @@ class LaminusSidecarClient:
             files = [("files", (n, fh, "application/octet-stream")) for n, fh in zip(names, handles)]
             try:
                 r = self._client.post("/api/v1/pack", files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"pack timed out: {e}") from e
             except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
+                raise SidecarUnreachable(f"pack request failed: {e}") from e
         finally:
             for fh in handles:
                 fh.close()
 
+        if r.status_code == 408:
+            raise SidecarTimeout("pack timed out on the sidecar")
+        if r.status_code == 503:
+            raise SidecarNotReady(f"pack returned 503: {_detail(r)}")
         if r.status_code != 200:
             raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
         return r.content

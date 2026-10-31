@@ -25,15 +25,6 @@ class SlicingProviderNotReady(SlicingProviderError):
     """The provider answered but says it can't slice yet (e.g. still starting / building its catalog)."""
 
 
-@dataclass(frozen=True)
-class PackItem:
-    """One loose model to pack: `quantity` copies of the STL at `path`. `ref` (required) is a caller-stable id, unique within one pack call, (Themis: the
-    library file id); a provider uses it to tell same-named models apart."""
-    path: Path
-    quantity: int
-    ref: str
-
-
 @dataclass
 class Preset:
     ref: str
@@ -111,8 +102,6 @@ def default_compatible_presets(catalog: Catalog, machine_preset: str, kind: str)
 
 
 class SlicingProvider(ABC):
-    ARRANGE: ClassVar[bool] = False
-    PACK_MODELS: ClassVar[bool] = False
     PREPARED_PROJECT: ClassVar[bool] = False
     TOOL_MAPPING: ClassVar[bool] = False       # can route a 3MF's filaments to physical tool heads (apply_tool_mapping)
     SUGGEST_PROFILES: ClassVar[bool] = False   # can suggest machine profiles / nozzle variants for a printer model (BIZ-294)
@@ -166,17 +155,6 @@ class SlicingProvider(ABC):
         """Presets of `kind` ("process" | "filament") usable with `machine_preset`. Default: the preset names the
         machine in its `compatible_printers`; a provider with richer rules overrides this."""
         return default_compatible_presets(catalog, machine_preset, kind)
-
-    def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
-        raise NotImplementedError("provider does not support ARRANGE")
-
-    def pack_models(
-        self, items: list[PackItem], *, machine_ref: str | None = None, process_ref: str | None = None,
-        filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
-    ) -> bytes:
-        """Arrange loose models (each `PackItem` = one STL x quantity) into a multi-plate project: by presets (machine/process/filaments refs)
-        or, without presets, by explicit bed dimensions (x, y, z)."""
-        raise NotImplementedError("provider does not support PACK_MODELS")
 
 
 # The slicing provider is whichever plugin the host resolves for the `gcode.produce` capability (BIZ-290): core names none. The plugin

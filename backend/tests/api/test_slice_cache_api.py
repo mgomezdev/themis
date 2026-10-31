@@ -216,7 +216,7 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(packed)
         resp = await client.post(f"/api/v1/projects/{project_id}/generate",
@@ -430,12 +430,12 @@ async def _generate(client, tmp_path, project_id, body):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], **body})
     assert resp.status_code == 200, resp.text
-    return resp.json(), mock_get.return_value.pack_models
+    return resp.json(), mock_get.return_value.construct
 
 
 async def test_regenerating_an_identical_project_reuses_its_pack(client, tmp_path, session_factory, caplog):

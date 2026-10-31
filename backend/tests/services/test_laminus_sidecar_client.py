@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
-from app.services.providers.slicing import PackItem
+from app.services.providers.contract import ConstructInput as PackItem
 
 
 def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:
@@ -170,7 +170,7 @@ def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
         return httpx.Response(200, content=b"PACKED")
 
     c = _client(httpx.MockTransport(handler))
-    assert c.pack_stls_by_uuid([PackItem(a1, 5, "7"), PackItem(a2, 1, "9")], "m", "p", []) == b"PACKED"
+    assert c.pack_stls([PackItem(a1, 5, "7"), PackItem(a2, 1, "9")], 220.0, 220.0) == b"PACKED"
     assert seen["names"] == ["7_bracket.stl", "9_bracket.stl"]            # 5 copies, but one upload each; names unique
     assert seen["items"] == [{"file": "7_bracket.stl", "quantity": 5}, {"file": "9_bracket.stl", "quantity": 1}]
 

@@ -140,7 +140,7 @@ async def test_generate_stores_3mf_in_job_pack_folder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -176,7 +176,7 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -208,7 +208,7 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -243,7 +243,7 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -274,7 +274,7 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -325,7 +325,7 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -528,7 +528,7 @@ async def test_generate_with_model_uuids_creates_model_targets_and_configs(
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
         resp = await client.post(
@@ -549,13 +549,13 @@ async def _generate_with(client, tmp_path, provider, project_id):
     lib = tmp_path / "library"
     with (
         patch("app.config.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
+        patch("app.api.routes.projects.get_project_constructor", return_value=provider),
     ):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
 
 
 async def test_generate_packs_each_library_file_once_with_its_summed_quantity_and_id(client, tmp_path):
-    """One PackItem per library file (quantity = sum over its project items, ref = the file id), not one path per copy."""
+    """One input per library file (quantity = sum over its project items, ref = the file id), not one path per copy."""
     from tests.fake_providers import fake_packer
 
     project_id, file_id = await _setup_project_with_stl(client, tmp_path)
@@ -564,13 +564,14 @@ async def test_generate_packs_each_library_file_once_with_its_summed_quantity_an
     provider = fake_packer(_make_3mf_bytes(plate_count=1))
     resp = await _generate_with(client, tmp_path, provider, project_id)
     assert resp.status_code == 200, resp.text
-    ((call,),) = [c.args for c in provider.pack_models.call_args_list]
-    assert [(i.quantity, i.ref) for i in call] == [(4, str(file_id))]
+    (req,) = provider.calls
+    assert [(i.quantity, i.ref) for i in req.inputs] == [(4, str(file_id))]
 
 
-async def test_generate_packs_by_bed_size_even_when_the_project_carries_preset_uuids(client, tmp_path, session_factory):
-    """The sidecar rejects UUID-mode packs without filament UUIDs, and Themis applies profiles at dispatch: always pack by bed."""
+async def test_generate_targets_the_bed_only_even_when_the_project_carries_preset_uuids(client, tmp_path, session_factory):
+    """Themis applies profiles at dispatch: the project is always built for a bed size, never for presets."""
     from app.models import Project
+    from app.services.providers.contract import TargetPrinter
     from tests.fake_providers import fake_packer
 
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
@@ -581,49 +582,78 @@ async def test_generate_packs_by_bed_size_even_when_the_project_carries_preset_u
     provider = fake_packer(_make_3mf_bytes(plate_count=1))
     resp = await _generate_with(client, tmp_path, provider, project_id)
     assert resp.status_code == 200, resp.text
-    (call,) = provider.pack_models.call_args_list
-    assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}
+    (req,) = provider.calls
+    assert req.target == TargetPrinter((256.0, 256.0, 250.0), None)   # no eligible printers: default bed, Laminus default z
 
 
-async def test_generate_maps_provider_pack_failures_to_502_and_timeouts_to_504(client, tmp_path):
-    from app.services.providers.slicing import SlicingProviderError
-    from tests.fake_providers import FakeSlicingProvider
-
-    project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    failing = FakeSlicingProvider()
-    failing.fail_on["pack_models"] = SlicingProviderError("pack returned 500: boom")
-    resp = await _generate_with(client, tmp_path, failing, project_id)
-    assert (resp.status_code, resp.json()["detail"]) == (502, "Orca sidecar error during generation: pack returned 500: boom")
-
-    failing.fail_on["pack_models"] = SlicingProviderError("arrange timed out on sidecar")
-    resp = await _generate_with(client, tmp_path, failing, project_id)
-    assert (resp.status_code, resp.json()["detail"]) == (504, "Generation timed out — try fewer parts or reduce quantities")
-
-
-async def test_generate_422_without_a_provider_or_without_the_pack_capability(client, tmp_path):
-    from tests.fake_providers import FakeSlicingProvider
-
-    project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    none = await _generate_with(client, tmp_path, None, project_id)
-    assert (none.status_code, none.json()["detail"]) == (
-        422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
-
-    incapable = FakeSlicingProvider()
-    incapable.PACK_MODELS = False
-    resp = await _generate_with(client, tmp_path, incapable, project_id)
-    assert resp.status_code == 422 and "cannot pack models" in resp.json()["detail"]
-    assert incapable.calls == []
-
-
-async def test_generate_packs_by_bed_size_when_the_project_has_no_presets(client, tmp_path):
+async def test_generate_targets_the_smallest_eligible_bed_and_the_model_they_share(client, tmp_path, session_factory, create_printer):
+    from app.models import Printer
     from tests.fake_providers import fake_packer
 
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    provider = fake_packer(_make_3mf_bytes(plate_count=1))
-    resp = await _generate_with(client, tmp_path, provider, project_id)
-    assert resp.status_code == 200, resp.text
-    (call,) = provider.pack_models.call_args_list
-    assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}   # no eligible printers → default bed, Laminus default z
+    ids = [await create_printer(name="A"), await create_printer(name="B")]
+    async with session_factory() as s:
+        for pid, (bx, by) in zip(ids, ((300.0, 200.0), (250.0, 320.0))):
+            p = await s.get(Printer, pid)
+            p.bed_x_mm, p.bed_y_mm, p.model_uuid = bx, by, "model-a"
+        await s.commit()
+
+    async def target_for(printer_ids):
+        provider = fake_packer(_make_3mf_bytes(plate_count=1))
+        with patch("app.config.get_library_dir", return_value=tmp_path / "library"),              patch("app.api.routes.projects.get_project_constructor", return_value=provider):
+            resp = await client.post(f"/api/v1/projects/{project_id}/generate",
+                                     json={"eligible_printer_ids": printer_ids, "allow_cached": False})
+        assert resp.status_code == 200, resp.text
+        return provider.calls[0].target
+
+    t = await target_for(ids)
+    assert (t.bed_mm, t.model_uuid) == ((250.0, 200.0, 250.0), "model-a")
+    async with session_factory() as s:
+        (await s.get(Printer, ids[1])).model_uuid = "model-b"
+        await s.commit()
+    assert (await target_for(ids)).model_uuid is None                # two models: a bed-only target
+
+
+@pytest.mark.parametrize("code, status, detail", [
+    ("timeout", 504, "Generation timed out — try fewer parts or reduce quantities"),
+    ("failed", 502, "Project builder error during generation: failed: pack returned 500: boom"),
+    ("unreachable", 502, "Project builder error during generation: unreachable: pack returned 500: boom"),
+    ("unsupported_input", 422, "The project builder cannot build this project: unsupported_input: pack returned 500: boom"),
+])
+async def test_generate_maps_constructor_errors_to_http(client, tmp_path, session_factory, code, status, detail):
+    from sqlalchemy import select
+    from app.models import Job, UploadedFile
+    from app.services.providers.contract import ErrorCode, ProviderError
+    from tests.fake_providers import FakeProjectConstructor
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    failing = FakeProjectConstructor(outputs=[ProviderError(ErrorCode(code), "pack returned 500: boom")])
+    resp = await _generate_with(client, tmp_path, failing, project_id)
+    assert (resp.status_code, resp.json()["detail"]) == (status, detail)
+    async with session_factory() as s:
+        assert (await s.execute(select(Job))).first() is None
+        assert (await s.execute(select(UploadedFile).where(UploadedFile.pack_recipe_hash.is_not(None)))).first() is None
+
+
+async def test_generate_422_without_a_project_builder(client, tmp_path):
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    none = await _generate_with(client, tmp_path, None, project_id)
+    assert (none.status_code, none.json()["detail"]) == (
+        422, "No project builder is configured — set up the plugin that provides 3mf.construct (Settings -> Plugins); "
+             "it is required for generation")
+
+
+@pytest.mark.parametrize("state", ["not_ready", "unreachable"])
+async def test_generate_503_and_builds_nothing_while_the_project_builder_is_not_ready(client, tmp_path, state):
+    from app.services.providers.contract import Readiness
+    from tests.fake_providers import FakeProjectConstructor
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    down = FakeProjectConstructor(Readiness(state), status_detail="health check returned 503")
+    resp = await _generate_with(client, tmp_path, down, project_id)
+    assert (resp.status_code, resp.json()["detail"]) == (503, "The project builder is unavailable: health check returned 503")
+    assert down.status_calls == 1 and down.calls == []
+    assert (await client.get(f"/api/v1/projects/{project_id}/jobs")).json() == []
 
 
 async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client, tmp_path):
@@ -634,7 +664,7 @@ async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client,
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
         patch("subprocess.run", side_effect=boom), patch("subprocess.Popen", side_effect=boom),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))

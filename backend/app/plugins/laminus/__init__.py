@@ -12,7 +12,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=LaminusSettings,
     factory=LaminusConnection,
-    provides={"gcode.produce": Provide(version=1)},
+    provides={"gcode.produce": Provide(version=1), "3mf.construct": Provide(version=1)},
     default_enabled=True,
     ui=UiContribution(mode="page", nav_label="Laminus", nav_placement="settings", connection_status=True,
                       tabs=(UiTab("connection", "Connection", "default"),)),

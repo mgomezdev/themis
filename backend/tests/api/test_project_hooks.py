@@ -140,7 +140,7 @@ async def _generate(client, tmp_path, project_id, headers=None, body=None):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.get_project_constructor") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
         return await client.post(f"/api/v1/projects/{project_id}/generate", json=body or {"eligible_printer_ids": []}, headers=headers or {})
@@ -173,7 +173,7 @@ async def test_generate_with_a_different_key_or_body_is_a_new_operation_and_a_ch
 async def test_a_failed_generate_releases_its_key_so_the_retry_runs(client, tmp_path, session_factory):
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     h = {"Idempotency-Key": "gen-fail"}
-    with patch("app.api.routes.projects.get_slicing_provider", return_value=None):
+    with patch("app.api.routes.projects.get_project_constructor", return_value=None):
         failed = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], "allow_cached": False}, headers=h)
     assert failed.status_code == 422
 
@@ -273,13 +273,13 @@ async def test_a_disabled_destination_gets_no_project_events(client, session_fac
 # --- partial failures, races, payload shape ---------------------------------------------------------------------------
 
 async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_under_the_same_key(client, tmp_path, session_factory):
-    from app.services.providers.slicing import SlicingProviderError
+    from app.services.providers.contract import ErrorCode, ProviderError
     project_id, file_id = await _setup_project_with_stl(client, tmp_path)
     await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_subtype": "any"})
     h = {"Idempotency-Key": "gen-partial"}
     lib = tmp_path / "library"
     packer = fake_packer(_make_3mf_bytes(plate_count=1))
-    packer.pack_models.side_effect = [_make_3mf_bytes(plate_count=1), SlicingProviderError("sidecar fell over")]   # 2nd filament group fails
+    packer.outputs = [_make_3mf_bytes(plate_count=1), ProviderError(ErrorCode.FAILED, "sidecar fell over")]   # 2nd filament group fails
 
     def post():
         return client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], "allow_cached": False}, headers=h)
@@ -287,7 +287,7 @@ async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_u
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider", return_value=packer),
+        patch("app.api.routes.projects.get_project_constructor", return_value=packer),
     ):
         failed = await post()
         retry = await post()
@@ -296,7 +296,7 @@ async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_u
     assert await _count(session_factory, Job) == 1                              # the first group's job was committed
     assert retry.status_code == 409 and "created 1 job" in retry.json()["detail"] and "new Idempotency-Key" in retry.json()["detail"]
     assert await _count(session_factory, Job) == 1                              # and the retry did not repeat it
-    assert packer.pack_models.call_count == 2
+    assert packer.construct.call_count == 2
 
 
 async def test_a_create_that_fails_after_committing_blocks_a_retry_under_the_same_key(client, session_factory, monkeypatch):

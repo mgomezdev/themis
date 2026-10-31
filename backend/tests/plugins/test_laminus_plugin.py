@@ -24,8 +24,22 @@ def _no_env(monkeypatch):
 async def test_the_plugin_is_bundled_and_listed(client):
     (p,) = [p for p in (await client.get("/api/v1/plugins")).json()["plugins"] if p["id"] == "laminus"]
     assert (p["source"], p["enabled"]) == ("bundled", True)
-    assert [(c["capability"], c["mode"]) for c in p["provides"]] == [("gcode.produce", "choose_one")]
+    assert sorted((c["capability"], c["mode"]) for c in p["provides"]) == [("3mf.construct", "exclusive"), ("gcode.produce", "choose_one")]
     assert "url" in (await client.get("/api/v1/plugins/laminus")).json()["settings_schema"]["properties"]
+
+
+async def test_the_project_constructor_is_the_active_3mf_construct_provider(client):
+    """BIZ-296: core reaches the constructor only through the host's active `3mf.construct` provider."""
+    from app.services.providers.construction import get_project_constructor
+    from app.services.providers.laminus.constructor import LaminusProjectConstructor
+
+    assert get_project_constructor() is None                          # bundled and selected, but no URL yet
+    await client.put("/api/v1/plugins/laminus", json={"settings": {"url": SAVED_URL}})
+    assert plugin_host.selected("3mf.construct") == "laminus"
+    built = get_project_constructor()
+    assert isinstance(built, LaminusProjectConstructor) and built._url == SAVED_URL
+    await client.put("/api/v1/plugins/laminus", json={"enabled": False})
+    assert get_project_constructor() is None
 
 
 async def test_unconfigured_without_saved_url_or_env(client):

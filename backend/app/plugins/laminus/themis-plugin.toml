@@ -1,7 +1,7 @@
 id = "laminus"
 name = "Laminus"
 version = "1.0.0"
-provides = ["gcode.produce@1"]
+provides = ["gcode.produce@1", "3mf.construct@1"]
 host_api = 1
 entry = "app.plugins.laminus:MANIFEST"
 publisher = "Themis"

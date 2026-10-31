@@ -90,6 +90,14 @@ class LaminusConnection:
         from .producer import LaminusGcodeProducer
         return LaminusGcodeProducer(slicing, version=PLUGIN_VERSION)
 
+    def project_constructor(self, url: str | None = None):
+        """The neutral `ProjectConstructor` (`3mf.construct`, BIZ-296) for `url` (default: the configured one); None while unconfigured."""
+        url = url or self.url
+        if not url:
+            return None
+        from .constructor import LaminusProjectConstructor
+        return LaminusProjectConstructor(url, version=PLUGIN_VERSION, request_timeout_s=self.request_timeout_s)
+
     async def test_connection(self) -> dict:
         if not self.url:
             raise NotConfigured("Not configured: set the Laminus service URL.")
