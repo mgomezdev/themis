@@ -2,51 +2,85 @@
 import hashlib
 import io
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.api.routes.projects import _pack_stored_models, _stored_plate_nums
+from app.api.routes.projects import _construct_in_thread, _construct_stored_models, _stored_plate_nums
+from app.services.providers import contract as c
 from app.models import UploadedFile
 from tests.api.test_projects_api import _make_3mf_bytes, _make_stl_bytes, _setup_project_with_stl
 from tests.fake_artifact_store import InMemoryArtifactStore
-from tests.fake_providers import fake_packer
+from tests.fake_providers import FakeProjectConstructor, fake_packer
 
 
-def test_the_packer_gets_each_stl_once_with_its_quantity_and_ref_and_they_are_released():
+TARGET = c.TargetPrinter((1.0, 2.0, 3.0))
+
+
+class _Reading(FakeProjectConstructor):
+    """Reads each input while it is materialized and remembers the output folder."""
+
+    def construct(self, request, output_dir, **kw):
+        self.read = [Path(i.path).read_bytes() for i in request.inputs]
+        self.output_dir, self.kw = output_dir, kw
+        return super().construct(request, output_dir, **kw)
+
+
+def test_the_constructor_gets_each_stl_once_with_its_quantity_and_ref_and_everything_is_released():
     store = InMemoryArtifactStore()
     store.put("Models/a.stl", io.BytesIO(b"AAA"))
     store.put("Models/b.stl", io.BytesIO(b"BBB"))
-    seen = {}
+    ctor, token = _Reading(output=b"packed"), c.CancelToken()
 
-    def pack(items, **opts):
-        seen["items"] = list(items)
-        seen["bytes"] = [Path(i.path).read_bytes() for i in items]
-        seen["opts"] = opts
-        return b"packed"
+    out = _construct_stored_models(store, ctor, [("Models/a.stl", 2, "10"), ("Models/b.stl", 1, "11")], TARGET, token)
 
-    slicing = MagicMock()
-    slicing.pack_models.side_effect = pack
-
-    out = _pack_stored_models(store, slicing, [("Models/a.stl", 2, "10"), ("Models/b.stl", 1, "11")], bed=(1.0, 2.0, 3.0))
-
-    assert out == b"packed" and seen["opts"] == {"bed": (1.0, 2.0, 3.0)}
-    assert seen["bytes"] == [b"AAA", b"BBB"]                              # one entry per STL, not one per copy
-    assert [(i.quantity, i.ref) for i in seen["items"]] == [(2, "10"), (1, "11")]
+    assert out == b"packed"
+    (req,) = ctor.calls
+    assert req.target == TARGET and ctor.kw == {"cancel": token}
+    assert ctor.read == [b"AAA", b"BBB"]                                  # one entry per STL, not one per copy
+    assert [(i.quantity, i.ref) for i in req.inputs] == [(2, "10"), (1, "11")]
     assert len(store.materialized_dirs) == 2
-    assert not any(d.exists() for d in store.materialized_dirs)           # released once the packer returned
+    assert not any(d.exists() for d in store.materialized_dirs)           # released once the constructor returned
+    assert not ctor.output_dir.exists()                                   # and so is its scratch output folder
 
 
-def test_a_packer_failure_still_releases_the_materialized_stls():
+def test_a_constructor_failure_still_releases_the_materialized_stls():
     store = InMemoryArtifactStore()
     store.put("a.stl", io.BytesIO(b"AAA"))
-    slicing = MagicMock()
-    slicing.pack_models.side_effect = RuntimeError("boom")
+    ctor = FakeProjectConstructor(outputs=[c.ProviderError(c.ErrorCode.FAILED, "boom")])
     try:
-        _pack_stored_models(store, slicing, [("a.stl", 1, "1")])
-    except RuntimeError:
+        _construct_stored_models(store, ctor, [("a.stl", 1, "1")], TARGET)
+    except c.ProviderError:
         pass
     assert store.materialized_dirs and not any(d.exists() for d in store.materialized_dirs)
+
+
+async def test_cancelling_the_request_tells_the_running_constructor_to_stop():
+    """The worker thread outlives a cancelled request, so the cancel token is what stops the provider (and drops its result)."""
+    import asyncio
+    import threading
+
+    store = InMemoryArtifactStore()
+    store.put("a.stl", io.BytesIO(b"AAA"))
+    entered, release, seen = threading.Event(), threading.Event(), {}
+
+    class _Blocking(FakeProjectConstructor):
+        def construct(self, request, output_dir, *, cancel=None, **kw):
+            seen["token"] = cancel
+            entered.set()
+            release.wait(5)
+            return super().construct(request, output_dir, cancel=cancel, **kw)
+
+    task = asyncio.create_task(_construct_in_thread(store, _Blocking(), [("a.stl", 1, "1")], TARGET))
+    assert await asyncio.to_thread(entered.wait, 5)
+    assert seen["token"].cancelled is False
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert seen["token"].cancelled is True
+    release.set()
 
 
 def test_plate_numbers_of_a_stored_pack_are_read_via_materialize():
@@ -63,7 +97,7 @@ async def test_generate_leaves_the_pack_only_under_its_job_folder_and_no_staging
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(packed)),
+        patch("app.api.routes.projects.get_project_constructor", return_value=fake_packer(packed)),
     ):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 200
@@ -83,24 +117,17 @@ async def test_generate_runs_entirely_on_the_store(client, tmp_path, session_fac
     store = InMemoryArtifactStore()
     store.put(stl_key, io.BytesIO(_make_stl_bytes()))
     packed = _make_3mf_bytes(plate_count=2)
-    provider = fake_packer(packed)
-    stl_seen = {}
-
-    def pack(items, **opts):
-        stl_seen["bytes"] = [Path(i.path).read_bytes() for i in items]
-        return packed
-
-    provider.pack_models.side_effect = pack
+    provider = _Reading(output=packed)
     with (
         patch("app.config.get_library_dir", return_value=tmp_path / "gone"),
         patch("app.api.routes.projects.get_library_store", lambda **kw: store),
         patch("app.api.routes.projects.refresh_content_hash", return_value=False),
-        patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
+        patch("app.api.routes.projects.get_project_constructor", return_value=provider),
     ):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
 
     assert resp.status_code == 200, resp.text
-    assert stl_seen["bytes"] == [_make_stl_bytes()]
+    assert provider.read == [_make_stl_bytes()]
     job_ids = [j["id"] for j in resp.json()["jobs"]]
     label = f"{job_ids[0]}-{job_ids[-1]}"
     async with session_factory() as s:
@@ -118,7 +145,7 @@ async def test_a_stl_missing_from_the_store_is_a_422_naming_the_file(client, tmp
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     with (
         patch("app.api.routes.projects.get_library_store", lambda **kw: InMemoryArtifactStore()),
-        patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(b"x")),
+        patch("app.api.routes.projects.get_project_constructor", return_value=fake_packer(b"x")),
     ):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 422 and "part.stl" in resp.json()["detail"] and "missing" in resp.json()["detail"]
@@ -141,7 +168,7 @@ async def test_packing_with_an_unreadable_stl_key_is_a_422_not_a_500(client, tmp
     store.materialize = vanishing
     with patch("app.api.routes.projects.get_library_store", lambda **kw: store), \
          patch("app.api.routes.projects.refresh_content_hash", return_value=False), \
-         patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(b"x")):
+         patch("app.api.routes.projects.get_project_constructor", return_value=fake_packer(b"x")):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 422 and "model file" in resp.json()["detail"]
 
@@ -153,6 +180,6 @@ async def test_a_stl_row_with_an_empty_key_is_reported_missing_not_a_500(client,
     async with session_factory() as s:
         (await s.get(UploadedFile, file_id)).relative_path = ""   # a legacy, never-indexed row
         await s.commit()
-    with patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(b"x")):
+    with patch("app.api.routes.projects.get_project_constructor", return_value=fake_packer(b"x")):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 422 and "missing" in resp.json()["detail"]

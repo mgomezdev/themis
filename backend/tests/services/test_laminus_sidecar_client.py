@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
-from app.services.providers.slicing import PackItem
+from app.services.providers.contract import ConstructInput
 
 
 def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:
@@ -150,7 +150,7 @@ def test_pack_stls_returns_bytes(tmp_path):
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
-    result = c.pack_stls([PackItem(stl1, 1, "1"), PackItem(stl2, 1, "2")], bed_x=220.0, bed_y=220.0)
+    result = c.pack_stls([ConstructInput(stl1, 1, "1"), ConstructInput(stl2, 1, "2")], bed_x=220.0, bed_y=220.0)
     assert result == packed
 
 
@@ -170,7 +170,7 @@ def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
         return httpx.Response(200, content=b"PACKED")
 
     c = _client(httpx.MockTransport(handler))
-    assert c.pack_stls_by_uuid([PackItem(a1, 5, "7"), PackItem(a2, 1, "9")], "m", "p", []) == b"PACKED"
+    assert c.pack_stls([ConstructInput(a1, 5, "7"), ConstructInput(a2, 1, "9")], 220.0, 220.0) == b"PACKED"
     assert seen["names"] == ["7_bracket.stl", "9_bracket.stl"]            # 5 copies, but one upload each; names unique
     assert seen["items"] == [{"file": "7_bracket.stl", "quantity": 5}, {"file": "9_bracket.stl", "quantity": 1}]
 
@@ -191,7 +191,7 @@ def test_pack_upload_names_drop_characters_the_sidecar_cannot_match(tmp_path):
         return httpx.Response(200, content=b"PACKED")
 
     c = _client(httpx.MockTransport(handler))
-    assert c.pack_stls([PackItem(stl, 2, "4")], bed_x=100.0, bed_y=100.0) == b"PACKED"
+    assert c.pack_stls([ConstructInput(stl, 2, "4")], bed_x=100.0, bed_y=100.0) == b"PACKED"
     assert seen["names"] == ["4_my_ part.stl"]
     assert seen["items"] == [{"file": "4_my_ part.stl", "quantity": 2}]   # same sanitized name on the wire and in items
 
@@ -205,7 +205,7 @@ def test_pack_stls_raises_on_error(tmp_path):
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
-        c.pack_stls([PackItem(stl, 1, "1")], bed_x=100.0, bed_y=100.0)
+        c.pack_stls([ConstructInput(stl, 1, "1")], bed_x=100.0, bed_y=100.0)
 
 
 # ── v1 contract ────────────────────────────────────────────────────────────────

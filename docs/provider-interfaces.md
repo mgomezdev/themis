@@ -144,7 +144,6 @@ These are core routes, not routes a provider implements. The active `inventory.f
 | `merged_config(machine_ref, process_ref, filament_refs, timeout=None)` | Slice-cache fingerprint uses `timeout=10`. |
 | `slice(SliceSpec, output_dir) -> artifact path` | Start → poll (≤ ~620 s) → download. `SliceSpec.prepared` = a ready-to-slice project (`PREPARED_PROJECT`). |
 | `catalog_health(timeout)` / `request_catalog_rebuild(timeout)` | Catalog readiness (200 → body, 503 → "building" marker) and "rebuild now"; used by `catalog_service` status/rescan. |
-| `arrange(path, …)` / `pack_models(items: list[PackItem], machine_ref=…, process_ref=…, filament_refs=…, bed=…)` | `ARRANGE` / `PACK_MODELS`; project generation checks the flag. |
 | `compatible_presets(catalog, machine_preset, kind)` | Default: presets naming the machine in `compatible_printers` (needs a catalog, so it stays here; `default_compatible_presets` is the pure rule). |
 
 Offline **`FormatProvider`** (`providers/format_provider.py`; Laminus: `providers/laminus/format.py`) — local file work, no network, no URL:
@@ -156,7 +155,7 @@ Offline **`FormatProvider`** (`providers/format_provider.py`; Laminus: `provider
 | `inspect_overrides(project, merged_config, slots) -> OverrideInspection` | `has_embedded_settings`, `setting_changes: (SettingChange(key, from_value, to_value),)`, `slot_warning: SlotWarning|None`, `has_findings`. |
 
 DTOs live in `providers/contract.py`; routes serialize them to the unchanged JSON (`from`/`to`, `slot_warning`).
-Capability flags: `ARRANGE`, `PACK_MODELS`, `PREPARED_PROJECT`.
+Capability flags: `PREPARED_PROJECT`, `TOOL_MAPPING`, `SUGGEST_PROFILES`. Packing loose models is not here: it is the `3mf.construct` capability (`ProjectConstructor`, BIZ-296).
 
 DTOs: `Catalog(machines, processes, filaments, raw)` of `Preset(ref, name, compatible_printers, raw)`;
 `catalog.ref_for(kind, name)` / `names(kind)` / `refs(kind)` replace the ad-hoc `{m["name"]: m["uuid"]}`
@@ -198,7 +197,8 @@ map to `HTTPException`.
 
 The `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolution, settings ownership decision) is specified in
 [architecture/laminus-contract.md](architecture/laminus-contract.md); code in `providers/contract.py`. `gcode.produce` is wired into the queue claim path
-(`resolve_work` via `slice_resolution`, BIZ-291); `3mf.construct` and `GcodeProducer.produce()` are not wired yet (see §8 there).
+(`resolve_work` via `slice_resolution`, BIZ-291); `3mf.construct` backs project generation (`get_project_constructor()` + `resolve_construct`, BIZ-296);
+`GcodeProducer.produce()` is not wired yet (see §8 there).
 
 ## Adding a provider
 
@@ -207,6 +207,9 @@ The `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolut
 (a `GcodeProducer`: identity, `status`, `supports_target`, `profiles`, `curated_settings`), and the adapter package in `ADAPTER_PACKAGES` of
 `test_provider_boundary.py`. Core code does not change: the plugin shows up in the capability's providers, in each printer's slicer choice and in the
 queue's resolution. (The offline `FormatProvider` is still registered by name with `register_format_provider`.)
+
+**Project construction:** a plugin that provides `3mf.construct` (exclusive) whose instance exposes `project_constructor(url)` returning a
+`ProjectConstructor` (`identity`, `status`, `construct`); project generation then uses the selected one.
 
 **Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, `provides={"inventory.filament": Provide(...)}`, `settings_model`,
 `secret_fields`, `factory`, `capabilities`, `ui`), a provider class implementing the ABC, nothing else (bundled plugins are discovered: any sub-package of `app/plugins/` that exports `MANIFEST`), the
@@ -243,6 +246,7 @@ suites. Those remain the owners of behaviour; the shared suite only checks what 
 | `printer.client` | routed | `connect`, `connected`, `delete_file`, `disconnect`, `download_file`, `get_alarms`, `get_capabilities`, `home`, `home_axes`, `is_idle`, `is_printing`, `jog`, `jog_z`, `list_files`, `orca_export_args`, `pause_print`, `request_status_update`, `resume_print`, `send_gcode`, `set_bed_temp`, `set_chamber_light`, `set_chamber_temp`, `set_fan_speeds`, `set_nozzle_temp`, `start_print`, `stop_print`, `upload_file` | none defined |
 | `notify.channel` | fan_out | `deliver`, `test_connection` | none defined |
 | `gcode.produce` | choose_one | `gcode_producer`, `slicing_provider` | none defined |
+| `3mf.construct` | exclusive | `project_constructor` | none defined |
 
 *Normative* (a provider that breaks any of these fails validation or the suite): the capability **id and contract version** it
 declares (`Provide.version` must equal the catalog's); the **required operations** above (the Protocol's members, or the

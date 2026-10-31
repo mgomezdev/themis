@@ -11,7 +11,6 @@ from ..slicing import (
     Catalog,
     MachineCandidate,
     NozzleVariantOption,
-    PackItem,
     Preset,
     SliceSpec,
     SlicingProvider,
@@ -39,8 +38,6 @@ def catalog_from_legacy(raw: dict) -> Catalog:
 
 
 class LaminusSlicingProvider(SlicingProvider):
-    ARRANGE = True
-    PACK_MODELS = True
     PREPARED_PROJECT = True
     TOOL_MAPPING = True
     SUGGEST_PROFILES = True
@@ -134,25 +131,5 @@ class LaminusSlicingProvider(SlicingProvider):
                 )
             status = client.poll_status(job_id, timeout=self._poll_timeout_s)
             return str(client.download(job_id, output_dir / status["artifact"]["name"]))
-        except SidecarError as e:
-            raise SlicingProviderError(str(e)) from e
-
-    def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
-        try:
-            return self._client().arrange(project_path, arrange=arrange, orient=orient, timeout=timeout)
-        except SidecarError as e:
-            raise SlicingProviderError(str(e)) from e
-
-    def pack_models(
-        self, items: list[PackItem], *, machine_ref: str | None = None, process_ref: str | None = None,
-        filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
-    ) -> bytes:
-        client = self._client()
-        try:
-            if machine_ref is not None:
-                return client.pack_stls_by_uuid(items, machine_ref, process_ref or "", filament_refs or [])
-            if bed is None:
-                raise SlicingProviderError("pack_models needs presets or bed dimensions")
-            return client.pack_stls(items, *bed)
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e

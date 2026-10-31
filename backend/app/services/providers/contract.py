@@ -1,5 +1,6 @@
 """Neutral Themis<->slicer contract (BIZ-248). `gcode.produce` selection is wired into the queue claim (`resolve_work` via
-`services/slice_resolution.py`, BIZ-291); `3mf.construct` and `GcodeProducer.produce()` are not wired yet.
+`services/slice_resolution.py`, BIZ-291); `3mf.construct` backs project generation (`resolve_construct`, BIZ-296);
+`GcodeProducer.produce()` is not wired yet.
 
 Spec: docs/architecture/laminus-contract.md. Two capabilities, both sync (same rule as `SlicingProvider`: call from a
 worker thread, never the event loop):
@@ -173,8 +174,17 @@ class Profile:
 
 
 @dataclass(frozen=True)
+class ConstructInput:
+    """One model to place: `quantity` copies of the file at `path`. `ref` (required) is a caller-stable id, unique within one
+    request (Themis: the library file id); a provider uses it to tell same-named models apart."""
+    path: Path
+    quantity: int
+    ref: str
+
+
+@dataclass(frozen=True)
 class ConstructRequest:
-    inputs: tuple[Path, ...]          # accepted: MODEL_3MF, STL
+    inputs: tuple[ConstructInput, ...]   # accepted kinds: the provider's `accepted_inputs` (MODEL_3MF, STL at most)
     target: TargetPrinter
 
 

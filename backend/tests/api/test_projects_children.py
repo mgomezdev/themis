@@ -1,7 +1,7 @@
 """Project child resources (items, links), stage promotion, generate preconditions, project jobs, delete."""
 from unittest.mock import patch
 
-from tests.fake_providers import FakeSlicingProvider
+from tests.fake_providers import FakeProjectConstructor
 import pytest
 from sqlalchemy import func, select
 
@@ -227,7 +227,7 @@ _STL = b"solid x\nendsolid x\n"
 
 async def _generate(client, project_id: int, tmp_path, *, sidecar: str | None = "http://laminus.test"):
     with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.api.routes.projects.get_slicing_provider", return_value=FakeSlicingProvider() if sidecar else None):
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor() if sidecar else None):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"process_preset": "0.20mm Standard"})
 
 
@@ -250,7 +250,7 @@ async def test_generate_requires_the_sidecar(client, project, tmp_path, upload_3
 
     resp = await _generate(client, project, tmp_path, sidecar=None)
 
-    assert resp.status_code == 422 and "Settings -> Laminus" in resp.json()["detail"]
+    assert resp.status_code == 422 and "No project builder is configured" in resp.json()["detail"]
     await _assert_no_jobs(client, project)
 
 

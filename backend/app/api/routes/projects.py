@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import secrets
+import tempfile
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,7 +33,11 @@ from ...services.library_store import get_library_store
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
 )
-from ...services.providers.slicing import PackItem, SlicingProviderError, get_slicing_provider
+from ...services.providers.construction import get_project_constructor
+from ...services.providers.contract import (
+    Action, CancelToken, ConstructInput, ConstructRequest, ErrorCode, ProjectConstructor, ProviderError, Reason, TargetPrinter,
+    resolve_construct,
+)
 from ...services.queue_engine import queue_engine
 
 logger = logging.getLogger(__name__)
@@ -1163,12 +1168,44 @@ def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
         return _parse_plate_nums(local)
 
 
-def _pack_stored_models(store: ArtifactStore, slicing, wanted: list[tuple[str, int, str]], **options) -> bytes:
-    """Pack the stored STLs `wanted` = (key, quantity, ref) once each. The packer takes paths, so each artifact is
-    materialized for the duration of the call. Blocking: call from a worker thread."""
+def _construct_stored_models(store: ArtifactStore, constructor: ProjectConstructor, wanted: list[tuple[str, int, str]],
+                             target: TargetPrinter, cancel: CancelToken | None = None) -> bytes:
+    """Build one project from the stored STLs `wanted` = (key, quantity, ref), each passed once. The constructor takes paths,
+    so each artifact is materialized for the duration of the call. Blocking: call from a worker thread."""
     with contextlib.ExitStack() as stack:
-        items = [PackItem(stack.enter_context(store.materialize(k)), qty, ref) for k, qty, ref in wanted]
-        return slicing.pack_models(items, **options)
+        inputs = tuple(ConstructInput(stack.enter_context(store.materialize(k)), qty, ref) for k, qty, ref in wanted)
+        out_dir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        return constructor.construct(ConstructRequest(inputs, target), out_dir, cancel=cancel).path.read_bytes()
+
+
+async def _require_ready(constructor: ProjectConstructor) -> None:
+    """The readiness half of `resolve_construct`: probed only when a group actually has to be built (a reused pack needs no
+    provider), at most once per request."""
+    status = await asyncio.to_thread(constructor.status)
+    if resolve_construct(constructor, status).action is Action.BLOCKED:
+        raise HTTPException(503, f"The project builder is unavailable: {status.detail or status.state.value}")
+
+
+async def _construct_in_thread(store: ArtifactStore, constructor: ProjectConstructor, wanted: list[tuple[str, int, str]],
+                               target: TargetPrinter) -> bytes:
+    """`_construct_stored_models` in a worker thread. If the request is cancelled meanwhile, the thread runs on, so the
+    provider is told to stop (and discard its result) through the cancel token."""
+    cancel = CancelToken()
+    try:
+        return await asyncio.to_thread(_construct_stored_models, store, constructor, wanted, target, cancel)
+    except asyncio.CancelledError:
+        cancel.cancel()
+        raise
+
+
+def _construct_http_error(err: ProviderError) -> HTTPException:
+    if err.code in (ErrorCode.NOT_READY, ErrorCode.UNREACHABLE):
+        return HTTPException(503, f"The project builder is unavailable: {err}")
+    if err.code is ErrorCode.TIMEOUT:
+        return HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
+    if err.code in (ErrorCode.UNSUPPORTED_INPUT, ErrorCode.UNSUPPORTED_TARGET):
+        return HTTPException(422, f"The project builder cannot build this project: {err}")
+    return HTTPException(502, f"Project builder error during generation: {err}")
 
 
 async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFile | None:
@@ -1203,7 +1240,8 @@ def _filament_label(ask: FilamentTuple) -> str:
     responses={
         404: {"description": "Project not found or a referenced file is missing"},
         422: {"description": "Project has no items or contains non-STL files"},
-        502: {"description": "Orca sidecar error during generation"},
+        502: {"description": "The project builder failed during generation"},
+        503: {"description": "The project builder is not ready"},
         504: {"description": "Generation timed out"},
         409: {"description": "Project is a draft, or another request with this Idempotency-Key is still running"},
     },
@@ -1250,11 +1288,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
 
-    slicing = get_slicing_provider()
-    if slicing is None:
-        raise HTTPException(422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
-    if not slicing.PACK_MODELS:
-        raise HTTPException(422, "The slicing provider cannot pack models — project generation is unavailable")
+    # 3mf.construct is exclusive: the one active provider or the request is refused (BIZ-296). Its readiness is checked only
+    # when a group needs building (`_require_ready`), so reusable packs and input errors don't wait on the provider.
+    constructor = get_project_constructor()
+    if resolve_construct(constructor, None).reason is Reason.NO_PROVIDER:
+        raise HTTPException(422, "No project builder is configured — set up the plugin that provides 3mf.construct "
+                                 "(Settings -> Plugins); it is required for generation")
+    checked_ready = False
 
     # Resolve eligible printers and compute the smallest bed dimensions.
     eligible_printers: list[Printer] = []
@@ -1276,6 +1316,8 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         pack_bed_y = min(p.bed_y_mm for p in bed_printers)
     else:
         pack_bed_x, pack_bed_y = 256.0, 256.0
+    bed_models = {p.model_uuid for p in bed_printers}
+    target = TargetPrinter((pack_bed_x, pack_bed_y, 250.0), next(iter(bed_models)) if len(bed_models) == 1 else None)
 
     item_rows = (
         await session.execute(
@@ -1362,18 +1404,16 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
                                   pack_content_hash=reused.content_hash)
         else:
+            if not checked_ready:
+                await _require_ready(constructor)
+                checked_ready = True
             try:
-                # Geometry-only pack, whatever presets the project carries: slicing profiles are applied at dispatch time
-                # (and the sidecar's preset-UUID pack needs filament UUIDs Themis doesn't have at this point).
-                packed_bytes = await asyncio.to_thread(
-                    _pack_stored_models, library, slicing, stl_wanted, bed=(pack_bed_x, pack_bed_y, 250.0),
-                )
+                # Geometry-only, whatever presets the project carries: slicing profiles are applied at dispatch time.
+                packed_bytes = await _construct_in_thread(library, constructor, stl_wanted, target)
             except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
                 raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
-            except SlicingProviderError as exc:
-                if "timed out" in str(exc).lower():
-                    raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
-                raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
+            except ProviderError as exc:
+                raise _construct_http_error(exc) from exc
 
             label = _filament_label(ask)
             out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"

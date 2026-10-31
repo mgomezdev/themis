@@ -7642,7 +7642,10 @@
             "description": "Project has no items or contains non-STL files"
           },
           "502": {
-            "description": "Orca sidecar error during generation"
+            "description": "The project builder failed during generation"
+          },
+          "503": {
+            "description": "The project builder is not ready"
           },
           "504": {
             "description": "Generation timed out"
