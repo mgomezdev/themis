@@ -34,7 +34,7 @@ from .printer_manager import PrinterManager
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .providers.contract import CancelToken
-from .slicer_service import SliceCancelled, SliceError, SliceRequest, SlicerService, slice_side_mapping
+from .slicer_service import DEFAULT_BED_MM, SliceCancelled, SliceError, SliceRequest, SlicerService, slice_side_mapping
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
 from . import completion_events, job_details
 from .notify import notify
@@ -97,7 +97,8 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "slot_plan": plan,
         "overrides": (job.overrides or {}) if job else {},
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
-        "bed_mm": (float(printer.bed_x_mm), float(printer.bed_y_mm), 250.0) if printer else None,
+        "bed_mm": (float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2])
+                  if printer else None,
     }
 
 
@@ -1368,7 +1369,11 @@ class QueueEngine:
         # A slicing issue blocks the job (per queue policy). This printer's config
         # is marked failed so it won't retry; another compatible printer can still
         # rescue it on a later check (its config isn't failed, so it re-evaluates).
+        # A job cancelled meanwhile stays cancelled and its config unmarked (the cancel won the race).
         async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is not None and job.status == "cancelled":
+                return
             result = await session.execute(
                 select(JobPrinterConfig).where(
                     JobPrinterConfig.job_id == job_id,
@@ -1380,7 +1385,6 @@ class QueueEngine:
                 config.slice_failed = True
                 config.slice_error = error
 
-            job = await session.get(Job, job_id)
             if job:
                 job.status = "blocked"
                 job.block_reason = f"slicing failed: {error}"

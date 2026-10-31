@@ -112,3 +112,16 @@ async def test_stopping_a_printer_cancels_the_job_it_is_slicing_and_its_slice(cl
     cancel.assert_called_once_with(printer_id=pid)
     async with session_factory() as s:
         assert (await s.get(Job, job["id"])).status == "cancelled"
+
+
+async def test_a_slice_failure_after_the_job_was_cancelled_leaves_it_cancelled(session_factory, tmp_path):
+    """The cancel committed between the provider's failure and its handling: the job stays cancelled, the config unmarked."""
+    job_id = await _seed_job(session_factory, 1)
+    await _cancel_job_row(session_factory, job_id)
+    engine = QueueEngine(session_factory, _make_mock_printer_manager([1]), MagicMock(spec=SlicerService))
+    await engine._handle_slice_failure(job_id, 1, "engine exploded")
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        assert (job.status, job.block_reason) == ("cancelled", None)
+        cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert not cfg.slice_failed and cfg.slice_error is None
