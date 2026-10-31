@@ -124,6 +124,8 @@ def test_status_ready_not_ready_and_unreachable(sidecar):  # noqa: F811
     st = constructor().status(timeout=1.5)
     assert st.state is c.Readiness.UNREACHABLE and "refused" in st.detail
     assert sidecar.client_kwargs[-1]["timeout"] == 1.5
+    constructor().status(timeout=None)                     # never an unbounded wait
+    assert sidecar.client_kwargs[-1]["timeout"] == c.DEFAULT_HEALTH_TIMEOUT_S
 
 
 def test_the_plugin_instance_builds_the_constructor_and_none_while_unconfigured():

@@ -1178,7 +1178,29 @@ def _construct_stored_models(store: ArtifactStore, constructor: ProjectConstruct
         return constructor.construct(ConstructRequest(inputs, target), out_dir, cancel=cancel).path.read_bytes()
 
 
+async def _require_ready(constructor: ProjectConstructor) -> None:
+    """The readiness half of `resolve_construct`: probed only when a group actually has to be built (a reused pack needs no
+    provider), at most once per request."""
+    status = await asyncio.to_thread(constructor.status)
+    if resolve_construct(constructor, status).action is Action.BLOCKED:
+        raise HTTPException(503, f"The project builder is unavailable: {status.detail or status.state.value}")
+
+
+async def _construct_in_thread(store: ArtifactStore, constructor: ProjectConstructor, wanted: list[tuple[str, int, str]],
+                               target: TargetPrinter) -> bytes:
+    """`_construct_stored_models` in a worker thread. If the request is cancelled meanwhile, the thread runs on, so the
+    provider is told to stop (and discard its result) through the cancel token."""
+    cancel = CancelToken()
+    try:
+        return await asyncio.to_thread(_construct_stored_models, store, constructor, wanted, target, cancel)
+    except asyncio.CancelledError:
+        cancel.cancel()
+        raise
+
+
 def _construct_http_error(err: ProviderError) -> HTTPException:
+    if err.code in (ErrorCode.NOT_READY, ErrorCode.UNREACHABLE):
+        return HTTPException(503, f"The project builder is unavailable: {err}")
     if err.code is ErrorCode.TIMEOUT:
         return HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
     if err.code in (ErrorCode.UNSUPPORTED_INPUT, ErrorCode.UNSUPPORTED_TARGET):
@@ -1266,15 +1288,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
 
-    # 3mf.construct is exclusive: the one active provider, ready, or the request is refused (BIZ-296).
+    # 3mf.construct is exclusive: the one active provider or the request is refused (BIZ-296). Its readiness is checked only
+    # when a group needs building (`_require_ready`), so reusable packs and input errors don't wait on the provider.
     constructor = get_project_constructor()
-    status = await asyncio.to_thread(constructor.status) if constructor is not None else None
-    outcome = resolve_construct(constructor, status)
-    if outcome.action is Action.BLOCKED:
-        if outcome.reason is Reason.NO_PROVIDER:
-            raise HTTPException(422, "No project builder is configured — set up the plugin that provides 3mf.construct "
-                                     "(Settings -> Plugins); it is required for generation")
-        raise HTTPException(503, f"The project builder is unavailable: {status.detail or status.state.value}")
+    if resolve_construct(constructor, None).reason is Reason.NO_PROVIDER:
+        raise HTTPException(422, "No project builder is configured — set up the plugin that provides 3mf.construct "
+                                 "(Settings -> Plugins); it is required for generation")
+    checked_ready = False
 
     # Resolve eligible printers and compute the smallest bed dimensions.
     eligible_printers: list[Printer] = []
@@ -1384,13 +1404,12 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
                                   pack_content_hash=reused.content_hash)
         else:
-            cancel = CancelToken()
+            if not checked_ready:
+                await _require_ready(constructor)
+                checked_ready = True
             try:
                 # Geometry-only, whatever presets the project carries: slicing profiles are applied at dispatch time.
-                packed_bytes = await asyncio.to_thread(_construct_stored_models, library, constructor, stl_wanted, target, cancel)
-            except asyncio.CancelledError:  # the request went away: the worker thread runs on, so tell the provider to stop
-                cancel.cancel()
-                raise
+                packed_bytes = await _construct_in_thread(library, constructor, stl_wanted, target)
             except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
                 raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
             except ProviderError as exc:

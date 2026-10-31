@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.api.routes.projects import _construct_stored_models, _stored_plate_nums
+from app.api.routes.projects import _construct_in_thread, _construct_stored_models, _stored_plate_nums
 from app.services.providers import contract as c
 from app.models import UploadedFile
 from tests.api.test_projects_api import _make_3mf_bytes, _make_stl_bytes, _setup_project_with_stl
@@ -53,6 +53,34 @@ def test_a_constructor_failure_still_releases_the_materialized_stls():
     except c.ProviderError:
         pass
     assert store.materialized_dirs and not any(d.exists() for d in store.materialized_dirs)
+
+
+async def test_cancelling_the_request_tells_the_running_constructor_to_stop():
+    """The worker thread outlives a cancelled request, so the cancel token is what stops the provider (and drops its result)."""
+    import asyncio
+    import threading
+
+    store = InMemoryArtifactStore()
+    store.put("a.stl", io.BytesIO(b"AAA"))
+    entered, release, seen = threading.Event(), threading.Event(), {}
+
+    class _Blocking(FakeProjectConstructor):
+        def construct(self, request, output_dir, *, cancel=None, **kw):
+            seen["token"] = cancel
+            entered.set()
+            release.wait(5)
+            return super().construct(request, output_dir, cancel=cancel, **kw)
+
+    task = asyncio.create_task(_construct_in_thread(store, _Blocking(), [("a.stl", 1, "1")], TARGET))
+    assert await asyncio.to_thread(entered.wait, 5)
+    assert seen["token"].cancelled is False
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert seen["token"].cancelled is True
+    release.set()
 
 
 def test_plate_numbers_of_a_stored_pack_are_read_via_materialize():

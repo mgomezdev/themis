@@ -33,7 +33,7 @@ class LaminusProjectConstructor(ProjectConstructor):
 
     def status(self, timeout: float | None = DEFAULT_HEALTH_TIMEOUT_S) -> ProviderStatus:
         try:
-            LaminusSidecarClient(self._url, timeout=timeout).health()
+            LaminusSidecarClient(self._url, timeout=DEFAULT_HEALTH_TIMEOUT_S if timeout is None else timeout).health()
         except SidecarNotReady as e:
             return ProviderStatus(Readiness.NOT_READY, self.identity, str(e))
         except SidecarError as e:

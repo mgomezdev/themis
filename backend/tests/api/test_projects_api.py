@@ -617,7 +617,9 @@ async def test_generate_targets_the_smallest_eligible_bed_and_the_model_they_sha
 @pytest.mark.parametrize("code, status, detail", [
     ("timeout", 504, "Generation timed out — try fewer parts or reduce quantities"),
     ("failed", 502, "Project builder error during generation: failed: pack returned 500: boom"),
-    ("unreachable", 502, "Project builder error during generation: unreachable: pack returned 500: boom"),
+    ("cancelled", 502, "Project builder error during generation: cancelled: pack returned 500: boom"),
+    ("unreachable", 503, "The project builder is unavailable: unreachable: pack returned 500: boom"),
+    ("not_ready", 503, "The project builder is unavailable: not_ready: pack returned 500: boom"),
     ("unsupported_input", 422, "The project builder cannot build this project: unsupported_input: pack returned 500: boom"),
 ])
 async def test_generate_maps_constructor_errors_to_http(client, tmp_path, session_factory, code, status, detail):
@@ -641,6 +643,34 @@ async def test_generate_422_without_a_project_builder(client, tmp_path):
     assert (none.status_code, none.json()["detail"]) == (
         422, "No project builder is configured — set up the plugin that provides 3mf.construct (Settings -> Plugins); "
              "it is required for generation")
+
+
+async def test_generate_reuses_cached_packs_without_asking_a_down_project_builder(client, tmp_path):
+    """A reusable pack needs no provider: regenerating while the builder is down still works and never probes it."""
+    from app.services.providers.contract import Readiness
+    from tests.fake_providers import FakeProjectConstructor, fake_packer
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    first = await _generate_with(client, tmp_path, fake_packer(_make_3mf_bytes(plate_count=1)), project_id)
+    assert first.status_code == 200, first.text
+    down = FakeProjectConstructor(Readiness.NOT_READY, status_detail="building catalog")
+    again = await _generate_with(client, tmp_path, down, project_id)
+    assert again.status_code == 200, again.text
+    assert again.json()["files"][0]["pack_reused"] is True
+    assert (down.status_calls, down.calls) == (0, [])
+
+
+async def test_generate_checks_the_project_builder_once_per_request(client, tmp_path):
+    from tests.fake_providers import fake_packer
+
+    project_id, file_id = await _setup_project_with_stl(client, tmp_path)
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"):   # a second group, a different recipe (same STL x1 would reuse the first pack)
+        added = await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 2, "filament_type": "PETG", "filament_subtype": "any"})
+        assert added.status_code == 201, added.text
+    provider = fake_packer(_make_3mf_bytes(plate_count=1))
+    resp = await _generate_with(client, tmp_path, provider, project_id)
+    assert resp.status_code == 200, resp.text
+    assert (provider.status_calls, len(provider.calls)) == (1, 2)
 
 
 @pytest.mark.parametrize("state", ["not_ready", "unreachable"])

@@ -51,8 +51,6 @@ def sidecar():
             return httpx.Response(200, json={"status": "completed", "artifact": {"name": "out.gcode", "available": True}})
         if path == "/api/v1/jobs/job-1/artifact":
             return httpx.Response(200, content=sc.gcode)
-        if path == "/api/v1/arrange":
-            return httpx.Response(200, content=b"ARRANGED")
         if path == "/api/v1/pack":
             return httpx.Response(200, content=b"PACKED")
         return httpx.Response(404)

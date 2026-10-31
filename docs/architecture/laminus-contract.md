@@ -135,9 +135,9 @@ with BIZ-291 because it conflicts with the two behaviors above. A future provide
 * **`3mf.construct` (BIZ-296)** is a core `exclusive` capability (`plugins/capabilities/three_mf_construct.py`); the `laminus` plugin provides it through
   `project_constructor(url)` → `LaminusProjectConstructor` (`/api/v1/pack` by `target.bed_mm`, STL only, `model_uuid` unused, the shorter of the call timeout and the
   plugin's request timeout; a cancel that lands during the one blocking request discards its result). Core reaches it with
-  `providers/construction.get_project_constructor()` (the host's active part). `POST /projects/{id}/generate` probes `status()`, gates on `resolve_construct`
-  (`NO_PROVIDER` → 422, `DEFAULT_UNAVAILABLE` → 503) and builds each filament group for `TargetPrinter((min bed x, min bed y, 250), shared model or None)`;
-  `TIMEOUT` → 504, `UNSUPPORTED_*` → 422, other codes → 502. `SlicingProvider` no longer has `ARRANGE`/`PACK_MODELS`/`arrange`/`pack_models`.
+  `providers/construction.get_project_constructor()` (the host's active part). `POST /projects/{id}/generate` refuses `NO_PROVIDER` up front (422)
+  and probes `status()` once, only when a filament group isn't a reused pack (not ready → 503); it builds each filament group for `TargetPrinter((min bed x, min bed y, 250), shared model or None)`;
+  `TIMEOUT` → 504, `UNSUPPORTED_*` → 422, `NOT_READY`/`UNREACHABLE` → 503, other codes → 502. `SlicingProvider` no longer has `ARRANGE`/`PACK_MODELS`/`arrange`/`pack_models`.
 
 ## 9. Machine profile per printer model (BIZ-294)
 
