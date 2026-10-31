@@ -873,7 +873,7 @@ async def stop_printer(
     result = await session.execute(
         select(Job).where(
             Job.assigned_printer_id == printer_id,
-            Job.status.in_(["printing", "paused", "uploading"]),
+            Job.status.in_(["slicing", "printing", "paused", "uploading"]),
         )
     )
     now = datetime.now(timezone.utc).isoformat()
@@ -883,6 +883,8 @@ async def stop_printer(
         job.queue_position = None
         job.updated_at = now
     await session.commit()
+    from ...services.queue_engine import queue_engine
+    queue_engine.cancel_slice(printer_id=printer_id)    # and a slice being made for it (cancel <-> stop, BIZ-295)
     return {"ok": True}
 
 

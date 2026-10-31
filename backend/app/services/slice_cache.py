@@ -85,7 +85,7 @@ def key_inputs(
     req: SliceRequest, source_content_hash: str | None, tool_index: int | None, filament_map: list | None,
     provider: str | None = None,
 ) -> CacheKeyInputs | None:
-    """`tool_index`/`filament_map` aren't on the request (they reach the slicer as a 3MF remap via `prepare_hook`) but
+    """`tool_index`/`filament_map` are passed separately (the request carries them only when the printer needs a slice-side remap) but
     they change the output, so they're part of the key. `filament_map` must be the RESOLVED map (slot indices, after
     `queue_engine._resolve_filament_map`) — exactly what the remap used — or save and lookup drift apart.
 

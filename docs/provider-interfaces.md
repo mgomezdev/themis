@@ -198,7 +198,8 @@ map to `HTTPException`.
 The `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolution, settings ownership decision) is specified in
 [architecture/laminus-contract.md](architecture/laminus-contract.md); code in `providers/contract.py`. `gcode.produce` is wired into the queue claim path
 (`resolve_work` via `slice_resolution`, BIZ-291); `3mf.construct` backs project generation (`get_project_constructor()` + `resolve_construct`, BIZ-296);
-`GcodeProducer.produce()` is not wired yet (see §8 there).
+every slice runs through `GcodeProducer.produce()` via `SlicerService.slice` (BIZ-295, see §8 there). `SlicingProvider.slice(spec, out, *, should_stop=None)`
+polls `should_stop` while it waits (the producer's cancel).
 
 ## Adding a provider
 

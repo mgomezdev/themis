@@ -186,7 +186,7 @@ async def test_a_job_eligible_on_two_idle_printers_is_claimed_exactly_once(engin
 
 
 async def test_slice_failure_on_one_printer_blocks_the_job_and_another_printer_can_rescue_it(engine, world, session_factory):
-    def slice_or_fail(req):
+    def slice_or_fail(req, *_):
         if req.machine_preset == "Machine P1":
             raise SliceError("profile not found")
         return world.slicer.slice.return_value

@@ -5,6 +5,7 @@ import re
 import time
 import logging
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
@@ -43,6 +44,10 @@ class SidecarTimeout(SidecarError):
 
 class SidecarUnreachable(SidecarError):
     """No answer: connection refused/reset or another transport failure."""
+
+
+class SidecarCancelled(SidecarError):
+    """The caller asked the wait to stop (`should_stop` returned True)."""
 
 
 class LaminusSidecarClient:
@@ -171,16 +176,21 @@ class LaminusSidecarClient:
         job_id: str,
         poll_interval: float = 2.0,
         timeout: float = DEFAULT_POLL_TIMEOUT_S,
+        should_stop: "Callable[[], bool] | None" = None,
     ) -> dict:
         """Poll GET /api/v1/jobs/{job_id} until completed or failed.
 
         Returns the completed job view (the output name is ``artifact["name"]``). Raises SidecarError on
-        failure or timeout.
+        failure, SidecarTimeout past `timeout`, SidecarCancelled as soon as `should_stop()` is true (checked before each poll).
         """
         deadline = time.monotonic() + timeout
         while True:
+            if should_stop is not None and should_stop():
+                raise SidecarCancelled(f"slice job {job_id} cancelled")
             try:
                 r = self._client.get(f"/api/v1/jobs/{job_id}")
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"status poll timed out: {e}") from e
             except httpx.HTTPError as e:
                 raise SidecarError(f"status poll request failed: {e}") from e
 
@@ -199,7 +209,7 @@ class LaminusSidecarClient:
                     f"sidecar slice failed: {body.get('error') or 'unknown error'}"
                 )
             if time.monotonic() > deadline:
-                raise SidecarError(
+                raise SidecarTimeout(
                     f"sidecar poll timed out after {timeout:.0f}s for job {job_id}"
                 )
 
@@ -257,6 +267,17 @@ class LaminusSidecarClient:
         body = self._post_json("/api/v1/profiles/machines/suggest",
                                {"manufacturer": manufacturer, "model": model, "model_key": model_key}, "profiles/machines/suggest")
         return list(body.get("candidates") or [])
+
+    def machine_presets(self, machine_ref: str, kind: str) -> list[dict]:
+        """GET /api/v1/profiles/machines/{ref}/presets?kind= -> the process/filament presets compatible with that machine
+        (`[{ref, uuid, name, kind, compatible_models?}]`). 404 = unknown machine ref (a bare `{"error": ...}` body)."""
+        try:
+            r = self._client.get(f"/api/v1/profiles/machines/{machine_ref}/presets", params={"kind": kind}, timeout=15)
+        except httpx.HTTPError as e:
+            raise SidecarError(f"machine presets request failed: {e}") from e
+        if r.status_code != 200:
+            raise SidecarError(f"machine presets returned {r.status_code}: {r.text[:200]}")
+        return list(r.json().get("presets") or [])
 
     def model_variants(self, manufacturer: str, model: str, model_key: str | None = None) -> list[dict]:
         """POST /api/v1/profiles/models/variants -> the model's nozzle variants (empty list for an unknown model)."""

@@ -26,8 +26,8 @@ from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
-from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
-from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
+from ...services.providers.slicing import effective_provider_id, get_slicing_provider
+from ...services.slicer_service import DEFAULT_BED_MM, SliceError, SliceRequest, slice_side_mapping
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._filament_ask import AskFields, ask_columns, ask_out, type_labels
 from ...services.inventory import read as inventory_read, refs as inventory_refs
@@ -824,6 +824,7 @@ async def cancel_job(
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
+    queue_engine.cancel_slice(job_id=job_id)     # a slice in flight stops at its next poll (BIZ-295)
 
     if stop_printer_id is not None:
         client = printer_manager._clients.get(stop_printer_id)
@@ -1072,7 +1073,7 @@ def _build_slice_request(
     cfg_tool_index = config.tool_index
     cfg_filament_map = config.filament_map
     provider_id = effective_provider_id(printer.preferred_slicer_plugin_id)     # the slicer this printer's jobs use (BIZ-291)
-    prepare_hook = tool_mapping_hook(client, cfg_tool_index, cfg_filament_map, slicing_provider_for(provider_id))
+    slice_tool, slice_map = slice_side_mapping(client, cfg_tool_index, cfg_filament_map)
 
     if cfg_filament_map:
         ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
@@ -1092,9 +1093,11 @@ def _build_slice_request(
         filament_presets=filament_presets,
         filament_colours=[colour] if colour else [],
         export_args=export_args,
-        prepare_hook=prepare_hook,
         extra_config=plate_config,
         provider_id=provider_id,
+        tool_index=slice_tool,
+        filament_map=slice_map,
+        bed_mm=(float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2]),
     )
 
 

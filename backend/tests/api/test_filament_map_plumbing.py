@@ -6,10 +6,10 @@ from app.services.slicer_service import SliceRequest
 from app.api.routes.jobs import PrinterConfigInput
 
 
-def test_slice_request_has_prepare_hook_default_none():
+def test_slice_request_has_no_slice_side_mapping_by_default():
     req = SliceRequest(job_id=1, source_3mf="x", plate_number=0, machine_preset="M",
                        process_preset="P", filament_presets=["F"])
-    assert req.prepare_hook is None
+    assert (req.tool_index, req.filament_map) == (None, None)
 
 
 def test_printer_config_input_accepts_tool_index():

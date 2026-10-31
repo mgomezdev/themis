@@ -114,7 +114,14 @@ async def resolve_slicing(printer: PrinterView, filename: str, *, timeout: float
     if r is Reason.PREFERENCE_DORMANT:
         msg = f"{printer.name} is set to slice with {_label(outcome.provider_id)}, which is disabled or removed — slicing paused"
     elif r in (Reason.PREFERENCE_INELIGIBLE, Reason.DEFAULT_INELIGIBLE):
-        msg = f"{_label(outcome.provider_id)} can't slice for {printer.name} — slicing paused"
+        label, p = _label(outcome.provider_id), producers.get(outcome.provider_id)
+        if p is not None and _input_kind(filename) in p.accepted_inputs and printer.machine_profile:
+            # The input is fine, so the provider refused the TARGET: for a mapped printer that is its machine profile (renamed or
+            # removed on the provider's side since it was mapped). Name it and the fix, as the slice-time "not found" error did.
+            msg = (f"{label} can't slice for {printer.name} with machine profile {printer.machine_profile!r} — Refresh the profile "
+                   f"sync, and re-map the printer model if that profile was renamed or removed — slicing paused")
+        else:
+            msg = f"{label} can't slice for {printer.name} — slicing paused"
     elif not enabled:
         msg = "No slicing provider is enabled — slicing paused"
     else:

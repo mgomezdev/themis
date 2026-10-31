@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from .format_provider import FormatProvider
 
@@ -148,8 +148,9 @@ class SlicingProvider(ABC):
         """Ask the provider to rebuild its catalog from source (returns immediately; poll `catalog_health`)."""
 
     @abstractmethod
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
-        """Slice and write the artifact into `output_dir`; returns its path."""
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop: "Callable[[], bool] | None" = None) -> str:
+        """Slice and write the artifact into `output_dir`; returns its path. `should_stop` is polled while waiting: once it returns
+        True the provider abandons the slice and raises SlicingProviderError (the neutral producer reports CANCELLED)."""
 
     def compatible_presets(self, catalog: Catalog, machine_preset: str, kind: str) -> list[Preset]:
         """Presets of `kind` ("process" | "filament") usable with `machine_preset`. Default: the preset names the

@@ -8,8 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.providers.slicing import SlicingProviderError
-from app.services.slicer_service import SlicerService, SliceRequest, SliceError
+from app.services.providers.contract import CancelToken
+from app.services.slicer_service import SlicerService, SliceRequest, SliceCancelled, SliceError
 from tests.fake_providers import FakeSlicingProvider, make_catalog
+from tests.slicing_env import slicing_provider
 
 
 def _req(tmp_path, export_args=None, **kw):
@@ -42,7 +44,7 @@ def _make_service(tmp_path):
 def test_raises_when_no_sidecar_url(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
-    with patch("app.services.providers.slicing.configured_server_url", return_value=None):
+    with slicing_provider(None):                      # the plugin is enabled but has no URL
         with pytest.raises(SliceError, match="Settings -> Laminus"):
             svc.slice(_req(tmp_path))
 
@@ -137,7 +139,7 @@ def test_error_reports_missing_filament_when_none_supplied(tmp_path):
 
 def _fake_provider(**kw):
     fake = FakeSlicingProvider(**kw)
-    return fake, patch("app.services.slicer_service.get_slicing_provider", return_value=fake)
+    return fake, slicing_provider(fake)
 
 
 def _slice_spec(fake):
@@ -226,7 +228,43 @@ def test_extra_config_passed_to_provider(tmp_path):
     with use:
         svc.slice(_req(tmp_path, extra_config=overrides))
 
-    assert _slice_spec(fake).extra_config == overrides
+    assert _slice_spec(fake).extra_config == overrides   # plate type + curated override, mapped back by the producer
+
+
+def test_an_override_that_is_not_a_curated_setting_fails_the_slice_without_slicing(tmp_path):
+    svc = _make_service(tmp_path)
+    prime_catalog(_DEFAULT_CATALOG)
+    fake, use = _fake_provider()
+    with use, pytest.raises(SliceError, match="not a curated setting: wipe_tower_x"):
+        svc.slice(_req(tmp_path, extra_config={"wipe_tower_x": "10"}))
+    assert "slice" not in [c[0] for c in fake.calls]
+
+
+def test_a_cancel_during_the_slice_is_a_slice_cancelled_and_leaves_no_artifact(tmp_path):
+    svc = _make_service(tmp_path)
+    prime_catalog(_DEFAULT_CATALOG)
+    token = CancelToken()
+
+    class CancelledMidway(FakeSlicingProvider):
+        def slice(self, spec, output_dir, *, should_stop=None):
+            token.cancel()                            # job cancelled while the sidecar works
+            return super().slice(spec, output_dir, should_stop=should_stop)
+
+    fake = CancelledMidway()
+    with slicing_provider(fake), pytest.raises(SliceCancelled):
+        svc.slice(_req(tmp_path), cancel=token)
+    assert list((tmp_path / "gcode" / "1").glob("*.gcode")) == []
+
+
+def test_a_cancel_before_the_slice_never_reaches_the_provider(tmp_path):
+    svc = _make_service(tmp_path)
+    prime_catalog(_DEFAULT_CATALOG)
+    token = CancelToken()
+    token.cancel()
+    fake, use = _fake_provider()
+    with use, pytest.raises(SliceCancelled):
+        svc.slice(_req(tmp_path), cancel=token)
+    assert "slice" not in [c[0] for c in fake.calls]
 
 
 def test_stale_artifacts_are_removed_before_slicing(tmp_path):
@@ -347,37 +385,21 @@ def test_inject_thumbnail_noop_for_invalid_png_magic(tmp_path):
     assert gcode.read_text() == original
 
 
-@pytest.mark.asyncio
-async def test_slice_uses_custom_output_dir(tmp_path):
+def test_slice_uses_custom_output_dir(tmp_path):
     """When output_dir is provided, the slice method uses it instead of the default."""
-    from pathlib import Path
-    from unittest.mock import MagicMock, patch
-    from app.services.slicer_service import SlicerService, SliceRequest
-
     custom_dir = tmp_path / "estimates" / "99"
-
     svc = SlicerService(data_dir=str(tmp_path))
+    prime_catalog({"machine": [{"name": "M", "uuid": "m"}], "process": [{"name": "P", "uuid": "p"}],
+                   "filament": [{"name": "F", "uuid": "f"}]})
+    src = tmp_path / "model.3mf"
+    src.write_bytes(b"x")
+    req = SliceRequest(job_id=99, source_3mf=str(src), plate_number=1,
+                       machine_preset="M", process_preset="P", filament_presets=["F"])
+    with slicing_provider(FakeSlicingProvider()):
+        path = svc.slice(req, output_dir=custom_dir)
 
-    req = SliceRequest(
-        job_id=99, source_3mf="model.3mf", plate_number=1,
-        machine_preset="M", process_preset="P", filament_presets=["F"],
-    )
-
-    captured_out_dir = None
-
-    def fake_execute(self_inner, req_inner, machine_uuid, process_uuid, filament_uuids,
-                     out_dir, sidecar_url):
-        nonlocal captured_out_dir
-        captured_out_dir = out_dir
-        return str(out_dir / "result.gcode")
-
-    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"), \
-         patch.object(SlicerService, "_resolve_uuids", return_value=("m", "p", ["f"])), \
-         patch.object(SlicerService, "_execute_slice_by_ids", fake_execute):
-        svc.slice(req, output_dir=custom_dir)
-
-    assert captured_out_dir == custom_dir
-    assert custom_dir.exists()
+    assert Path(path).parent == custom_dir and custom_dir.exists()
+    assert not (tmp_path / "gcode" / "99").exists()
 
 
 def test_unconfigured_message_names_the_provider_the_request_was_routed_to():
@@ -386,12 +408,14 @@ def test_unconfigured_message_names_the_provider_the_request_was_routed_to():
     svc._data_dir = Path("/tmp")
     req = SliceRequest(job_id=1, source_3mf="/tmp/m.3mf", plate_number=1, machine_preset="M", process_preset="P",
                        filament_presets=["F"], provider_id="other")
-    with patch("app.services.slicer_service.slicing_provider_for", return_value=None) as for_id, \
+    with patch("app.services.slicer_service.gcode_producer_for", return_value=None) as for_id, \
          patch("app.plugins.get_plugin", return_value=SimpleNamespace(name="Other Slicer")):
         with pytest.raises(SliceError, match=r"Other Slicer is not configured — set its URL in Settings -> Other Slicer"):
             svc.slice(req)
     for_id.assert_called_once_with("other")                              # the routed provider, not the default
     req.provider_id = None
-    with patch("app.services.slicer_service.get_slicing_provider", return_value=None):
+    with patch("app.services.slicer_service.default_provider_id", return_value="laminus"), \
+         patch("app.services.slicer_service.gcode_producer_for", return_value=None) as for_default:
         with pytest.raises(SliceError, match="Laminus is not configured"):
             svc.slice(req)
+    for_default.assert_called_once_with("laminus")

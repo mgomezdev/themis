@@ -159,8 +159,10 @@ class FakeSlicingProvider(SlicingProvider):
         self._enter("merged_config", machine_ref, process_ref, list(filament_refs))
         return self.merged
 
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop=None) -> str:
         self._enter("slice", spec)
+        if should_stop is not None and should_stop():
+            raise SlicingProviderError("fake slice cancelled")
         dest = Path(output_dir) / self.artifact_name
         dest.write_bytes(self.artifact_bytes)
         return str(dest)

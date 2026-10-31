@@ -1,4 +1,5 @@
-"""The queue's prepare_hook routes tool mapping through the active slicing provider, gated by the client flag."""
+"""The queue asks for slice-side tool mapping only when the printer's client needs it (BIZ-295: the request carries
+`tool_index`/`filament_map`; the producer applies them through the slicing provider, never the printer client)."""
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,9 +48,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None, ask_sl
     seen = {}
 
     def fake_slice(req, *a, **kw):
-        seen["hook"] = req.prepare_hook
-        if req.prepare_hook:
-            req.prepare_hook(tmp_path / "copy.3mf")
+        seen["mapping"] = (req.tool_index, req.filament_map)
         return str(gcode)
 
     engine = QueueEngine(db, mgr, slicer)
@@ -58,47 +57,39 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None, ask_sl
          slicing_provider(provider), \
          patch.object(engine, "_do_upload_and_print", new_callable=AsyncMock):
         await engine._run_slice_and_print(job_id, 1, 1)
-    assert "hook" in seen, "slice was never reached"
-    return seen["hook"], provider, client
-
-
-def _applied(provider):
-    return [c for c in provider.calls if c[0] == "apply_tool_mapping"]
+    assert "mapping" in seen, "slice was never reached"
+    return seen["mapping"], provider, client
 
 
 @pytest.mark.asyncio
-async def test_tool_index_hook_calls_provider_not_client(session_factory, tmp_path):
-    hook, provider, client = await _run(session_factory, tmp_path, flag=True, tool_index=2)
-    assert hook is not None
-    assert _applied(provider) == [("apply_tool_mapping", tmp_path / "copy.3mf", 2, None)]
+async def test_a_pinned_tool_is_requested_from_the_slicer_not_the_client(session_factory, tmp_path):
+    mapping, provider, client = await _run(session_factory, tmp_path, flag=True, tool_index=2)
+    assert mapping == (2, None)
     client.remap_sliceable_3mf.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_filament_map_hook_calls_provider_not_client(session_factory, tmp_path):
+async def test_a_filament_map_is_requested_from_the_slicer_not_the_client(session_factory, tmp_path):
     fmap = [{"model_filament": 1, "tool_index": 2}]
-    hook, provider, client = await _run(session_factory, tmp_path, flag=True, filament_map=fmap)
-    assert hook is not None
-    calls = _applied(provider)
-    assert len(calls) == 1 and calls[0][2] is None and calls[0][3] == fmap
+    mapping, provider, client = await _run(session_factory, tmp_path, flag=True, filament_map=fmap)
+    assert mapping == (None, fmap)
     client.remap_sliceable_3mf.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_no_hook_when_neither_set(session_factory, tmp_path):
-    hook, provider, _ = await _run(session_factory, tmp_path, flag=True)
-    assert hook is None and _applied(provider) == []
+async def test_no_mapping_when_neither_set(session_factory, tmp_path):
+    mapping, _, _ = await _run(session_factory, tmp_path, flag=True)
+    assert mapping == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_no_hook_when_client_flag_false(session_factory, tmp_path):
-    hook, provider, _ = await _run(session_factory, tmp_path, flag=False, tool_index=2)
-    assert hook is None and _applied(provider) == []
+async def test_no_mapping_when_client_flag_false(session_factory, tmp_path):
+    mapping, _, _ = await _run(session_factory, tmp_path, flag=False, tool_index=2)
+    assert mapping == (None, None)
 
 
 @pytest.mark.asyncio
 async def test_an_unpinned_ask_matched_to_a_later_tool_routes_the_model_there(session_factory, tmp_path):
     """The claim chose T2 for the ask; the model must be sliced onto T2 (and deducted from T2), not left on the default tool."""
-    hook, provider, _ = await _run(session_factory, tmp_path, flag=True, ask_slot=2)
-    assert hook is not None
-    assert _applied(provider) == [("apply_tool_mapping", tmp_path / "copy.3mf", 2, None)]
+    mapping, _, _ = await _run(session_factory, tmp_path, flag=True, ask_slot=2)
+    assert mapping == (2, None)
