@@ -153,10 +153,12 @@ class SliceSettings:
     overrides: Mapping[str, str] = field(default_factory=dict)
     tool_index: int | None = None
     filament_map: tuple[tuple[int, int], ...] | None = None   # (model_filament 1-based, tool_index 0-based)
+    plate_type: str | None = None    # the printer's build-plate type (neutral; not an override); None = machine default
 
     def fingerprint(self) -> str:
         return _sha({
             "process_profile": self.process_profile,
+            "plate_type": self.plate_type,
             "filaments": [[f.slot, f.material, f.profile] for f in self.filaments],   # colour excluded
             "overrides": dict(self.overrides),
             "tool_index": self.tool_index,

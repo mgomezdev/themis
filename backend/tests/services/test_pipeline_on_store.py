@@ -18,7 +18,10 @@ from app.services.artifact_store import ArtifactExists, LocalDiskArtifactStore
 from app.services.library_store import put_file_unique
 from app.services.queue_engine import QueueEngine
 from app.services.slicer_service import SliceError, SlicerService, SliceRequest
+from tests.catalog_helpers import prime_catalog
 from tests.fake_artifact_store import InMemoryArtifactStore
+from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager
 from tests.waiting import wait_until
 
@@ -286,20 +289,21 @@ def test_slicing_materializes_the_library_artifact_for_the_whole_slice(tmp_path,
     monkeypatch.setattr("app.services.slicer_service.get_library_store", lambda: library)
     seen = {}
 
-    def fake_execute(self, req, machine_uuid, process_uuid, filament_uuids, out_dir, provider):
-        seen["path"] = Path(req.source_3mf)
-        seen["bytes"] = Path(req.source_3mf).read_bytes()
-        seen["key_cleared"] = req.source_key is None
-        return str(out_dir / "r.gcode")
+    class Reading(FakeSlicingProvider):
+        def slice(self, spec, output_dir, *, should_stop=None):
+            seen["path"] = Path(spec.source_file)
+            seen["bytes"] = Path(spec.source_file).read_bytes()
+            self.artifact_name = "r.gcode"
+            return super().slice(spec, output_dir, should_stop=should_stop)
 
+    prime_catalog({"machine": [{"name": "M", "uuid": "m"}], "process": [{"name": "P", "uuid": "p"}],
+                   "filament": [{"name": "F", "uuid": "f"}]})
     svc = SlicerService(data_dir=str(tmp_path))
-    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"), \
-         patch.object(SlicerService, "_resolve_uuids", return_value=("m", "p", ["f"])), \
-         patch.object(SlicerService, "_execute_slice_by_ids", fake_execute):
+    with slicing_provider(Reading()):
         result = svc.slice(_slice_request("Prints/Benchy.3mf"))
 
     assert result.endswith("r.gcode")
-    assert seen["bytes"] == b"model-bytes" and seen["path"].name == "Benchy.3mf" and seen["key_cleared"]
+    assert seen["bytes"] == b"model-bytes" and seen["path"].name == "Benchy.3mf"
     assert not seen["path"].exists()   # the materialized copy is released once the slice is done
     assert library.materialized_dirs and not library.materialized_dirs[0].exists()
 

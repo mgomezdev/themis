@@ -33,7 +33,8 @@ from .library_scanner import (
 from .printer_manager import PrinterManager
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
-from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
+from .providers.contract import CancelToken
+from .slicer_service import SliceCancelled, SliceError, SliceRequest, SlicerService, slice_side_mapping
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
 from . import completion_events, job_details
 from .notify import notify
@@ -96,6 +97,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "slot_plan": plan,
         "overrides": (job.overrides or {}) if job else {},
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
+        "bed_mm": (float(printer.bed_x_mm), float(printer.bed_y_mm), 250.0) if printer else None,
     }
 
 
@@ -160,6 +162,8 @@ class QueueEngine:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="slicer")
         self._slice_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._slice_seq: itertools.count = itertools.count()
+        # In-flight production slices: job id -> (printer id, token). Job cancel and printer stop set the token (BIZ-295).
+        self._slice_cancels: dict[int, tuple[int, CancelToken]] = {}
         self._slice_worker_task: asyncio.Task | None = None
         self._estimate_tasks: set[asyncio.Task] = set()
         completion_events.bind_engine(self)      # the `job_complete.notices` subscriber sends through the engine that was last built
@@ -299,7 +303,6 @@ class QueueEngine:
             filament_presets=filament_profiles,
             filament_colours=[],
             export_args=[],
-            prepare_hook=None,
         )
 
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -411,6 +414,15 @@ class QueueEngine:
 
         await self._slice_queue.put((2, next(self._slice_seq), _do_verify_slice()))
         return await fut
+
+    def cancel_slice(self, *, job_id: int | None = None, printer_id: int | None = None) -> list[int]:
+        """Ask the in-flight production slice(s) of `job_id`, or running for `printer_id`, to stop (BIZ-295: job cancel and printer
+        stop). The provider abandons the slice and the dispatch ends without failing the job. Returns the affected job ids."""
+        hits = [jid for jid, (pid, _) in getattr(self, "_slice_cancels", {}).items()
+                if (job_id is not None and jid == job_id) or (printer_id is not None and pid == printer_id)]
+        for jid in hits:
+            self._slice_cancels[jid][1].cancel()
+        return hits
 
     def wake(self) -> None:
         event = getattr(self, "_event", None)          # the module singleton is built uninitialised until the app starts
@@ -1083,17 +1095,19 @@ class QueueEngine:
                 return
             else:
                 fut: asyncio.Future = loop.create_future()
+                token = CancelToken()
+                self._slice_cancels[job_id] = (printer_id, token)
 
                 async def _do_prod_slice():
                     try:
                         # Skip the slice if the job was cancelled while waiting in the queue.
                         async with self._factory() as s:
                             j = await s.get(Job, job_id)
-                            if j is None or j.status == "cancelled":
+                            if j is None or j.status == "cancelled" or token.cancelled:
                                 if not fut.cancelled():
                                     fut.cancel()
                                 return
-                        result = await asyncio.to_thread(self._slicer.slice, req)
+                        result = await asyncio.to_thread(self._slicer.slice, req, None, token)
                         if not fut.cancelled():
                             fut.set_result(result)
                     except Exception as exc:
@@ -1104,8 +1118,12 @@ class QueueEngine:
                 try:
                     gcode_path = await fut
                 except asyncio.CancelledError:
+                    token.cancel()                 # the dispatch is going away: the worker thread must not slice on
                     fut.cancel()
                     raise
+                except SliceCancelled:
+                    logger.info("Slice of job %s on printer %s cancelled", job_id, printer_id)
+                    return                         # the job was cancelled / the printer stopped: not a slice failure
                 except SliceError as exc:
                     await self._handle_slice_failure(job_id, printer_id, str(exc))
                     return
@@ -1113,6 +1131,9 @@ class QueueEngine:
                     logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
                     await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
                     return
+                finally:
+                    if self._slice_cancels.get(job_id, (None, None))[1] is token:
+                        self._slice_cancels.pop(job_id, None)
 
             slice_presets = req.filament_presets
 
@@ -1183,7 +1204,7 @@ class QueueEngine:
         filament_map = p["filament_map"]                                   # already resolved to slots at claim time
 
         provider_id = provider_id or effective_provider_id(p.get('preferred_slicer'))
-        prepare_hook = tool_mapping_hook(client, tool_index, filament_map, slicing_provider_for(provider_id))
+        slice_tool, slice_map = slice_side_mapping(client, tool_index, filament_map)
 
         multi_presets: list = []
         if filament_map:
@@ -1202,9 +1223,11 @@ class QueueEngine:
             filament_presets=multi_presets if filament_map else ([filament_profile] if filament_profile else []),
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
-            prepare_hook=prepare_hook,
             extra_config=plate_config,
             provider_id=provider_id,
+            tool_index=slice_tool,
+            filament_map=slice_map,
+            **({"bed_mm": p["bed_mm"]} if p.get("bed_mm") else {}),
         )
         return req, filament_map
 

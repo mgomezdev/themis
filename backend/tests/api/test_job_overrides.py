@@ -1,5 +1,5 @@
 from tests.catalog_helpers import patch_cached_catalog, prime_catalog
-from tests.fake_providers import FakeFormatProvider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
 from app.services.providers.contract import OverrideInspection, SettingChange, SlotWarning
 from contextlib import nullcontext
 from pathlib import Path
@@ -115,23 +115,15 @@ def test_extra_config_forwarded_to_sidecar():
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="MyPrinter", process_preset="MyProcess",
         filament_presets=["MyFilament"],
-        extra_config={"fill_pattern": "grid", "layer_height": "0.15"},
+        extra_config={"sparse_infill_pattern": "grid", "layer_height": "0.15"},
     )
-
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "sidecar-job-1"
-    mock_client.poll_status.return_value = {"artifact": {"name": "out.gcode"}}
-    mock_client.download.return_value = Path("/tmp/out.gcode")
-
-    with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
-         patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
-        mock_exec.return_value = "/tmp/out.gcode"
+    from tests.slicing_env import slicing_provider
+    fake = FakeSlicingProvider()
+    with slicing_provider(fake):
         svc.slice(req)
 
-    mock_exec.assert_called_once()
-    _, kwargs = mock_exec.call_args[0], mock_exec.call_args[1]
-    # extra_config must be passed through to _execute_slice_by_ids
-    assert req.extra_config == {"fill_pattern": "grid", "layer_height": "0.15"}
+    (spec,) = [c[1] for c in fake.calls if c[0] == "slice"]
+    assert spec.extra_config == {"sparse_infill_pattern": "grid", "layer_height": "0.15"}   # curated overrides reach the slicer
 
 
 def test_slice_raises_without_sidecar():

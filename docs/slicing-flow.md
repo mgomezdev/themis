@@ -129,14 +129,15 @@ sequenceDiagram
     participant SC as OrcaSidecarClient
     participant OS as Orca Sidecar
 
-    QE->>SS: slice(SliceRequest)
+    QE->>SS: slice(SliceRequest, cancel=token)
+    note over SS: BIZ-295: SS builds a neutral ProduceRequest and calls the<br/>resolved plugin's GcodeProducer.produce(); the steps below<br/>run inside LaminusGcodeProducer.produce()
 
-    SS->>SS: check LAMINUS_SIDECAR_URL configured
-    note over SS: raises SliceError if not set
+    SS->>SS: resolved gcode.produce plugin configured?
+    note over SS: raises SliceError if not
 
-    alt prepare_hook set (multi-extruder job)
+    alt tool_index / filament_map set (slice-side mapping printer)
         SS->>SS: copy source_3mf → out_dir/prepared.3mf
-        SS->>SS: prepare_hook(prepared.3mf)
+        SS->>SS: apply_tool_mapping(prepared.3mf)
         note over SS: remaps tool_index/filament_map<br/>in place on the job-scoped copy —<br/>never the shared library source file
         SS->>SS: source_file = prepared.3mf
     end
@@ -308,12 +309,12 @@ flowchart TD
 
     D --> E[SlicerService.slice]
 
-    E --> F{LAMINUS_SIDECAR_URL\nconfigured?}
+    E --> F{gcode.produce plugin\nconfigured?}
     F -- No --> FAIL1[SliceError:\nURL not configured]
 
-    F -- Yes --> G{prepare_hook\nset?}
-    G -- Yes --> G2[copy source_3mf → out_dir/prepared.3mf\nrun prepare_hook on the copy\nuse the copy as source]
-    G2 --> H[_resolve_uuids\nfetch catalog if stale\nmap names → UUIDs]
+    F -- Yes --> G{tool mapping\nset?}
+    G -- Yes --> G2[copy source_3mf → out_dir/prepared.3mf\napply_tool_mapping on the copy\nuse the copy as source]
+    G2 --> H[resolve_preset_uuids\nfetch catalog if stale\nmap names → UUIDs]
 
     G -- No --> H
 

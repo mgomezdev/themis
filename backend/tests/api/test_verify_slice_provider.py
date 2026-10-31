@@ -16,21 +16,21 @@ def _rows(preferred):
 
 
 def _build(preferred, default="a"):
-    seen = []
-
-    def fake_for(pid):
-        seen.append(pid)
-        return None
-    with patch("app.services.providers.slicing.default_provider_id", return_value=default), \
-            patch("app.api.routes.jobs.slicing_provider_for", side_effect=fake_for):
-        return _build_slice_request(*_rows(preferred), "Machine 0.4"), seen
+    # The request names the plugin; SlicerService then slices with that plugin's producer (BIZ-295).
+    with patch("app.services.providers.slicing.default_provider_id", return_value=default):
+        return _build_slice_request(*_rows(preferred), "Machine 0.4")
 
 
 def test_a_printer_with_a_preferred_slicer_slices_manually_on_it():
-    req, seen = _build("b")
-    assert req.provider_id == "b" and seen == ["b"]
+    assert _build("b").provider_id == "b"
 
 
 def test_without_a_preference_the_default_slicer_is_used():
-    req, seen = _build(None, default="a")
-    assert req.provider_id == "a" and seen == ["a"]
+    assert _build(None, default="a").provider_id == "a"
+
+
+def test_the_manual_slice_carries_the_printer_bed():
+    job, config, printer, f = _rows(None)
+    printer.bed_x_mm, printer.bed_y_mm = 220.0, 230.0
+    with patch("app.services.providers.slicing.default_provider_id", return_value="a"):
+        assert _build_slice_request(job, config, printer, f, "Machine 0.4").bed_mm == (220.0, 230.0, 250.0)

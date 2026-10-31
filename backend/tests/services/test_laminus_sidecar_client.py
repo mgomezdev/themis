@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
+from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarCancelled, SidecarError, SidecarTimeout
 from app.services.providers.contract import ConstructInput
 
 
@@ -106,9 +106,37 @@ def test_poll_status_raises_on_timeout():
         return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
 
     c = _client(httpx.MockTransport(handler))
-    with pytest.raises(SidecarError, match="timed out"):
+    with pytest.raises(SidecarTimeout, match="timed out"):
         # timeout=0 expires immediately on first pending response
         c.poll_status("job1", poll_interval=0.0, timeout=0.0)
+
+
+def test_poll_status_maps_a_transport_timeout_to_sidecar_timeout():
+    def handler(req):
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(SidecarTimeout):
+        _client(httpx.MockTransport(handler)).poll_status("job1", poll_interval=0.0, timeout=5.0)
+
+
+def test_poll_status_stops_as_soon_as_asked_and_polls_no_more():
+    polls = {"n": 0}
+
+    def handler(req):
+        polls["n"] += 1
+        return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
+
+    stop = {"now": False}
+
+    def should_stop():
+        if polls["n"] >= 2:
+            stop["now"] = True
+        return stop["now"]
+
+    c = _client(httpx.MockTransport(handler))
+    with pytest.raises(SidecarCancelled):
+        c.poll_status("job1", poll_interval=0.0, timeout=10.0, should_stop=should_stop)
+    assert polls["n"] == 2
 
 
 # ── download ───────────────────────────────────────────────────────────────────

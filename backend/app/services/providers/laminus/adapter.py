@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .sidecar_client import (
     DEFAULT_POLL_TIMEOUT_S, DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady,
@@ -110,6 +111,13 @@ class LaminusSlicingProvider(SlicingProvider):
                                     is_default_guess=bool(v.get("is_default_guess")))
                 for v in raw if v.get("name")]
 
+    def machine_presets(self, machine_ref: str, kind: str) -> list[dict]:
+        """Laminus's own compatibility answer for one machine (BIZ-293); raw preset dicts."""
+        try:
+            return self._client(15).machine_presets(machine_ref, kind)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+
     def merged_config(
         self, machine_ref: str, process_ref: str, filament_refs: list[str], timeout: float | None = None,
     ) -> dict:
@@ -118,7 +126,8 @@ class LaminusSlicingProvider(SlicingProvider):
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
 
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop: "Callable[[], bool] | None" = None) -> str:
+        """`should_stop` (Laminus only) is checked between status polls; the wait then ends with a `SidecarCancelled` cause."""
         client = self._client()
         try:
             if spec.prepared:
@@ -129,7 +138,7 @@ class LaminusSlicingProvider(SlicingProvider):
                     spec.plate, export_3mf=spec.export_3mf,
                     extra_config=spec.extra_config or None,
                 )
-            status = client.poll_status(job_id, timeout=self._poll_timeout_s)
+            status = client.poll_status(job_id, timeout=self._poll_timeout_s, should_stop=should_stop)
             return str(client.download(job_id, output_dir / status["artifact"]["name"]))
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
