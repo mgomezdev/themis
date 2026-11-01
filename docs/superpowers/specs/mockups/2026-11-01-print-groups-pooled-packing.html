@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Static design mockup for epic BIZ-354 (print groups + pooled packing). Not app code; open directly in a browser. -->
+<title>Pooled Project Builder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one column of mock screens (the real creation sequence), each with a margin of design notes. Every project screen shares one frame: project header, section tabs, group banner, back/next bar. Tokens copied from Themis app.css (dark only, like the app). */
+:root {
+  color-scheme: dark;
+  --bg-0: oklch(6% 0.006 250); --bg-1: oklch(9% 0.008 250); --bg-2: oklch(12% 0.010 250);
+  --bg-3: oklch(16% 0.014 250); --bg-4: oklch(20% 0.018 250);
+  --border-1: oklch(21% 0.018 250); --border-2: oklch(28% 0.022 250); --border-3: oklch(38% 0.028 250);
+  --text-1: oklch(96% 0.006 80); --text-3: oklch(96% 0.006 80 / 0.72); --text-4: oklch(96% 0.006 80 / 0.48);
+  --accent: oklch(87% 0.185 95); --accent-lo: oklch(28% 0.055 80); --accent-glow: oklch(87% 0.185 95 / 0.18);
+  --ok: oklch(71% 0.155 155); --ok-bg: oklch(71% 0.155 155 / 0.12);
+  --warn: oklch(87% 0.185 95); --warn-bg: oklch(87% 0.185 95 / 0.12);
+  --err: oklch(62% 0.225 20); --err-bg: oklch(62% 0.225 20 / 0.12);
+  --idle: oklch(60% 0.022 250); --idle-bg: oklch(48% 0.022 250 / 0.16);
+  --info: #00f0ff; --info-bg: oklch(88% 0.20 196 / 0.12);
+  --note-bg: oklch(14% 0.03 200);
+  /* group identity colours (kept clear of the status hues) */
+  --g1: oklch(70% 0.15 290); --g1-bg: oklch(70% 0.15 290 / 0.14);
+  --g2: oklch(74% 0.16 345); --g2-bg: oklch(74% 0.16 345 / 0.14);
+  --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg-0); color: var(--text-1); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px; }
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; }
+h1 { font-size: 26px; } h2 { font-size: 18px; } h3 { font-size: 14px; }
+p { margin: 0; }
+.muted { color: var(--text-3); } .dim { color: var(--text-4); }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.small { font-size: 12px; } .tiny { font-size: 11.5px; }
+.eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-4); }
+.intro { display: flex; flex-direction: column; gap: 10px; max-width: 74ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.step { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+@media (max-width: 960px) { .step { grid-template-columns: minmax(0, 1fr); } }
+.step-head { grid-column: 1 / -1; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.step-num { font-family: var(--font-mono); color: var(--accent); font-size: 13px; }
+.screen { background: var(--bg-1); border: 1px solid var(--border-2); border-radius: 4px; min-width: 0; overflow: hidden; }
+.screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 16px; background: var(--bg-2); border-bottom: 1px solid var(--border-1); }
+.crumb { font-family: var(--font-mono); font-size: 12px; color: var(--text-4); }
+.crumb b { color: var(--text-1); font-weight: 500; }
+.screen-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.notes { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.note { background: var(--note-bg); border: 1px solid var(--border-1); border-left: 2px solid var(--info); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.note .eyebrow { color: var(--info); }
+.note p { color: var(--text-3); font-size: 12.5px; }
+.note.change { border-left-color: var(--accent); } .note.change .eyebrow { color: var(--accent); }
+.note.new { border-left-color: var(--g2); } .note.new .eyebrow { color: var(--g2); }
+
+/* project frame: header + section tabs */
+.proj-head { padding: 12px 16px 0; background: var(--bg-2); border-bottom: 1px solid var(--border-1); display: flex; flex-direction: column; gap: 10px; }
+.proj-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.proj-title .name { font-size: 16px; font-weight: 600; }
+.sections { display: flex; gap: 0; overflow-x: auto; }
+.sec { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; color: var(--text-4); border-bottom: 2px solid transparent; white-space: nowrap; }
+.sec .n { font-family: var(--font-mono); font-size: 11px; padding: 0 6px; background: var(--bg-4); color: var(--text-3); border-radius: 2px; }
+.sec .n.bad { background: var(--err-bg); color: var(--err); }
+.sec .n.good { background: var(--ok-bg); color: var(--ok); }
+.sec.on { color: var(--text-1); border-bottom-color: var(--accent); }
+.sec.done::before { content: "✓"; color: var(--ok); font-size: 11px; }
+.navbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--border-1); background: var(--bg-2); }
+
+/* group banner */
+.gbanner { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; background: var(--bg-1); border-bottom: 1px solid var(--border-1); }
+.gbadges { display: flex; flex-wrap: wrap; gap: 8px; }
+.gb { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border-2); background: var(--bg-2); border-radius: 2px; font-size: 12.5px; white-space: nowrap; }
+.gb .sw2 { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.gb .cnt { font-family: var(--font-mono); font-size: 11px; color: var(--text-4); }
+.gb.g1 { border-left: 3px solid var(--g1); } .gb.g1 .sw2 { background: var(--g1); }
+.gb.g2 { border-left: 3px solid var(--g2); } .gb.g2 .sw2 { background: var(--g2); }
+.gb.none { border-left: 3px solid var(--idle); color: var(--text-3); } .gb.none .sw2 { background: var(--idle); }
+.gb.add { border-style: dashed; color: var(--accent); background: transparent; }
+.gb.sel { background: var(--bg-4); border-color: var(--border-3); }
+.gb.drop { outline: 2px dashed var(--g2); outline-offset: 2px; background: var(--g2-bg); }
+.gb .hint { font-size: 11px; color: var(--g2); font-family: var(--font-mono); }
+
+/* controls */
+.btn { font: inherit; font-size: 12.5px; padding: 6px 12px; border: 1px solid var(--border-3); background: var(--bg-3); color: var(--text-1); border-radius: 2px; white-space: nowrap; }
+.btn.primary { background: var(--accent); color: oklch(15% 0.02 90); border-color: var(--accent); font-weight: 600; }
+.btn.ghost { background: transparent; border-color: var(--border-2); color: var(--text-3); }
+.btn.sm { padding: 3px 8px; font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row.between { justify-content: space-between; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.label { font-size: 11px; color: var(--text-4); font-family: var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.input { background: var(--bg-0); border: 1px solid var(--border-2); padding: 6px 10px; border-radius: 2px; color: var(--text-1); font-size: 13px; min-height: 32px; display: flex; align-items: center; gap: 6px; }
+.input.select::after { content: "▾"; margin-left: auto; color: var(--text-4); font-size: 11px; }
+.qty { width: 64px; justify-content: center; font-family: var(--font-mono); }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 1px 8px; border-radius: 2px; white-space: nowrap; font-weight: 500; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.nodot::before { display: none; }
+.ok { color: var(--ok); background: var(--ok-bg); } .warn { color: var(--warn); background: var(--warn-bg); }
+.err { color: var(--err); background: var(--err-bg); } .idle { color: var(--idle); background: var(--idle-bg); }
+.info { color: var(--info); background: var(--info-bg); } .acc { color: var(--accent); background: var(--accent-glow); }
+.gtag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 8px; border-radius: 2px; white-space: nowrap; }
+.gtag::after { content: "▾"; font-size: 10px; opacity: 0.7; }
+.gtag.g1 { color: var(--g1); background: var(--g1-bg); } .gtag.g2 { color: var(--g2); background: var(--g2-bg); }
+.gtag.none { color: var(--text-4); background: transparent; } .gtag.none::after { content: ""; }
+
+.kind { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em; padding: 1px 6px; border: 1px solid var(--border-3); color: var(--text-3); border-radius: 2px; white-space: nowrap; }
+.kind.k3mf { color: var(--info); border-color: oklch(70% 0.12 200 / 0.5); }
+.kind.kstl { color: var(--ok); border-color: oklch(71% 0.155 155 / 0.5); }
+.kind.kgc { color: var(--accent); border-color: oklch(87% 0.185 95 / 0.5); }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border-3); vertical-align: -2px; }
+.fil { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.src { font-size: 11px; color: var(--text-4); } .src.over { color: var(--accent); }
+
+.seg { display: inline-flex; border: 1px solid var(--border-2); border-radius: 2px; overflow: hidden; }
+.seg span { padding: 3px 8px; font-size: 11.5px; color: var(--text-4); border-right: 1px solid var(--border-1); white-space: nowrap; }
+.seg span:last-child { border-right: 0; }
+.seg span.on { background: var(--accent-lo); color: var(--accent); }
+.seg.na span { opacity: 0.35; } .seg.na span.on { opacity: 1; background: var(--bg-4); color: var(--text-3); }
+
+/* collapsible item sections */
+.toolbar { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
+.viewtog { display: inline-flex; border: 1px solid var(--border-2); }
+.viewtog span { padding: 3px 10px; font-size: 12px; color: var(--text-4); }
+.viewtog span.on { background: var(--bg-4); color: var(--text-1); }
+.isec { border: 1px solid var(--border-1); background: var(--bg-1); }
+.isec + .isec { margin-top: -1px; }
+.isec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; background: var(--bg-2); }
+.isec > summary::-webkit-details-marker { display: none; }
+.isec > summary::before { content: "▸"; color: var(--text-4); font-size: 12px; width: 10px; }
+.isec[open] > summary::before { content: "▾"; }
+.isec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.isec .sumx { margin-left: auto; display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.dots { display: inline-flex; gap: 3px; }
+.dots i { width: 8px; height: 8px; border-radius: 2px; }
+.tblwrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 900px; }
+th, td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--border-1); vertical-align: middle; }
+th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4); font-weight: 500; background: var(--bg-2); white-space: nowrap; border-top: 0; }
+td .sub { font-size: 11.5px; color: var(--text-4); }
+tr.g1 td:first-child { box-shadow: inset 3px 0 0 var(--g1); }
+tr.g2 td:first-child { box-shadow: inset 3px 0 0 var(--g2); }
+tr.gn td:first-child { box-shadow: inset 3px 0 0 var(--border-2); }
+tr.dragging td { opacity: 0.35; }
+.handle { color: var(--text-4); font-size: 13px; letter-spacing: -2px; cursor: grab; user-select: none; }
+.thumb { width: 36px; height: 36px; flex: none; background: var(--bg-3); border: 1px solid var(--border-2); position: relative; }
+.thumb i { position: absolute; background: var(--idle); border-radius: 2px; }
+.cell-item { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ghost { display: flex; align-items: center; gap: 10px; padding: 7px 12px; background: var(--bg-4); border: 1px solid var(--g2); box-shadow: 0 14px 30px -12px oklch(0% 0 0 / 0.9); width: max-content; max-width: 100%; transform: rotate(-1deg); font-size: 12.5px; }
+
+/* groups */
+.gedit { border: 1px solid var(--border-2); background: var(--bg-2); display: flex; flex-direction: column; min-width: 0; }
+.gedit.g1 { border-top: 3px solid var(--g1); } .gedit.g2 { border-top: 3px solid var(--g2); }
+.gedit-head { padding: 12px 14px; border-bottom: 1px solid var(--border-1); display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+.gedit-body { padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .gedit-body { grid-template-columns: minmax(0, 1fr); } }
+.gcol { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border-2); background: var(--bg-1); border-radius: 2px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.chip.off { opacity: 0.45; text-decoration: line-through; }
+.chip.flag { border-color: oklch(87% 0.185 95 / 0.45); }
+.radio { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border-1); background: var(--bg-1); }
+.radio.on { border-color: var(--accent); }
+.radio .dot { width: 12px; height: 12px; margin-top: 3px; flex: none; border-radius: 50%; border: 1px solid var(--border-3); }
+.radio.on .dot { border: 4px solid var(--accent); }
+.radio .t { font-size: 12.5px; } .radio .d { font-size: 11.5px; color: var(--text-4); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.box { width: 14px; height: 14px; flex: none; margin-top: 2px; border: 1px solid var(--border-3); background: var(--bg-0); display: grid; place-items: center; font-size: 10px; color: var(--bg-0); }
+.box.on { background: var(--accent); border-color: var(--accent); }
+.mini-tbl { border: 1px solid var(--border-1); }
+.mini-tbl > div { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--border-1); align-items: center; font-size: 12.5px; }
+.mini-tbl > div:last-child { border-bottom: 0; }
+.mini-tbl .hd { background: var(--bg-3); }
+.memberlist { border: 1px solid var(--border-1); background: var(--bg-1); }
+.memberlist > div { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border-1); font-size: 12.5px; }
+.memberlist > div:last-child { border-bottom: 0; }
+.memberlist .q { margin-left: auto; font-family: var(--font-mono); color: var(--text-4); }
+.collapsed-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--border-2); border-left: 3px solid var(--g2); background: var(--bg-2); }
+.collapsed-group::before { content: "▸"; color: var(--text-4); }
+
+/* review + queue */
+.checks { display: flex; flex-direction: column; border: 1px solid var(--border-1); }
+.chk { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--border-1); align-items: center; }
+.chk:last-child { border-bottom: 0; }
+@media (max-width: 560px) { .chk { grid-template-columns: minmax(0, 1fr); } }
+.queue { display: flex; flex-direction: column; border: 1px solid var(--border-1); }
+.qrow { display: grid; grid-template-columns: 34px minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr) 110px; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-1); align-items: center; }
+.qrow:last-child { border-bottom: 0; }
+.qrow.g1 { box-shadow: inset 3px 0 0 var(--g1); } .qrow.g2 { box-shadow: inset 3px 0 0 var(--g2); }
+.qrow.pool { background: oklch(14% 0.03 290 / 0.5); }
+.qrow.claimed { padding-left: 46px; background: var(--bg-1); }
+@media (max-width: 760px) { .qrow { grid-template-columns: minmax(0, 1fr); } .qrow.claimed { padding-left: 24px; } }
+.qpos { font-family: var(--font-mono); color: var(--text-4); }
+.bar { height: 6px; background: var(--bg-4); position: relative; overflow: hidden; }
+.bar b { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.bar b.okc { background: var(--ok); }
+
+/* dialog */
+.dialog { max-width: 640px; margin: 8px auto; background: var(--bg-3); border: 1px solid var(--border-3); box-shadow: 0 20px 40px -20px oklch(0% 0 0 / 0.8); width: 100%; }
+.dialog-head { padding: 14px 16px; border-bottom: 1px solid var(--border-2); display: flex; flex-direction: column; gap: 4px; }
+.dialog-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.dialog-foot { padding: 12px 16px; border-top: 1px solid var(--border-2); display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.fail-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px dashed var(--border-1); }
+.fail-row.part { padding-left: 18px; }
+.fail-row.bundle { border-bottom: 0; padding-bottom: 2px; }
+.stepper { display: inline-flex; border: 1px solid var(--border-2); }
+.stepper span { padding: 2px 9px; font-family: var(--font-mono); font-size: 12px; }
+.stepper span:nth-child(2) { border-inline: 1px solid var(--border-2); min-width: 44px; text-align: center; }
+.stepper.hot span:nth-child(2) { color: var(--err); }
+.result { border: 1px solid var(--border-2); background: var(--bg-2); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+
+/* failure log */
+.flog table { min-width: 760px; }
+.attempts { display: inline-flex; gap: 3px; }
+.attempts i { width: 10px; height: 10px; border: 1px solid var(--border-3); }
+.attempts i.f { background: var(--err); border-color: var(--err); }
+.attempts i.p { background: var(--ok); border-color: var(--ok); }
+
+/* settings */
+.settings-shell { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-width: 0; }
+@media (max-width: 640px) { .settings-shell { grid-template-columns: minmax(0, 1fr); } }
+.subnav { border-right: 1px solid var(--border-1); padding: 10px 0; display: flex; flex-direction: column; background: var(--bg-2); }
+@media (max-width: 640px) { .subnav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border-1); padding: 0; } }
+.subnav span { padding: 6px 16px; font-size: 12.5px; color: var(--text-4); white-space: nowrap; }
+.subnav span.on { color: var(--text-1); background: var(--bg-4); box-shadow: inset 2px 0 0 var(--accent); }
+.subnav .sh { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding-top: 10px; }
+.setpane { padding: 16px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--border-1); }
+.setrow:last-child { border-bottom: 0; }
+.saved { font-size: 11px; color: var(--ok); font-family: var(--font-mono); }
+.panel { border: 1px solid var(--border-2); background: var(--bg-2); padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.toggle { width: 30px; height: 16px; border-radius: 8px; background: var(--bg-4); border: 1px solid var(--border-3); position: relative; flex: none; }
+.toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-4); }
+.toggle.on { background: var(--accent-lo); border-color: var(--accent); }
+.toggle.on::after { left: 16px; background: var(--accent); }
+.divider { height: 1px; background: var(--border-1); }
+.footer { color: var(--text-4); font-size: 12px; max-width: 80ch; }
+.cb { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--border-3); background: var(--bg-0); vertical-align: -2px; font-size: 10px; color: var(--bg-0); }
+.cb.on { background: var(--accent); border-color: var(--accent); }
+.cb.on::after { content: "✓"; }
+.cb.part { background: var(--accent-lo); border-color: var(--accent); }
+.cb.part::after { content: "–"; color: var(--accent); }
+.gb.all { border-left: 3px solid var(--text-3); }
+.gb.all .sw2 { background: conic-gradient(var(--g1) 0 33%, var(--g2) 0 66%, var(--idle) 0); }
+.bulk { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--accent-lo); border: 1px solid var(--accent); font-size: 12.5px; }
+.bulk b { color: var(--accent); }
+.pick-sec { display: flex; flex-direction: column; gap: 6px; }
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.pcard { padding: 10px 12px; border: 1px solid var(--border-1); background: var(--bg-1); display: flex; gap: 10px; align-items: flex-start; }
+.pcard.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--bg-3); }
+.pcard .t { font-size: 12.5px; font-weight: 500; }
+.pcard .d { font-size: 11px; color: var(--text-4); }
+.pcard .elig { font-family: var(--font-mono); font-size: 10px; padding: 1px 5px; border: 1px solid var(--border-3); color: var(--text-3); flex: none; margin-top: 2px; }
+.pcard.on .elig { color: var(--info); border-color: var(--info); }
+.pcard .cbw { margin-left: auto; }
+.waiver { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px dashed var(--border-1); font-size: 12.5px; }
+.waiver:last-child { border-bottom: 0; }
+.plan { border: 1px solid var(--border-2); background: var(--bg-2); padding: 10px 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; font-size: 12.5px; }
+@media (max-width: 640px) { .plan { grid-template-columns: minmax(0, 1fr); } }
+.plan .arrow { color: var(--accent); font-family: var(--font-mono); }
+.ebadges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.eb { display: inline-flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; font-size: 12.5px; font-weight: 500; border-radius: 2px; border: 1px solid; white-space: nowrap; }
+.eb .x { display: inline-grid; place-items: center; width: 18px; height: 18px; font-size: 13px; line-height: 1; opacity: .8; }
+.eb.model { color: var(--accent); background: var(--accent-glow); border-color: oklch(87% 0.185 95 / 0.5); }
+.eb.unit { color: var(--info); background: var(--info-bg); border-color: oklch(88% 0.20 196 / 0.5); }
+.eb.add { color: var(--text-3); border-style: dashed; border-color: var(--border-3); padding-right: 10px; background: transparent; }
+.eb.sm { font-size: 11.5px; padding: 1px 8px; }
+.menu { border: 1px solid var(--border-3); background: var(--bg-3); box-shadow: 0 20px 40px -20px oklch(0% 0 0 / 0.8); max-width: 380px; display: flex; flex-direction: column; }
+.menu .msec { padding: 6px 0; border-top: 1px solid var(--border-2); display: flex; flex-direction: column; }
+.menu .msec:first-of-type { border-top: 0; }
+.menu .mh { padding: 4px 12px; }
+.menu .mi { display: flex; gap: 8px; align-items: center; padding: 5px 12px; font-size: 12.5px; }
+.menu .mi.dis { color: var(--text-4); }
+.menu .mi .k { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.menu .mi .r { margin-left: auto; font-size: 11px; color: var(--text-4); }
+.menu .mi.hover { background: var(--bg-4); }
+.res-head, .res-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 110px 110px; gap: 10px; align-items: center; }
+.res-head { padding-bottom: 6px; border-bottom: 1px solid var(--border-2); }
+.res-row { padding: 7px 0; border-bottom: 1px dashed var(--border-1); font-size: 13px; }
+.res-row.part { padding-left: 18px; }
+.res-row.bundle { border-bottom: 0; padding-bottom: 0; }
+.res-row .okn { font-family: var(--font-mono); color: var(--ok); text-align: center; }
+@media (max-width: 560px) { .res-head, .res-row { grid-template-columns: minmax(0, 1fr) 50px 90px 90px; } }
+.fleetcard { border: 1px solid var(--border-2); background: var(--bg-2); padding: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
+.fleetcard.flagged { border-color: oklch(87% 0.185 95 / 0.6); }
+@media (prefers-reduced-motion: reduce) { .ghost { transform: none; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="intro">
+    <span class="eyebrow">Themis · design mockup · static · v5</span>
+    <h1>Project Builder with print groups and pooled packing</h1>
+    <p class="muted">The example below is a "Living wall kit" project. It mixes 3MF plates, a 3MF object, STLs and a pre-sliced plate, split across two print groups. The fleet is 3× Bambu P1S, A1 mini, H2D, Snapmaker U1 and Sovol SV08. Profile names and part sizes are examples. The 3MF sections on the Items screen really collapse; everything else is static.</p>
+    <div class="legend">
+      <span class="pill info nodot">Blue note = case being shown</span>
+      <span class="pill acc nodot">Yellow note = change from today's Themis</span>
+      <span class="pill nodot" style="color:var(--g2);background:var(--g2-bg)">Pink note = new in v2 (your feedback)</span>
+    </div>
+  </header>
+
+  <!-- STEP 1: ITEMS -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">1</span><h2>Items, with the group banner</h2><span class="muted">Shown mid-drag: "regular pot" is being dropped on "Show pieces".</span></div>
+    <div class="screen">
+      <div class="proj-head">
+        <div class="proj-title"><span class="name">Living wall kit</span><div class="row"><span class="pill idle">Planning</span><span class="btn ghost sm">Save draft</span></div></div>
+        <div class="sections">
+          <span class="sec done">Details</span>
+          <span class="sec on">Items <span class="n">10</span></span>
+          <span class="sec">Groups <span class="n">2</span></span>
+          <span class="sec">Review <span class="n bad">1 to fix</span></span>
+        </div>
+      </div>
+      <div class="gbanner">
+        <div class="row between"><span class="label">Groups · drag items onto a badge</span><span class="dim tiny">Click a badge to edit its settings</span></div>
+        <div class="gbadges">
+          <span class="gb all sel"><span class="sw2"></span>All <span class="cnt">10 items</span></span>
+          <span class="gb none"><span class="sw2"></span>Default Group <span class="cnt">1 item</span></span>
+          <span class="gb g1"><span class="sw2"></span>Structure <span class="cnt">6 items · 33 parts</span></span>
+          <span class="gb g2 drop"><span class="sw2"></span>Show pieces <span class="cnt">2 items · 5 parts</span> <span class="hint">drop to add</span></span>
+          <span class="gb add">+ New group</span>
+        </div>
+        <div class="ghost"><span class="handle">⋮⋮</span><span class="thumb"><i style="left:28%;top:28%;width:44%;height:44%;border-radius:50%"></i></span><span>regular pot <span class="dim">× 4</span></span><span class="kind k3mf">3MF</span></div>
+      </div>
+      <div class="screen-body">
+        <div class="toolbar">
+          <div class="row"><span class="btn ghost sm">+ STL</span><span class="btn ghost sm">+ 3MF plates or objects</span><span class="btn ghost sm">+ Sliced gcode</span></div>
+          <div class="row"><span class="dim tiny">Show</span><span class="viewtog"><span class="on">By file</span><span>By group</span></span><span class="btn ghost sm">Collapse all</span></div>
+        </div>
+
+        <div>
+          <details class="isec" open>
+            <summary><span class="kind k3mf">3MF</span><span class="mono">Hex-Moss-Pole.3mf</span><span class="dim small">3 of 7 plates · 9 parts</span><span class="sumx"><span class="dots"><i style="background:var(--g1)"></i><i style="background:var(--g1)"></i><i style="background:var(--g1)"></i></span></span></summary>
+            <div class="tblwrap"><table>
+              <thead><tr><th><span class="cb"></span></th><th>Item</th><th>Unit</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+              <tbody>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:38%;top:12%;width:24%;height:76%"></i></span><div class="stack"><span>Pole segment</span><span class="sub">plate 1 · 1 object</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">6</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>Bambu PLA Basic · Black</span><span class="src">from file</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:22%;top:25%;width:34%;height:34%;border-radius:50%"></i><i style="left:62%;top:30%;width:14%;height:40%"></i></span><div class="stack"><span>Top cap + clip</span><span class="sub">plate 6 · 2 objects</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">2</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>PLA · Black · any brand</span><span class="src over">edited: brand cleared</span></div></td>
+                  <td><span class="seg"><span>Split</span><span class="on">Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:18%;top:30%;width:28%;height:16%"></i><i style="left:54%;top:30%;width:28%;height:16%"></i><i style="left:18%;top:56%;width:28%;height:16%"></i></span><div class="stack"><span>Wall bracket</span><span class="sub">plate 7 · 4 objects</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">1</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>Bambu PLA Basic · Black</span><span class="src">from file</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+              </tbody>
+            </table></div>
+          </details>
+
+          <details class="isec" open>
+            <summary><span class="kind k3mf">3MF</span><span class="mono">cloud pots.3mf</span><span class="dim small">1 object + 1 plate · 6 parts</span><span class="sumx"><span class="dots"><i style="background:var(--idle)"></i><i style="background:var(--g2)"></i></span></span></summary>
+            <div class="tblwrap"><table>
+              <thead><tr><th><span class="cb"></span></th><th>Item</th><th>Unit</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+              <tbody>
+                <tr class="gn dragging"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:28%;top:28%;width:44%;height:44%;border-radius:50%"></i></span><div class="stack"><span>regular pot</span><span class="sub">object #6 · from plate 3</span></div></div></td>
+                  <td><span class="sub">object</span></td><td><span class="input qty">4</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#f4f4f2"></span>PLA Matte · White</span><span class="src">from file</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag none">Default Group</span></td></tr>
+                <tr class="g2"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:22%;top:26%;width:56%;height:48%;border-radius:40%;background:linear-gradient(90deg,#1d1d1f 50%,#f4f4f2 50%)"></i></span><div class="stack"><span>Cloud logo pot</span><span class="sub">plate 5 · 1 object · 2 colours</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">2</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span><span class="sw" style="background:#f4f4f2"></span>PLA Black + PLA White</span><span class="src">from file · 2 slots</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g2">Show pieces</span></td></tr>
+              </tbody>
+            </table></div>
+          </details>
+
+          <details class="isec">
+            <summary><span class="kind k3mf">3MF</span><span class="mono">Hanging rail.3mf</span><span class="dim small">1 plate · locked · 1 part</span><span class="sumx"><span class="dots"><i style="background:var(--g1)"></i></span></span></summary>
+            <div class="tblwrap"><table>
+              <thead><tr><th><span class="cb"></span></th><th>Item</th><th>Unit</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+              <tbody>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:10%;top:44%;width:80%;height:12%"></i><i style="left:20%;top:20%;width:10%;height:20%"></i><i style="left:70%;top:20%;width:10%;height:20%"></i></span><div class="stack"><span>Rail + hooks</span><span class="sub">plate 2 · print by object</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">1</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>PETG · Black</span><span class="src">from file</span></div></td>
+                  <td><span class="seg"><span>Split</span><span>Together</span><span>Solo</span><span class="on">Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+              </tbody>
+            </table></div>
+          </details>
+
+          <details class="isec" open>
+            <summary><span class="kind kstl">STL</span><span>Loose STL files</span><span class="dim small">3 files · 23 parts</span><span class="sumx"><span class="dots"><i style="background:var(--g2)"></i><i style="background:var(--g1)"></i><i style="background:var(--g1)"></i></span></span></summary>
+            <div class="tblwrap"><table>
+              <thead><tr><th><span class="cb"></span></th><th>Item</th><th>Unit</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+              <tbody>
+                <tr class="g2"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:18%;top:18%;width:64%;height:64%;border-radius:50%"></i></span><div class="stack"><span>Spiral planter.stl</span><span class="sub">Ø 210 mm · vase mode</span></div></div></td>
+                  <td><span class="sub">file</span></td><td><span class="input qty">3</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#5b7f4a"></span>PLA Silk · Moss green</span><span class="src over">set by user</span></div></td>
+                  <td><span class="seg"><span>Split</span><span>Together</span><span class="on">Solo</span><span>Locked</span></span></td><td><span class="gtag g2">Show pieces</span></td></tr>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:15%;top:35%;width:70%;height:30%"></i></span><div class="stack"><span>Drip tray.stl</span><span class="sub">120 × 60 mm</span></div></div></td>
+                  <td><span class="sub">file</span></td><td><span class="input qty">8</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>PLA · Black</span><span class="src over">set by user</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+                <tr class="g1"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:30%;top:40%;width:40%;height:20%"></i></span><div class="stack"><span>Label tag.stl</span><span class="sub">40 × 15 mm</span></div></div></td>
+                  <td><span class="sub">file</span></td><td><span class="input qty">12</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#f4f4f2"></span>PLA · White</span><span class="src over">set by user</span></div></td>
+                  <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag g1">Structure</span></td></tr>
+              </tbody>
+            </table></div>
+          </details>
+
+          <details class="isec" open>
+            <summary><span class="kind kgc">GCODE</span><span class="mono">Planter base.gcode.3mf</span><span class="dim small">1 plate · sliced for Bambu P1S · 2 prints</span><span class="sumx"><span class="dim tiny">no group needed</span></span></summary>
+            <div class="tblwrap"><table>
+              <thead><tr><th><span class="cb"></span></th><th>Item</th><th>Unit</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+              <tbody>
+                <tr class="gn"><td><span class="cb"></span></td><td><div class="cell-item"><span class="thumb"><i style="left:20%;top:20%;width:60%;height:60%"></i></span><div class="stack"><span>Planter base</span><span class="sub">plate 1 · eligible: Bambu P1S</span></div></div></td>
+                  <td><span class="sub">plate</span></td><td><span class="input qty">2</span></td>
+                  <td><div class="stack"><span class="fil"><span class="sw" style="background:#1d1d1f"></span>PLA · Black</span><span class="src">from slice</span></div></td>
+                  <td><span class="seg na"><span>Split</span><span>Together</span><span>Solo</span><span class="on">As sliced</span></span></td><td><span class="gtag none">—</span></td></tr>
+              </tbody>
+            </table></div>
+          </details>
+        </div>
+      </div>
+      <div class="navbar"><span class="btn ghost">← Details</span><span class="dim tiny">1 item in Default Group</span><span class="btn primary">Next: Groups →</span></div>
+    </div>
+    <aside class="notes">
+      <div class="note new"><span class="eyebrow">Group banner</span><p>A strip under the section tabs, on Items and Groups. Badges in order: All, Default Group, one per added group (name, items, parts), "+ New group". The badge you select filters the list: All shows every row coloured by group (this screen). Drag a row (⋮⋮) onto a badge to move it; dropping on "+ New group" creates and names one.</p></div>
+      <div class="note new"><span class="eyebrow">Row checkboxes</span><p>Every row and section header has a checkbox for bulk actions (next screen). Dragging a checked row moves every checked row.</p></div>
+      <div class="note new"><span class="eyebrow">Navigation</span><p>Section tabs (Details · Items · Groups · Review) are always visible and freely clickable, with counts and a "to fix" badge. The bottom bar adds Back / Next. Nothing is lost moving between tabs, and "Save draft" keeps it all.</p></div>
+      <div class="note new"><span class="eyebrow">Collapsible sections</span><p>One section per source file (click a header; Hanging rail is collapsed). A collapsed header still shows the summary and a colour dot per item, so group membership reads at a glance. "By group" re-sorts the same rows under group headers instead.</p></div>
+      <div class="note"><span class="eyebrow">Item cases</span><p>3MF plate × qty (bundle of the plate's objects), 3MF object × qty, STL × qty, gcode × qty (never packed, no group). Packing rule per item: Split / Together / Solo / Locked.</p></div>
+      
+    </aside>
+  </section>
+
+  <!-- STEP 1b: UNGROUPED + BULK -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">1b</span><h2>Items, Default Group selected, bulk edit</h2><span class="muted">Earlier, right after the files were added: new items land in Default Group.</span></div>
+    <div class="screen">
+      <div class="proj-head">
+        <div class="proj-title"><span class="name">Living wall kit</span><div class="row"><span class="pill idle">Planning</span><span class="btn ghost sm">Save draft</span></div></div>
+        <div class="sections">
+          <span class="sec done">Details</span><span class="sec on">Items <span class="n">10</span></span><span class="sec">Groups <span class="n">2</span></span><span class="sec">Review <span class="n bad">1 to fix</span></span>
+        </div>
+      </div>
+      <div class="gbanner">
+        <div class="row between"><span class="label">Groups · drag items onto a badge</span><span class="dim tiny">Showing: Default Group</span></div>
+        <div class="gbadges">
+          <span class="gb all"><span class="sw2"></span>All <span class="cnt">10 items</span></span>
+          <span class="gb none sel"><span class="sw2"></span>Default Group <span class="cnt">3 items</span></span>
+          <span class="gb g1"><span class="sw2"></span>Structure <span class="cnt">4 items · 13 parts</span></span>
+          <span class="gb g2"><span class="sw2"></span>Show pieces <span class="cnt">2 items · 5 parts</span></span>
+          <span class="gb add">+ New group</span>
+        </div>
+      </div>
+      <div class="screen-body">
+        <div class="bulk"><span class="cb part"></span><b>2 selected</b><span class="dim">·</span><span class="btn sm">Move to group ▾</span><span class="btn sm">Packing ▾</span><span class="btn sm">Set filament…</span><span class="btn sm">Set qty…</span><span class="btn ghost sm">Remove</span><span class="btn ghost sm" style="margin-left:auto">Clear selection</span></div>
+        <div class="tblwrap" style="border:1px solid var(--border-1)"><table>
+          <thead><tr><th><span class="cb part"></span></th><th>Item</th><th>From</th><th>Qty</th><th>Filament</th><th>Packing</th><th>Group</th></tr></thead>
+          <tbody>
+            <tr class="gn"><td><span class="cb"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:28%;top:28%;width:44%;height:44%;border-radius:50%"></i></span><div class="stack"><span>regular pot</span><span class="sub">object #6</span></div></div></td>
+              <td class="mono small">cloud pots.3mf</td><td><span class="input qty">4</span></td>
+              <td><span class="fil"><span class="sw" style="background:#f4f4f2"></span>PLA Matte · White</span></td>
+              <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag none">Default Group</span></td></tr>
+            <tr class="gn"><td><span class="cb on"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:15%;top:35%;width:70%;height:30%"></i></span><div class="stack"><span>Drip tray.stl</span><span class="sub">120 × 60 mm</span></div></div></td>
+              <td class="mono small">loose STL</td><td><span class="input qty">8</span></td>
+              <td><span class="fil"><span class="sw" style="background:#1d1d1f"></span>PLA · Black</span></td>
+              <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag none">Default Group</span></td></tr>
+            <tr class="gn"><td><span class="cb on"></span> <span class="handle">⋮⋮</span></td><td><div class="cell-item"><span class="thumb"><i style="left:30%;top:40%;width:40%;height:20%"></i></span><div class="stack"><span>Label tag.stl</span><span class="sub">40 × 15 mm</span></div></div></td>
+              <td class="mono small">loose STL</td><td><span class="input qty">12</span></td>
+              <td><span class="fil"><span class="sw" style="background:#f4f4f2"></span>PLA · White</span></td>
+              <td><span class="seg"><span class="on">Split</span><span>Together</span><span>Solo</span><span>Locked</span></span></td><td><span class="gtag none">Default Group</span></td></tr>
+          </tbody>
+        </table></div>
+        <p class="dim small">A single group shows as a flat list with a "From" column. Moving the 2 selected rows to Structure leaves 1 here.</p>
+      </div>
+      <div class="navbar"><span class="btn ghost">← Details</span><span class="dim tiny">3 items in Default Group</span><span class="btn primary">Next: Groups →</span></div>
+    </div>
+    <aside class="notes">
+      <div class="note new"><span class="eyebrow">Default Group</span><p>Every project has one, so a user who never makes groups just sets its printers and process profile and queues. New items land in it. It has the same settings as any group and can be renamed, but not deleted. If it ends up empty, it adds nothing to the queue.</p></div>
+      <div class="note new"><span class="eyebrow">Filter</span><p>Selecting any group badge, Default Group included, shows only that group's items. All shows everything, coloured by group.</p></div>
+      <div class="note new"><span class="eyebrow">Bulk actions</span><p>Move to group, packing rule, filament, qty, remove. A section or header checkbox selects all its rows; the dash means some are selected. The header checkbox only selects what the current filter shows.</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 2: GROUPS -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">2</span><h2>Groups</h2><span class="muted">The same banner selects which group you are editing.</span></div>
+    <div class="screen">
+      <div class="proj-head">
+        <div class="proj-title"><span class="name">Living wall kit</span><div class="row"><span class="pill idle">Planning</span><span class="btn ghost sm">Save draft</span></div></div>
+        <div class="sections">
+          <span class="sec done">Details</span>
+          <span class="sec done">Items <span class="n">10</span></span>
+          <span class="sec on">Groups <span class="n">2</span></span>
+          <span class="sec">Review <span class="n bad">1 to fix</span></span>
+        </div>
+      </div>
+      <div class="gbanner">
+        <div class="row between"><span class="label">Groups</span><span class="dim tiny">Drag badges to set queue order</span></div>
+        <div class="gbadges">
+          <span class="gb none"><span class="sw2"></span>Default Group <span class="cnt">0 items</span></span>
+          <span class="gb g2"><span class="sw2"></span>Show pieces <span class="cnt">3 items · 9 parts</span></span>
+          <span class="gb g1 sel"><span class="sw2"></span>Structure <span class="cnt">6 items · 33 parts</span></span>
+          <span class="gb add">+ New group</span>
+        </div>
+      </div>
+      <div class="screen-body">
+        <div class="gedit g1">
+          <div class="gedit-head"><div class="row"><h3>Structure</h3><span class="btn ghost sm">Rename</span></div><div class="row"><span class="pill acc">Fill each bed</span><span class="btn ghost sm">Delete group</span></div></div>
+          <div class="gedit-body" style="grid-template-columns:minmax(0,1fr);border-bottom:1px solid var(--border-1)">
+            <div class="field"><span class="label">Eligible printers</span>
+              <div class="ebadges">
+                <span class="eb model">Bambu P1S <span class="x">×</span></span>
+                <span class="eb model">Bambu A1 mini <span class="x">×</span></span>
+                <span class="eb model">Bambu H2D <span class="x">×</span></span>
+                <span class="eb model">Snapmaker U1 <span class="x">×</span></span>
+                <span class="eb unit">SV08 Garage <span class="x">×</span></span>
+                <span class="eb add">+ Printer</span>
+              </div>
+              <span class="dim tiny">Yellow = any printer of that model, including ones added later. Blue = that one printer.</span>
+            </div>
+            <div class="menu">
+              <div class="msec"><span class="input" style="margin:4px 10px">Search printers and models…</span></div>
+              <div class="msec"><span class="mh label">Group of printers</span>
+                <span class="mi"><span class="k" style="background:var(--accent)"></span>Any printer<span class="r">7 now</span></span>
+                <span class="mi dis"><span class="k" style="background:var(--accent)"></span>Bambu P1S<span class="r">added</span></span>
+                <span class="mi hover"><span class="k" style="background:var(--accent)"></span>Sovol SV08<span class="r">1 now</span></span>
+              </div>
+              <div class="msec"><span class="mh label">Specific printer</span>
+                <span class="mi dis"><span class="k" style="background:var(--info)"></span>P1S #1<span class="r">in Bambu P1S</span></span>
+                <span class="mi dis"><span class="k" style="background:var(--info)"></span>SV08 Garage<span class="r">added</span></span>
+                <span class="mi"><span class="k" style="background:var(--info)"></span>Spare Voron<span class="r">offline</span></span>
+              </div>
+            </div>
+            <div class="field"><span class="label">Process profile for each</span>
+              <div class="mini-tbl">
+                <div class="hd"><span class="label">Eligible</span><span class="label">Process profile</span></div>
+                <div><span><span class="eb model sm">Bambu P1S</span></span><span class="input select">Printer default</span></div>
+                <div><span><span class="eb model sm">Bambu A1 mini</span></span><span class="input select">Printer default</span></div>
+                <div><span><span class="eb model sm">Bambu H2D</span></span><span class="input select">Printer default</span></div>
+                <div><span><span class="eb model sm">Snapmaker U1</span></span><span class="input select">Printer default</span></div>
+                <div><span><span class="eb unit sm">SV08 Garage</span></span><span class="input select">0.28mm Draft @Sovol SV08</span></div>
+              </div>
+              <span class="dim tiny">Filament comes from each item, so only the process profile is set here.</span>
+            </div>
+            </div>
+          </div>
+          <div class="gedit-body">
+            <div class="gcol">
+              <div class="field"><span class="label">Items in this group · drop more here</span>
+                <div class="memberlist">
+                  <div><span class="handle">⋮⋮</span>Pole segment <span class="kind k3mf">PLATE</span><span class="q">× 6</span></div>
+                  <div><span class="handle">⋮⋮</span>Top cap + clip <span class="kind k3mf">PLATE</span><span class="dim tiny">together</span><span class="q">× 2</span></div>
+                  <div><span class="handle">⋮⋮</span>Wall bracket <span class="kind k3mf">PLATE</span><span class="q">× 1 (4 parts)</span></div>
+                  <div><span class="handle">⋮⋮</span>Drip tray <span class="kind kstl">STL</span><span class="q">× 8</span></div>
+                  <div><span class="handle">⋮⋮</span>Label tag <span class="kind kstl">STL</span><span class="q">× 12</span></div>
+                  <div><span class="handle">⋮⋮</span>Rail + hooks <span class="kind k3mf">PLATE</span><span class="dim tiny">locked</span><span class="q">× 1</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="gcol">
+              <div class="field"><span class="label">When to pack</span>
+                <div class="radio on"><span class="dot"></span><div class="stack"><span class="t">When a printer picks it up</span><span class="d">Each idle printer gets as many remaining parts as Orca fits on its bed.</span></div></div>
+                <div class="radio"><span class="dot"></span><div class="stack"><span class="t">Now, for one bed size</span><span class="d">Plates are made once, for the bed you pick.</span></div></div>
+              </div>
+              <div class="check"><span class="box on">✓</span><span>Keep colours on separate plates on single-nozzle printers <span class="dim">(a toolchanger or a multicolour part lifts this)</span></span></div>
+              <div class="field"><span class="label">Max parts per plate</span><span class="input" style="width:110px"><span class="dim">No limit</span></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="collapsed-group"><b>Show pieces</b><span class="pill info">Fixed bed 256 × 256</span><span class="row" style="gap:6px"><span class="eb model sm">Bambu P1S</span><span class="eb model sm">Bambu H2D</span><span class="eb model sm">Snapmaker U1</span></span><span class="dim small">0.12mm Fine for each</span></div>
+      </div>
+      <div class="navbar"><span class="btn ghost">← Items</span><span></span><span class="btn primary">Next: Review →</span></div>
+    </div>
+    <aside class="notes">
+      <div class="note new"><span class="eyebrow">Creating a group</span><p>Click "+ New group" (here or on Items): it adds a badge with an editable name and opens its settings. A new group starts with <b>no</b> eligible printers (opt-in), and is packed when a printer picks it up.</p></div>
+      <div class="note new"><span class="eyebrow">Eligible printers as badges</span><p>Only the chosen ones show, each with × to remove. "+ Printer" opens the menu shown open here: a group of printers (Any printer, or any printer of a model; yellow) or a specific printer (blue). Entries already added, or covered by a model you picked, are greyed out.</p></div>
+      <div class="note new"><span class="eyebrow">Same as New Job</span><p>New Job's printer step switches to this badge picker too, so both flows match. Each badge gets one process profile row.</p></div>
+      <div class="note change"><span class="eyebrow">Change</span><p>"Any printer" is new, and New Job gets it too, so the two flows stay identical. Today New Job offers specific printers and Any &lt;model&gt; only.</p></div>
+      <div class="note new"><span class="eyebrow">Queue order</span><p>Badge order is queue order. Drag "Show pieces" ahead of "Structure" and its jobs queue first.</p></div>
+      <div class="note new"><span class="eyebrow">No "All" here</span><p>The Groups tab hides the All badge: there is no "all groups" settings view. Default Group stays because it is a real group with its own settings. The banner component just takes a show-All flag.</p></div>
+      <div class="note"><span class="eyebrow">Pack at claim vs fixed bed</span><p>"Structure" is a pool (option 4). "Show pieces", collapsed here, packs now for 256 × 256, and any printer whose bed contains that can take it (options 1–3).</p></div>
+      <div class="note"><span class="eyebrow">Process profile per group</span><p>"Printer default" uses the profile set on each printer. A row per model overrides it, so draft vs fine quality is just two groups.</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 3: REVIEW -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">3</span><h2>Review and queue</h2><span class="muted">Each check links back to the tab that fixes it.</span></div>
+    <div class="screen">
+      <div class="proj-head">
+        <div class="proj-title"><span class="name">Living wall kit</span><div class="row"><span class="pill idle">Planning</span><span class="btn ghost sm">Save draft</span></div></div>
+        <div class="sections">
+          <span class="sec done">Details</span><span class="sec done">Items <span class="n">10</span></span><span class="sec done">Groups <span class="n">2</span></span><span class="sec on">Review <span class="n bad">1 to fix</span></span>
+        </div>
+      </div>
+      <div class="screen-body">
+        <div class="field"><span class="label">Checks</span>
+          <div class="checks">
+            <div class="chk"><span class="pill err">Fix</span><span><b>Structure:</b> Bambu P1S #3 has no default process profile, and the group uses "Printer default" for P1S. Set one on the printer or add a P1S row to the group.</span><span class="btn sm">Go to Groups</span></div>
+            <div class="chk"><span class="pill warn">Note</span><span><b>Cloud logo pot</b> needs PLA Black + PLA White loaded together. Right now only P1S #1, H2D and U1 qualify; P1S #2 is single-colour only.</span><span class="dim">—</span></div>
+            <div class="chk"><span class="pill warn">Note</span><span><b>Pole segment</b> (238 mm tall) is too tall for the A1 mini (180 mm Z). The A1 mini can still take other Structure parts.</span><span class="dim">—</span></div>
+            <div class="chk"><span class="pill ok">OK</span><span><b>Planter base.gcode.3mf</b> is sliced for Bambu P1S; eligible: P1S ×3.</span><span class="dim">—</span></div>
+            <div class="chk"><span class="pill ok">OK</span><span>Every item is in a group, and every part fits at least one eligible printer.</span><span class="dim">—</span></div>
+          </div>
+        </div>
+        <div class="field"><span class="label">Will be queued, in group order</span>
+          <div class="queue">
+            <div class="qrow g2"><span class="qpos">1</span><div class="stack"><span>Show pieces · plates 1–3</span><span class="dim tiny">packed now for 256 × 256 · 4 pots + 2 logo pots</span></div><span><span class="kind k3mf">3 JOBS</span></span><span class="muted">P1S, H2D, U1</span><span class="pill idle">Queued</span></div>
+            <div class="qrow g2"><span class="qpos">2</span><div class="stack"><span>Spiral planter × 3</span><span class="dim tiny">solo · one per plate</span></div><span><span class="kind kstl">3 JOBS</span></span><span class="muted">P1S, H2D, U1</span><span class="pill idle">Queued</span></div>
+            <div class="qrow g1 pool"><span class="qpos">3</span><div class="stack"><span>Structure pool</span><span class="dim tiny">32 parts · packed when a printer picks it up</span></div><span><span class="kind" style="color:var(--g1);border-color:var(--g1)">POOL</span></span><span class="muted">4 models + SV08 Garage</span><span class="pill acc">Waiting</span></div>
+            <div class="qrow g1"><span class="qpos">4</span><div class="stack"><span>Rail + hooks × 1</span><span class="dim tiny">locked plate · centred for the bed</span></div><span><span class="kind k3mf">1 JOB</span></span><span class="muted">Structure printers it fits</span><span class="pill idle">Queued</span></div>
+            <div class="qrow"><span class="qpos">5</span><div class="stack"><span>Planter base × 2</span><span class="dim tiny">pre-sliced</span></div><span><span class="kind kgc">2 JOBS</span></span><span class="muted">P1S ×3</span><span class="pill idle">Queued</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="navbar"><span class="btn ghost">← Groups</span><span class="dim tiny">Fix 1 issue to queue</span><span class="btn primary" style="opacity:.45">Queue project</span></div>
+    </div>
+    <aside class="notes">
+      <div class="note"><span class="eyebrow">Fit checks</span><p>Each part is checked against its group's beds (X, Y and Z). A part that fits none of them is an error, so a pool can't get stuck.</p></div>
+      <div class="note new"><span class="eyebrow">Fix links</span><p>Each problem names the tab that fixes it. The Review tab badge counts what's open; "Queue project" stays disabled until it's zero.</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 4: RUNNING -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">4</span><h2>Running: the pool in the queue</h2><span class="muted">What the user sees once printers start pulling.</span></div>
+    <div class="screen">
+      <div class="screen-bar"><span class="crumb">Queue · <b>Living wall kit</b></span><span class="dim mono small">updated live</span></div>
+      <div class="screen-body">
+        <div class="queue">
+          <div class="qrow g1 pool"><span class="qpos">3</span><div class="stack"><span>Structure pool</span><div class="bar"><b class="okc" style="width:28%"></b><b style="left:28%;width:41%;opacity:.7"></b></div><span class="dim tiny">9 done · 13 printing · 10 left (incl. 1 back after a failure)</span></div><span><span class="kind" style="color:var(--g1);border-color:var(--g1)">POOL</span></span><span class="muted">10 parts left</span><span class="pill acc">Open</span></div>
+          <div class="qrow claimed"><span class="qpos">↳</span><div class="stack"><span>Plate for Sovol SV08</span><span class="dim tiny">2 pole segments, 4 drip trays, 1 top cap + clip</span></div><span class="muted">350 × 350</span><span class="muted">2 h 51 m left</span><span class="pill info">Printing</span></div>
+          <div class="qrow claimed"><span class="qpos">↳</span><div class="stack"><span>Plate for Snapmaker U1</span><span class="dim tiny">4 label tags (white), 2 drip trays (black)</span></div><span class="muted">270 × 270 · mixed colours</span><span class="muted">1 h 12 m left</span><span class="pill info">Printing</span></div>
+          <div class="qrow claimed"><span class="qpos">↳</span><div class="stack"><span>Plate for Bambu P1S #2</span><span class="dim tiny">packing the 8 remaining black parts…</span></div><span class="muted">256 × 256</span><span class="muted">—</span><span class="pill acc">Slicing</span></div>
+          <div class="qrow claimed"><span class="qpos">↳</span><div class="stack"><span>Plate for Bambu A1 mini</span><span class="dim tiny">6 label tags (white)</span></div><span class="muted">180 × 180</span><span class="muted">done</span><span class="pill ok">Complete</span></div>
+          <div class="qrow g1"><span class="qpos">4</span><div class="stack"><span>Rail + hooks × 1</span><span class="dim tiny">locked plate</span></div><span><span class="kind k3mf">1 JOB</span></span><span class="muted">waiting for PETG Black</span><span class="pill idle">Queued</span></div>
+        </div>
+        <p class="dim small">The H2D has PETG loaded, so it skips the PLA pool and will take "Rail + hooks" below. The pool keeps its place for everyone else.</p>
+      </div>
+    </div>
+    <aside class="notes">
+      <div class="note"><span class="eyebrow">Fall-through</span><p>Wrong filament, no part fits the bed, another printer mid-pack, or a pack error: the printer skips the pool and takes the next job.</p></div>
+      <div class="note"><span class="eyebrow">Colour rule in action</span><p>The U1 is a toolchanger, so it may mix white tags with black trays. P1S #2 only ever gets single-colour plates.</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 5: PLATE CLEAR -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">After</span><h2>Ready for new work, with failure report</h2><span class="muted">Plate clear and outcome reporting are one step, down to the part.</span></div>
+    <div class="screen">
+      <div class="screen-bar"><span class="crumb">Fleet / <b>Sovol SV08</b> / Ready for new work</span></div>
+      <div class="screen-body">
+        <div class="dialog">
+          <div class="dialog-head"><h3>Print results · Sovol SV08</h3><span class="muted small">Living wall kit · Structure plate · finished 14:22 · clearing marks the printer ready</span></div>
+          <div class="dialog-body">
+            <div class="row between"><span class="label">How did each part print?</span><div class="row"><span class="btn sm">Nothing failed</span><span class="btn sm">Whole plate failed</span></div></div>
+            <div>
+              <div class="res-head"><span class="label">Part</span><span class="label">On plate</span><span class="label">Succeeded</span><span class="label">Failed</span></div>
+              <div class="res-row"><span>Pole segment</span><span class="dim mono">2</span><span class="okn">1</span><span class="stepper hot"><span>−</span><span>1</span><span>+</span></span></div>
+              <div class="res-row"><span>Drip tray</span><span class="dim mono">4</span><span class="okn">4</span><span class="stepper"><span>−</span><span>0</span><span>+</span></span></div>
+              <div class="res-row bundle"><span>Top cap + clip <span class="dim">· kept together · 1 set</span></span><span></span><span></span><span></span></div>
+              <div class="res-row part"><span>↳ Top cap</span><span class="dim mono">1</span><span class="okn">0</span><span class="stepper hot"><span>−</span><span>1</span><span>+</span></span></div>
+              <div class="res-row part"><span>↳ Clip</span><span class="dim mono">1</span><span class="okn">1</span><span class="stepper"><span>−</span><span>0</span><span>+</span></span></div>
+            </div>
+            <div class="result">
+              <span class="label">What happens</span>
+              <span><span class="pill ok nodot">back to pool</span> 1 pole segment → Structure pool (2nd attempt of 2)</span>
+              <span><span class="pill err nodot">held</span> Top cap has now failed on 2 different printers → held for review. The good clip counts as done.</span>
+                            <span class="dim">Logged per part and per printer on the project's failure log. The printer is marked ready.</span>
+            </div>
+          </div>
+          <div class="dialog-foot"><span class="btn ghost">Cancel</span><span class="btn primary">Clear plate and report</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div class="note new"><span class="eyebrow">Succeeded / failed counts</span><p>Each part starts at all succeeded, 0 failed. Raising Failed lowers Succeeded by the same amount. "Nothing failed" and "Whole plate failed" fill in every row at once.</p></div>
+      <div class="note new"><span class="eyebrow">Partial bundle failure</span><p>A "Together" bundle is reported part by part, and only failed parts reprint. Failed objects from a locked plate reprint alone, in their original positions.</p></div>
+      <div class="note"><span class="eyebrow">Auto-restore</span><p>Failed parts go back automatically: to the pool for packed parts, or as a new job for solo, locked and gcode items.</p></div>
+      <div class="note"><span class="eyebrow">Retry limit</span><p>Counted per part, against the Themis-wide limit (2). A held part waits on the project page for "Reprint" or "Drop".</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 6: FAILURE LOG -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">After</span><h2>Project failure log</h2><span class="muted">On the project page: which parts to fix, at part level.</span></div>
+    <div class="screen">
+      <div class="screen-bar"><span class="crumb">Projects / <b>Living wall kit</b> / Failures</span><span class="row"><span class="pill err">1 held</span><span class="pill warn">2 retrying</span></span></div>
+      <div class="screen-body">
+        <div class="tblwrap flog" style="border:1px solid var(--border-1)"><table>
+          <thead><tr><th>Part</th><th>From</th><th>Group</th><th>Attempts</th><th>Last failure</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr class="g1"><td><div class="stack"><span>Top cap</span><span class="sub">part of "Top cap + clip"</span></div></td><td class="mono small">Hex-Moss-Pole.3mf · plate 6</td><td><span class="gtag g1">Structure</span></td>
+              <td><span class="attempts"><i class="f"></i><i class="f"></i></span> <span class="dim mono tiny">2 / 2</span></td><td class="small">Sovol SV08 · 14:22<br><span class="dim">earlier: P1S #1 · 09:05</span></td><td><span class="pill err">Held</span></td><td><div class="row"><span class="btn sm">Reprint</span><span class="btn ghost sm">Drop</span></div></td></tr>
+            <tr class="g1"><td><div class="stack"><span>Clip</span><span class="sub">part of "Top cap + clip" · reprints alone</span></div></td><td class="mono small">Hex-Moss-Pole.3mf · plate 6</td><td><span class="gtag g1">Structure</span></td>
+              <td><span class="attempts"><i class="f"></i><i></i></span> <span class="dim mono tiny">1 / 2</span></td><td class="small">P1S #3 · 10:30</td><td><span class="pill warn">Back in pool</span></td><td></td></tr>
+            <tr class="g1"><td><div class="stack"><span>Drip tray</span><span class="sub">2 of 8</span></div></td><td class="mono small">Drip tray.stl</td><td><span class="gtag g1">Structure</span></td>
+              <td><span class="attempts"><i class="f"></i><i class="f"></i></span> <span class="dim mono tiny">both on P1S #2</span></td><td class="small">P1S #2 · 12:10<br><span class="dim">earlier: P1S #2 · 08:15</span></td><td><span class="pill" style="color:var(--g1);background:var(--g1-bg)">Waived on P1S #2</span></td><td><span class="btn ghost sm">Clear waiver</span></td></tr>
+            <tr class="g1"><td><div class="stack"><span>Pole segment</span><span class="sub">1 of 6</span></div></td><td class="mono small">Hex-Moss-Pole.3mf · plate 1</td><td><span class="gtag g1">Structure</span></td>
+              <td><span class="attempts"><i class="f"></i><i></i></span> <span class="dim mono tiny">1 / 2</span></td><td class="small">Sovol SV08 · 14:22</td><td><span class="pill warn">Back in pool</span></td><td></td></tr>
+            <tr class="g2"><td><div class="stack"><span>Spiral planter</span><span class="sub">1 of 3 · solo</span></div></td><td class="mono small">Spiral planter.stl</td><td><span class="gtag g2">Show pieces</span></td>
+              <td><span class="attempts"><i class="f"></i><i></i></span> <span class="dim mono tiny">1 / 2</span></td><td class="small">H2D · 11:40</td><td><span class="pill warn">Requeued</span></td><td></td></tr>
+          </tbody>
+        </table></div>
+        <p class="dim small">Top cap failed on two different printers, so it's held: likely the model or settings. Drip tray failed twice on the same printer, so only that printer is waived; it keeps printing elsewhere.</p>
+      </div>
+    </div>
+    <aside class="notes">
+      <div class="note"><span class="eyebrow">Later (earmarked)</span><p>Making a new project from the plates whose parts are held. Not in this design.</p></div>
+      <div class="note new"><span class="eyebrow">Printer waivers</span><p>Repeat failures of one part on one printer waive that printer for that part only, in every project. It skips (falls through) any job containing the part until someone clears the waiver.</p></div>
+      <div class="note new"><span class="eyebrow">Part-level history</span><p>Every failure is logged per part (not per plate or bundle) with printer and time, so a part that keeps failing stands out. Bundle membership is shown so the context isn't lost.</p></div>
+      <div class="note change"><span class="eyebrow">Change</span><p>Today <span class="mono">job_item_failures</span> counts per project item and plate only, from guessed per-plate counts. This needs counts per part per job, from the real list of what was on each plate.</p></div>
+    </aside>
+  </section>
+
+  <!-- STEP 7: SETTINGS -->
+  <section class="step">
+    <div class="step-head"><span class="step-num">Settings</span><h2>Where the defaults live</h2><span class="muted">Two places: the existing Settings page, and the printer editor.</span></div>
+    <div class="col" style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div class="screen">
+        <div class="screen-bar"><span class="crumb">Settings / <b>Print defaults</b></span></div>
+        <div class="settings-shell">
+          <nav class="subnav">
+            <span class="sh">General</span><span>Tags</span><span class="on">Print defaults</span><span>Maintenance</span><span>Costs</span>
+            <span class="sh">Integrations</span><span>Spoolman</span><span>Webhooks</span>
+            <span class="sh">Security</span><span>API keys</span>
+          </nav>
+          <div class="setpane">
+            <div class="setrow"><div class="stack"><span>Always use latest slicer settings</span><span class="dim tiny">Existing setting</span></div><span class="toggle on"></span></div>
+            <div class="setrow"><div class="stack"><span>Failed part retries</span><span class="dim tiny">How many times a part may fail, on different printers, before it's held on its project for you to reprint or drop.</span></div><div class="row"><span class="input qty">2</span><span class="saved">Saved</span></div></div>
+            <div class="setrow"><div class="stack"><span>Waive a printer for a part after</span><span class="dim tiny">Failures of the same part on the same printer, in any project, before that printer stops getting it. Cleared on the printer's page.</span></div><div class="row"><span class="input qty">2</span><span class="dim tiny">failures</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="screen-bar"><span class="crumb">Fleet / <b>Bambu P1S #2</b> / Edit</span></div>
+        <div class="screen-body">
+          <div class="fleetcard flagged">
+            <div class="row between"><b>P1S #2</b><span class="pill ok">Ready</span></div>
+            <div class="row"><span class="pill warn">3 waived parts</span><span class="dim tiny">check the plate / maintenance</span></div>
+            <span class="dim tiny">How the Fleet card shows the flag. With "Stop taking jobs" reached it would read "Paused: too many waived parts" and take no new jobs.</span>
+          </div>
+          <div class="panel">
+            <span class="label">Slicing</span>
+            <div class="field"><span class="label">Machine profile</span><span class="input">Bambu Lab P1S 0.4 nozzle <span class="dim tiny" style="margin-left:auto">from model</span></span></div>
+            <div class="field"><span class="label">Default process profile</span><span class="input select">0.20mm Standard @BBL P1S</span></div>
+            <div class="divider"></div>
+            <div class="row between"><div class="stack"><span>Single colour only</span><span class="dim tiny">Take jobs in any loaded colour, never multicolour plates.</span></div><span class="toggle on"></span></div>
+          </div>
+          <div class="panel">
+            <div class="row between"><span class="label">Waived parts · this printer skips jobs containing them</span><span class="btn ghost sm">Clear all</span></div>
+            <div class="row"><span class="pill warn">3 waived · flag level reached</span><span class="dim tiny">Washing the plate or doing maintenance often fixes this. Clear the waivers afterwards.</span></div>
+            <div>
+              <div class="waiver"><div class="stack"><span>Drip tray.stl</span><span class="dim tiny">failed 2× here · last 12:10 today · Living wall kit, Herb shelf</span></div><span class="row" style="gap:6px"><span class="pill" style="color:var(--g1);background:var(--g1-bg)">Waived</span><span class="btn sm">Test print</span><span class="btn ghost sm">Clear</span></span></div>
+              <div class="waiver"><div class="stack"><span>Label tag.stl</span><span class="dim tiny">failed 2× here · last 11:02 today</span></div><span class="row" style="gap:6px"><span class="pill" style="color:var(--g1);background:var(--g1-bg)">Waived</span><span class="btn sm">Test print</span><span class="btn ghost sm">Clear</span></span></div>
+              <div class="waiver"><div class="stack"><span>Hex-Moss-Pole.3mf · Wall bracket</span><span class="dim tiny">failed 2× here · last 08:40 today</span></div><span class="row" style="gap:6px"><span class="pill" style="color:var(--g1);background:var(--g1-bg)">Waived</span><span class="btn sm">Test print</span><span class="btn ghost sm">Clear</span></span></div>
+              <div class="waiver"><div class="stack"><span>Hex-Moss-Pole.3mf · Pole segment</span><span class="dim tiny">failed 1× here · not waived yet</span></div><span class="row" style="gap:6px"><span class="pill idle">Watching</span><span class="btn ghost sm">Reset</span></span></div>
+            </div>
+            <div class="result">
+              <span class="label">Test print: Drip tray.stl on P1S #2</span>
+              <span>Makes a one-part job with this printer's default process profile and loaded filament, and keeps the waiver until you clear it.</span>
+              <span><span class="pill info nodot">P1S #2 is printing project work</span> It stops taking queue work now and prints the test as soon as the current print's plate is cleared.</span>
+              <span class="dim">If the printer is idle and holds no queue job, the test is sent right away. After it prints, the results dialog asks "Did it print well?" and offers Clear waiver.</span>
+              <div class="row"><span class="btn ghost sm">Cancel</span><span class="btn primary sm">Queue test print next</span></div>
+            </div>
+            <div class="divider"></div>
+            <div class="setrow" style="border:0;padding:0"><div class="stack"><span>Flag this printer at</span><span class="dim tiny">Waived parts before the printer shows a warning on Fleet.</span></div><div class="row"><span class="input qty">3</span><span class="dim tiny">parts</span></div></div>
+            <div class="setrow" style="border:0;padding:0"><div class="stack"><span>Stop taking jobs at</span><span class="dim tiny">Waived parts before the printer pauses its queue. 0 = never.</span></div><div class="row"><span class="input qty">0</span><span class="dim tiny">off</span></div></div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div class="note new"><span class="eyebrow">Retry limit placement</span><p>Moved to the existing Settings → Print defaults page, next to the current slicer-cache setting, saved the same way.</p></div>
+      <div class="note"><span class="eyebrow">Per-printer settings</span><p>Only the per-printer items stay in the printer editor: the default process profile (next to the machine profile from the model), "Single colour only", and this printer's part waivers with Clear.</p></div>
+      <div class="note new"><span class="eyebrow">Test print</span><p>Each waived part has "Test print". It makes a one-part job for this printer only. If the printer is idle and holds no queue job, it's sent now. Otherwise the printer stops claiming queue work and the test is its next print. A good result offers Clear waiver.</p></div>
+      <div class="note new"><span class="eyebrow">Printer flag</span><p>Per printer, on its page: at the flag level (example 3) the printer shows a warning on Fleet, a sign it may need a plate wash or maintenance. The higher stop level pauses the printer's queue until waivers are cleared. It is 0 (off) by default.</p></div>
+      <div class="note new"><span class="eyebrow">Two thresholds</span><p>Retries count failures on <i>different</i> printers (a model problem → hold). "Waive after" counts failures on the <i>same</i> printer (a printer problem → waive). Both default to 2. A waiver belongs to the part (its file content and plate/object), so it carries across projects.</p></div>
+    </aside>
+  </section>
+
+  <p class="footer">Static mockup. Profile names, part sizes and the fleet are examples, not your data. Nothing here has been built.</p>
+</div>
+
+</body>
+</html>
