@@ -73,7 +73,7 @@ async def test_the_rewrite_keeps_every_row_and_every_child_row_and_stops_id_reus
         idx_before = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='jobs'"))).fetchall()}
         assert before and counts["job_printer_configs"] > 0, "the fixture must contain jobs and child rows"
         assert len(children) >= 4                                              # several tables hang off jobs; the CASCADE ones are the dangerous ones
-        await run_migrations(conn)
+        await _migrate_to(conn, 54)  # test this rewrite independently of later schema additions
     async with v053_db.begin() as conn:
         assert "AUTOINCREMENT" in (await _ddl(conn)).upper()
         assert [dict(r) for r in (await conn.execute(text("SELECT * FROM jobs ORDER BY id"))).mappings().all()] == before

@@ -103,6 +103,7 @@
     "not_before"
   ],
   "job_details_extra": [
+    "unmatched_filaments",
     "file",
     "plate",
     "printer_configs",

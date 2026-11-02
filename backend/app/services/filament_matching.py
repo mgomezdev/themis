@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def is_loaded(slot: dict) -> bool:
     """False only for a tool-changer placeholder (`{"empty": True, "type": ""}` keeps list index == tool index for an empty tool).
     A hand-entered slot without a type is still a slot."""
-    return bool(str(slot.get("type", "")).strip()) or not slot.get("empty")
+    return not slot.get("empty", False)
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,7 @@ class Verdict:
     eligible: bool
     plan: list[SlotUse] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    unmatched_filaments: list[int] = field(default_factory=list)
 
 
 def config_ask(config) -> ft.FilamentTuple:
@@ -100,6 +101,7 @@ def evaluate(config, loaded: list | None, conflicts=frozenset()) -> Verdict:
     if fmap:
         plan: list[SlotUse] = []
         reasons: list[str] = []
+        unmatched: list[int] = []
         for n, entry in enumerate(fmap, start=1):
             mf = entry.get("model_filament")
             prefix = f"colour {mf if mf is not None else n}: "
@@ -108,6 +110,7 @@ def evaluate(config, loaded: list | None, conflicts=frozenset()) -> Verdict:
                 problem = _pinned(int(pin), loaded, conflicts, prefix)
                 if problem:
                     reasons.append(problem)
+                    unmatched.append(mf if mf is not None else n)
                 else:
                     plan.append(SlotUse(mf, int(pin)))
                 continue
@@ -117,15 +120,17 @@ def evaluate(config, loaded: list | None, conflicts=frozenset()) -> Verdict:
                 plan.append(SlotUse(mf, idx))
             elif not loaded and not ask.is_undefined():
                 reasons.append(f"{prefix}no filament configured")
+                unmatched.append(mf if mf is not None else n)
             else:
                 reasons.append(f"{prefix}no loaded filament matches {ft.describe(ask)}" if not loaded else "")
                 reasons.extend(_why_not(ask, loaded, conflicts, prefix))
+                unmatched.append(mf if mf is not None else n)
         reasons = [r for r in reasons if r]
-        return Verdict(not reasons, plan if not reasons else [], reasons)
+        return Verdict(not reasons, plan if not reasons else [], reasons, unmatched)
 
     if tool_index is not None:
         problem = _pinned(int(tool_index), loaded, conflicts)
-        return Verdict(False, [], [problem]) if problem else Verdict(True, [SlotUse(None, int(tool_index))])
+        return Verdict(False, [], [problem], [1]) if problem else Verdict(True, [SlotUse(None, int(tool_index))])
 
     ask = config_ask(config)
     idx = _first_match(ask, loaded, conflicts)
@@ -134,8 +139,8 @@ def evaluate(config, loaded: list | None, conflicts=frozenset()) -> Verdict:
     if ask.is_undefined() and not loaded:
         return Verdict(True)                                    # a printer with no slots on record prints a "defer" ask on whatever it has
     if not loaded:
-        return Verdict(False, [], ["no filament configured"])
-    return Verdict(False, [], _why_not(ask, loaded, conflicts))
+        return Verdict(False, [], ["no filament configured"], [1])
+    return Verdict(False, [], _why_not(ask, loaded, conflicts), [1])
 
 
 def slot_for_config(config, loaded: list | None, conflicts=frozenset(), plan: list | None = None) -> dict | None:

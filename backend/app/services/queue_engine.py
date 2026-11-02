@@ -43,7 +43,7 @@ from ..plugins.host import plugin_host
 from ..eventing import EventEnvelope, EventError
 from ..eventing.hub import hub as event_hub
 from ..eventing.registry import CORE_EVENTS
-from . import filament_matching, scheduling
+from . import filament_matching, filament_tuple, scheduling
 from . import webhook_service
 
 
@@ -66,11 +66,30 @@ def _slot_for_config(config, loaded: list, conflicts=frozenset(), plan: list | N
 
 
 def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
+    if config.filament_map:
+        return None
     if config.tool_index is not None:
         return config.tool_index
-    if not config.filament_map and len(loaded) >= 2 and plan and plan[0].slot > 0:      # T0 is where an unrouted model prints anyway
+    if len(loaded) >= 2 and plan and plan[0].slot > 0:      # T0 is where an unrouted model prints anyway
         return plan[0].slot
     return None
+
+
+def _ams_mapping(plan: list, loaded: list) -> list[int] | None:
+    """Printer tray ids in model-filament order, never list indices or spool refs."""
+    if not plan:
+        return None
+    ordered = sorted(plan, key=lambda u: u.model_filament or 1)
+    if any(not 0 <= u.slot < len(loaded) for u in ordered):
+        raise ValueError("A mapped filament slot was removed before printing")
+    trays = [loaded[u.slot].get("ams_tray_id") for u in ordered]
+    if all(t is None for t in trays):
+        return None  # this printer does not use AMS tray identifiers
+    if any(type(t) is not int or t < 0 for t in trays):
+        raise ValueError("Every mapped filament needs a valid AMS tray identifier")
+    if [u.model_filament or 1 for u in ordered] != list(range(1, len(ordered) + 1)):
+        raise ValueError("AMS mapping must include every model filament in order")
+    return trays
 
 
 def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
@@ -86,6 +105,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
         "print_profile": config.print_profile if config else None,
+        "filament_profile_override": config.filament_profile if config else None,
         "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
         # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
@@ -100,6 +120,67 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "bed_mm": (float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2])
                   if printer else None,
     }
+
+
+def build_slice_request(job_id: int, printer_id: int, plate_number: int,
+                   p: dict, client, provider_id: str | None = None) -> tuple[SliceRequest, list | None]:
+    """The production SliceRequest for `p` (see `_slice_params`) plus the RESOLVED filament map (slot indices —
+    part of the cache key)."""
+    # Meaningful, unique artifact name; the printer decides its output format.
+    stem = os.path.splitext(os.path.basename(p["original_filename"] or "model"))[0]
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+    file_base = f"{safe}_p{plate_number}_j{job_id}"
+    export_args = client.orca_export_args(file_base) if client else []
+
+    loaded = p["loaded"]
+    tool_index = p["tool_index"]
+    filament_map = p["filament_map"]                                   # already resolved to slots at claim time
+
+    provider_id = provider_id or effective_provider_id(p.get('preferred_slicer'))
+    slice_tool, slice_map = slice_side_mapping(client, tool_index, filament_map)
+
+    multi_presets: list = []
+    if filament_map:
+        indices = [entry.get("model_filament") for entry in filament_map]
+        if any(type(index) is not int or index < 1 for index in indices) or len(set(indices)) != len(indices):
+            raise ValueError("Filament mapping requires a unique positive model filament number for every entry")
+        override = p.get("filament_profile_override")
+        for entry in filament_map:
+            tool = entry["tool_index"]
+            if not override and not loaded[tool].get("filament_profile"):
+                raise ValueError(f"Filament {entry['model_filament']} matched T{tool}, but that tool has no filament profile")
+        # Presets are indexed by physical tool after remapping. Never compact away an empty tool:
+        # that would give T2 the profile of T3. Unused tools may borrow the first matched profile.
+        fallback = p["filament_profile"]
+        if slice_map:
+            multi_presets = [override or s.get("filament_profile") or fallback for s in loaded]
+        else:
+            # AMS printers do not rewrite the source: the slicer's profiles stay in model-filament
+            # order. The physical slot mapping is realized later by start_print's AMS tray list.
+            ordered = sorted(filament_map, key=lambda e: e["model_filament"])
+            if [e["model_filament"] for e in ordered] != list(range(1, len(ordered) + 1)):
+                raise ValueError("Filament mapping must include every model filament in order")
+            multi_presets = [override or loaded[e["tool_index"]]["filament_profile"] for e in ordered]
+    plate_config = {"curr_bed_type": p["build_plate_type"]} if p["build_plate_type"] else {}
+    plate_config.update(p["overrides"])  # job-level overrides win over printer default
+    filament_profile, filament_color = p["filament_profile"], p["filament_color"]
+    req = SliceRequest(
+        job_id=job_id,
+        source_3mf="",
+        source_key=p["source_key"],
+        plate_number=plate_number,
+        machine_preset=p["machine_preset"],
+        process_preset=p["print_profile"],
+        filament_presets=multi_presets if filament_map else ([filament_profile] if filament_profile else []),
+        filament_colours=[filament_color] if filament_color else [],
+        export_args=export_args,
+        extra_config=plate_config,
+        provider_id=provider_id,
+        tool_index=slice_tool,
+        filament_map=slice_map,
+        **({"bed_mm": p["bed_mm"]} if p.get("bed_mm") else {}),
+    )
+    return req, filament_map
 
 
 def _notification_content(
@@ -673,30 +754,45 @@ class QueueEngine:
         return self._mgr.liveness(printer.id, cutoff_minutes) != "dead"
 
     async def _no_match_reason(self, session: AsyncSession, job: Job, configs: list[JobPrinterConfig], printers: dict[int, Printer],
-                               counted: dict[int, Printer], conflicts: dict[int, set]) -> str | None:
+                               counted: dict[int, Printer], conflicts: dict[int, set]) -> tuple[str | None, dict[str, list[int]]]:
         """Why no printer in the fleet could take `job` (None when one could, or when a per-printer path already owns the block)."""
         configs = [c for c in configs if c.printer_id in printers]
         if not configs:
-            return f"{NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job"
+            return f"{NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job", {}
         candidates = [(c, counted[c.printer_id]) for c in configs if c.printer_id in counted]
         if not candidates:
-            return f"{NO_MATCH_PREFIX}: every compatible printer has been offline past the limit"
+            return f"{NO_MATCH_PREFIX}: every compatible printer has been offline past the limit", {}
         source_file = await session.get(UploadedFile, job.uploaded_file_id)
         reasons: list[str] = []
+        unmatched: dict[str, list[int]] = {}
         for config, printer in candidates:
             if config.slice_failed:
-                return None                                  # the slicing-failure path blocks and rescues this one
+                return None, {}                                  # the slicing-failure path blocks and rescues this one
             if source_file is not None and is_presliced_file(source_file):
                 verdict = await gcode_eligibility.evaluate(session, source_file, printer, confirmed=bool(job.eligibility_confirmed))
                 if not verdict.allowed:
-                    reasons.append(verdict.message)
+                    reasons.append(f"{printer.name}: {verdict.message}")
                     continue
             fit = filament_matching.evaluate(config, printer.loaded_filaments or [], conflicts.get(printer.id, set()))
             if fit.eligible:
-                return None
-            reasons.extend(fit.reasons)
-        unique = list(dict.fromkeys(r for r in reasons if r))[:3]
-        return f"{NO_MATCH_PREFIX}: " + ("; ".join(unique) or "no printer in the fleet can run this job")
+                return None, {}
+            if fit.unmatched_filaments:
+                unmatched[str(printer.id)] = fit.unmatched_filaments
+                entries = {e.get("model_filament"): e for e in config.filament_map or []}
+                failures = []
+                for mf in fit.unmatched_filaments:
+                    entry = entries.get(mf)
+                    ask = filament_tuple.describe(filament_matching.entry_ask(entry) if entry is not None
+                                                  else filament_matching.config_ask(config))
+                    pin = entry.get("tool_index") if entry is not None else config.tool_index
+                    detail = f"T{pin} unavailable" if pin is not None else "no loaded match"
+                    # Keep slot diagnostics too: a conflicting spool, missing tool or empty slot should be actionable.
+                    failures.append(f"Filament {mf} ({ask}): {detail}")
+                reasons.append(f"{printer.name}: " + "; ".join(failures))
+                reasons.extend(f"{printer.name}: {reason}" for reason in fit.reasons)
+            else:
+                reasons.append(f"{printer.name}: " + "; ".join(fit.reasons))
+        return f"{NO_MATCH_PREFIX}: " + ("; ".join(reasons) or "no printer in the fleet can run this job"), unmatched
 
     async def _sweep_unmatched_jobs(self) -> None:
         """Each cycle, for every job that is up for work (queued, due, its project promoted): when no printer in the fleet could take it
@@ -730,22 +826,22 @@ class QueueEngine:
             for c in (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id.in_([j.id for j in jobs])))).scalars():
                 by_job.setdefault(c.job_id, []).append(c)
             for job in jobs:
-                reason = await self._no_match_reason(session, job, by_job.get(job.id, []), printers, counted, conflicts)
+                reason, unmatched = await self._no_match_reason(session, job, by_job.get(job.id, []), printers, counted, conflicts)
                 if reason is None:
                     if job.status == "blocked":
                         released = await session.execute(update(Job).where(
                             Job.id == job.id, Job.status == "blocked", Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(
-                            status="queued", block_reason=None, updated_at=_now()))
+                            status="queued", block_reason=None, unmatched_filaments=None, updated_at=_now()))
                         await session.commit()
                         if released.rowcount:
                             await self._broadcast_job(job.id)
                 elif job.status == "queued":
-                    await self._block_job(session, job, reason, notify=True)
-                elif job.block_reason != reason:
+                    await self._block_job(session, job, reason, notify=True, unmatched_filaments=unmatched)
+                elif job.block_reason != reason or job.unmatched_filaments != unmatched:
                     # Already ours and still blocked, only the wording moved (a slot changed, reasons reordered): update it quietly, one
                     # announcement per block, not one per cycle.
                     await session.execute(update(Job).where(Job.id == job.id, Job.status == "blocked",
-                                                            Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(block_reason=reason, updated_at=_now()))
+                                                            Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(block_reason=reason, unmatched_filaments=unmatched, updated_at=_now()))
                     await session.commit()
                     await self._broadcast_job(job.id)
 
@@ -898,7 +994,7 @@ class QueueEngine:
         result = await session.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
-            .values(status="slicing", assigned_printer_id=printer_id, block_reason=None, updated_at=_now())
+            .values(status="slicing", assigned_printer_id=printer_id, block_reason=None, unmatched_filaments=None, updated_at=_now())
         )
         if result.rowcount == 0:
             return  # no longer claimable — bail without starting the slice/print
@@ -976,7 +1072,7 @@ class QueueEngine:
                 return (v, f), True
         return None, bool(rows)
 
-    async def _block_job(self, session: AsyncSession, job: Job, reason: str, *, notify: bool = False) -> None:
+    async def _block_job(self, session: AsyncSession, job: Job, reason: str, *, notify: bool = False, unmatched_filaments: dict | None = None) -> None:
         job_id = job.id
         already = job.status == "blocked" and job.block_reason == reason
         # Conditional UPDATE, mirroring the claim guard above: some call sites reach
@@ -986,7 +1082,7 @@ class QueueEngine:
         result = await session.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
-            .values(status="blocked", block_reason=reason, assigned_printer_id=None, updated_at=_now())
+            .values(status="blocked", block_reason=reason, unmatched_filaments=unmatched_filaments, assigned_printer_id=None, updated_at=_now())
         )
         if result.rowcount == 0:
             return  # no longer blockable — don't resurrect a cancelled job
@@ -1026,7 +1122,10 @@ class QueueEngine:
             plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
             cfg_tool_index = None   # set from the slice params below
             # AMS printers (Bambu) map the print's filament to the matched tray.
-            ams_tray_id = (slot or {}).get("ams_tray_id")
+            try:
+                ams_tray_id, ams_error = _ams_mapping(plan, loaded), None
+            except ValueError as exc:
+                ams_tray_id, ams_error = None, str(exc)
             source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             resolution = (await slicer_profiles.resolve_for_printer(session, printer, provider_id or effective_provider_id(
@@ -1046,6 +1145,9 @@ class QueueEngine:
 
         if config is None or uploaded_file is None or printer_view is None:
             await self._fail_job_post_slice(job_id, printer_id)
+            return
+        if ams_error:
+            await self._handle_slice_failure(job_id, printer_id, ams_error)
             return
         if plan_gone:
             # The filament was there when the printer claimed the job and was removed since: a slice failure (blocked, recoverable
@@ -1191,46 +1293,7 @@ class QueueEngine:
 
     def _slice_request(self, job_id: int, printer_id: int, plate_number: int,
                        p: dict, provider_id: str | None = None) -> tuple[SliceRequest, list | None]:
-        """The production SliceRequest for `p` (see `_slice_params`) plus the RESOLVED filament map (slot indices —
-        part of the cache key)."""
-        # Meaningful, unique artifact name; the printer decides its output format.
-        stem = os.path.splitext(os.path.basename(p["original_filename"] or "model"))[0]
-        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-        file_base = f"{safe}_p{plate_number}_j{job_id}"
-        client = self._mgr.get_client(printer_id)
-        export_args = client.orca_export_args(file_base) if client else []
-
-        loaded = p["loaded"]
-        tool_index = p["tool_index"]
-        filament_map = p["filament_map"]                                   # already resolved to slots at claim time
-
-        provider_id = provider_id or effective_provider_id(p.get('preferred_slicer'))
-        slice_tool, slice_map = slice_side_mapping(client, tool_index, filament_map)
-
-        multi_presets: list = []
-        if filament_map:
-            ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
-            multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-        plate_config = {"curr_bed_type": p["build_plate_type"]} if p["build_plate_type"] else {}
-        plate_config.update(p["overrides"])  # job-level overrides win over printer default
-        filament_profile, filament_color = p["filament_profile"], p["filament_color"]
-        req = SliceRequest(
-            job_id=job_id,
-            source_3mf="",
-            source_key=p["source_key"],
-            plate_number=plate_number,
-            machine_preset=p["machine_preset"],
-            process_preset=p["print_profile"],
-            filament_presets=multi_presets if filament_map else ([filament_profile] if filament_profile else []),
-            filament_colours=[filament_color] if filament_color else [],
-            export_args=export_args,
-            extra_config=plate_config,
-            provider_id=provider_id,
-            tool_index=slice_tool,
-            filament_map=slice_map,
-            **({"bed_mm": p["bed_mm"]} if p.get("bed_mm") else {}),
-        )
-        return req, filament_map
+        return build_slice_request(job_id, printer_id, plate_number, p, self._mgr.get_client(printer_id), provider_id)
 
     async def _use_cached_slice(
         self, job_id: int, printer_id: int, source_file_id: int | None,
@@ -1469,7 +1532,11 @@ class QueueEngine:
         printer = await session.get(Printer, printer_id)
         loaded = (printer.loaded_filaments if printer else None) or []
         slot = _slot_for_config(config, loaded) if config else None
-        ams_tray_id = (slot or {}).get("ams_tray_id")
+        try:
+            ams_tray_id = _ams_mapping(filament_matching.plan_for(config, loaded), loaded)
+        except ValueError as exc:
+            await self._handle_slice_failure(job.id, printer_id, str(exc))
+            return False
         gcode_path = gcode.path
         plate_number = job.plate_number
 
@@ -1522,7 +1589,7 @@ class QueueEngine:
         opts = StartPrintOptions(
             plate_id=plate_number,
             gcode_path=gcode_filename,
-            ams_mapping=[ams_tray_id] if ams_tray_id is not None else None,
+            ams_mapping=ams_tray_id if isinstance(ams_tray_id, list) else ([ams_tray_id] if ams_tray_id is not None else None),
         )
         start_error_msg = None
         try:
@@ -1592,9 +1659,15 @@ class QueueEngine:
                 job.updated_at = now
             printer = await self._hold_plate_gate(session, printer_id)
             await job_details.set_details(session, job_id, origin or "core", {"print_start_time": now, **(details or {})})
+            try:
+                reporting_client = self._mgr.get_client(printer_id)
+            except KeyError:
+                reporting_client = None  # a plugin can report a start without a connected control client
             # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
             await completion_events.enqueue_job_started(session, job, printer_id, origin=origin or "core",
-                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
+                                                        loaded_filaments=(printer.loaded_filaments if printer else None),
+                                                        usage_basis="physical_slot" if getattr(reporting_client, "slice_tool_mapping", False) is True
+                                                        else "slicer_filament")
             await session.commit()
         event_hub.wake()
         return True
@@ -1633,6 +1706,9 @@ class QueueEngine:
                 reported["print_seconds"] = job.actual_seconds
             if job.actual_filament_grams is not None:
                 reported["filament_usage"] = {"grams": job.actual_filament_grams, "breakdown": job.actual_filament_breakdown}
+            existing_usage = (await job_details.get_details_in(session, job_id, ["filament_usage"], origin=origin or "core"))["filament_usage"]["value"]
+            if isinstance(existing_usage, dict) and "version" in existing_usage:
+                reported["filament_usage"] = existing_usage  # retain partial/rollover reports too; never hide uncertainty with an estimate
             await job_details.set_details(session, job_id, origin or "core", {**reported, **(details or {})})
             await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
             await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", origin=origin or "core",

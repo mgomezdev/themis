@@ -506,3 +506,32 @@ with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
     response = client.post("/api/v1/printers/1/chamber-light?on=true")
     assert response.status_code == 200
 ```
+
+
+## Cumulative filament usage reports (BIZ-366)
+
+A printer plugin may call `await ctx.job_reporter.report_usage(job_id, report, printer_id=printer_id)` while the job is printing. Read the current physical attempt id from `ctx.job_details.get(job_id, ["filament_usage_context"])`. The version-1 report is a cumulative snapshot, never an incremental debit:
+
+```json
+{
+  "version": 1,
+  "attempt_id": "the saved filament_usage_context.attempt_id",
+  "report_id": "printer-summary",
+  "revision": 3,
+  "basis": "physical_slot",
+  "source": "reported",
+  "final": true,
+  "complete": true,
+  "rollover": true,
+  "grams": 20.0,
+  "breakdown": [{"index": 2, "grams": 5.0}, {"index": 1, "grams": 15.0}]
+}
+```
+
+Both index bases are zero-based: `physical_slot` indexes Themis's saved loaded-slot list; `slicer_filament` indexes model filament N as N-1. Neither is a vendor tray id or inventory spool ref. `source` is `reported`, `measured`, or `estimated`; use `measured` only when verified device data supports that claim. Themis cannot determine precision merely from the presence of a printer report. The report revision increases monotonically within a physical attempt. Duplicate/older revisions return false; wrong-attempt reports are rejected. The complete breakdown must sum to the total (allowing small rounding differences); negative/non-finite values and duplicate indices are rejected.
+
+At completion, a final complete physical-slot report can attribute a rollover between spools already loaded at start. Partial reports, unknown consumption splits, unknown starting bindings and slicer-based rollover estimates require reconciliation. A same-slot spool replacement needs binding epochs, outside v1: report it as incomplete. Never infer grams from print progress or classify every active-tray change as rollover; normal multicolour prints switch trays too.
+
+`filament_usage_context` captures start-time routing and slot facts. The inventory observer snapshots potential replacement spools and stores normalized slot/spool allocations and provenance as `filament_accounting`. The initial completion allocation is frozen before outbox writes; report revisions after completion do not silently revise deductions. Existing unversioned usage details and jobs without a saved start context retain their compatibility path.
+
+The current Bambu adapter exposes active-tray/loaded-filament state, but quantified per-slot usage and rollover protocol reporting still need verification and adapter integration. The generic report contract does not imply that any printer supports measured consumption.

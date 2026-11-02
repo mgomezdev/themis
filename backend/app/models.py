@@ -212,6 +212,8 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Printer id -> all unmatched model filament numbers, captured by the fleet-wide block sweep.
+    unmatched_filaments: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # The user confirmed sending a pre-sliced file whose machine eligibility is unknown (BIZ-263).
     eligibility_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

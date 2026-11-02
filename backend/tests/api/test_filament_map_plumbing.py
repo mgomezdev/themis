@@ -123,3 +123,31 @@ async def test_tool_index_and_filament_map_round_trip_through_create_details_and
         await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [config]})
     (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
     assert stored["tool_index"] is None and stored["filament_map"] is None  # clearing works too
+
+
+async def test_blocked_filament_rows_survive_details_and_edit_clears_them(client, create_job, create_printer, session_factory):
+    from app.models import Job
+    printer_id = await create_printer()
+    job_id = await create_job(printer_id=printer_id)
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "blocked"
+        job.block_reason = "no eligible printer: Filament 1 (ABS): no loaded match"
+        job.unmatched_filaments = {str(printer_id): [1]}
+        await session.commit()
+    details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
+    assert details["unmatched_filaments"] == {str(printer_id): [1]}
+    with patch("app.api.routes.jobs.queue_engine") as engine:
+        response = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [{
+            "printer_id": printer_id, "print_profile": "Process", "filament_map": [{
+                "model_filament": 1, "tool_index": None, "filament_type": "PLA", "filament_subtype": "any", "filament_color": "#519F61"
+            }]
+        }]})
+        assert response.status_code == 200, response.text
+        engine.wake.assert_called_once()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason, job.unmatched_filaments) == ("queued", None, None)
+    details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
+    assert details["unmatched_filaments"] == {}
+    assert details["printer_configs"][0]["filament_map"][0]["tool_index"] is None

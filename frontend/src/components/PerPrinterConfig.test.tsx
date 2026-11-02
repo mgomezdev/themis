@@ -157,10 +157,11 @@ describe('PerPrinterConfig', () => {
     expect(map).toEqual([pinned1, { ...asked, filament_subtype: 'silk' }]);
   });
 
-  it('multi-material: a single model filament still shows the tool control', async () => {
+  it('a single model filament has its own unresolved ask without inventory', async () => {
     renderCfg(MULTI, defaultPerPrinterCfg(), [{ index: 1, color: '#ff0000', type: 'PLA' }]);
-    expect(await screen.findByTestId('tool-select')).not.toBeNull();
-    expect(screen.queryByTestId('map-tool-1')).toBeNull();
+    expect(await screen.findByTestId('map-tool-1')).toHaveValue('ask');
+    expect(screen.getByTestId('map-ask-1-type')).toHaveValue('');
+    expect(screen.queryByTestId('tool-select')).toBeNull();
   });
 
   it('multi-material: no modelFilaments prop still shows the tool control', async () => {
@@ -207,4 +208,22 @@ describe('PerPrinterConfig — an inventory only fills the tuple', () => {
     fireEvent.change(await screen.findByTestId('filament-ask-type'), { target: { value: 'ABS' } });
     expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentType: 'ABS', filamentSubtype: 'any' });
   });
+});
+
+
+it('a single model ask stores type and optional color in its map with no pinned tool', async () => {
+  const onChange = renderCfg(MULTI, { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentSubtype: 'any', filamentColor: '#ffffff' }, MODEL_FILAMENTS_3.slice(0, 1));
+  fireEvent.change(await screen.findByTestId('map-ask-1-type'), { target: { value: 'PETG' } });
+  expect(onChange).toHaveBeenCalledWith({ filamentMap: [{ model_filament: 1, tool_index: null, filament_manufacturer: null, filament_type: 'PETG', filament_subtype: 'any', filament_color: '#ffffff' }] });
+});
+
+it('flags exactly the failing rows, including a pinned empty tool, and preserves all rows on edit', async () => {
+  const printer = { ...MULTI, loaded_filaments: [...MULTI.loaded_filaments, { slot: 3, type: 'PLA', color: '#ffffff', empty: true }] };
+  const asked = { model_filament: 2, tool_index: null, filament_manufacturer: null, filament_type: 'ABS', filament_subtype: 'any', filament_color: null };
+  const onChange = renderCfg(printer, { ...defaultPerPrinterCfg(), filamentMap: [asked, { ...asked, model_filament: 3, tool_index: 3 }] }, MODEL_FILAMENTS_3);
+  expect(await screen.findByTestId('map-unmatched-2')).toHaveTextContent(/not loaded.*will block/i);
+  expect(screen.getByTestId('map-unmatched-3')).toBeVisible();
+  expect(screen.queryByTestId('map-unmatched-1')).toBeNull();
+  fireEvent.change(screen.getByTestId('map-tool-2'), { target: { value: 't:0' } });
+  expect(onChange.mock.calls[0][0].filamentMap.map((e: any) => e.model_filament)).toEqual([1, 2, 3]);
 });

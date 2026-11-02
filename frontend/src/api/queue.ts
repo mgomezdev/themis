@@ -156,6 +156,7 @@ export interface ApiJobPrinterConfig extends FilamentAsk {
 
 export interface ApiJobDetails extends ApiJob {
   block_reason: string | null;
+  unmatched_filaments?: Record<string, number[]>;
   file: { id: number; original_filename: string } | null;
   plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
   printer_configs: ApiJobPrinterConfig[];

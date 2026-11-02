@@ -211,3 +211,15 @@ in the `main.py` lifespan; `configure(SessionLocal)` first):
 `backend/tests/` (pytest-asyncio). `conftest.py` `client` fixture = httpx + a per-test SQLite file (same connect pragmas as production: FKs on,
 separate connection per session; see `session_factory`) + `get_session` override. Unit tests for services in `tests/services/`. To seed DB state inside an API
 test, reuse the override: `agen = app.dependency_overrides[get_session](); session = await agen.__anext__()`.
+
+
+### Model filament asks (BIZ-235)
+
+Per-printer `filament_map` entries keep the operator's type/color tuple and a null `tool_index`, or an explicit physical-tool pin. Single-filament 3MFs on multi-tool printers use the same row editor. `filament_matching.evaluate` resolves every row against current loaded slots at claim time; an `empty: true` slot never qualifies, even if it retains a stale type. Shared tools are allowed. The stored `slot_plan` drives slicing and deduction; resolved routing, rather than asks, enters the slice cache key. Dispatch, test slices and manual completion use the same slice request builder; debug slices resolve fresh asks rather than passing unresolved tool indices to the provider. Slice-side maps preserve physical-tool indices in the preset list, filling unused tools with the first matched preset rather than compacting away empty slots.
+
+The fleet-wide unmatched-job sweep retains all candidate printer names and all failing model filament numbers in its block reason. `jobs.unmatched_filaments` stores a JSON object mapping printer ids (string keys) to failing model filament numbers; job details expose it for the edit screen. Claim, edit/requeue and unblock clear it. Loading a matching filament releases the fleet-wide block; a matching printer may then claim the job. Hardware slot changes wake the queue through the manager connectivity callback; manual printer edits already wake it directly.
+
+
+### Printer-reported consumption (BIZ-366, backend foundation)
+
+`filament_usage.py` validates version-1 cumulative reports and normalizes slicer/model indices versus physical tool/slot indices. `JobReporter.report_usage` accepts monotonically increasing revisions for the currently printing attempt. `job.started` persists `filament_usage_context` (route, basis, immutable loaded slots) in its start transaction; inventory snapshots all potential bound replacement spools outside the queue loop. Completion normalizes against the saved context, saves `filament_accounting`, and then uses the existing absolute-write inventory outbox. Completion retries reuse the frozen allocation rather than accepting a new report revision. Partial/invalid reports or unquantified rollover require reconciliation; legacy jobs without the context keep the prior path. This establishes the reporting boundary; vendor telemetry integration and same-slot spool-replacement epochs remain BIZ-366 follow-up work.

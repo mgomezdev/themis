@@ -18,14 +18,16 @@ Importing this module registers the subscribers on the process-wide hub."""
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 
-from sqlalchemy import update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..eventing import EventEnvelope
 from ..eventing.registry import CORE_EVENTS
 from ..eventing.hub import hub
-from ..models import Job, Printer
+from ..models import Job, JobDetail, JobPrinterConfig, Printer
+from . import filament_matching, job_details
 from .inventory import subscribers as inventory_subscribers
 
 logger = logging.getLogger("app")
@@ -43,14 +45,26 @@ HANDLER_TIMEOUT_S = 30.0
 
 
 async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, *, loaded_filaments: list[dict] | None,
-                              origin: str | None = "core") -> bool:
+                              origin: str | None = "core", usage_basis: str = "physical_slot") -> bool:
     """Add the durable `job.started` event to the caller's start transaction (no commit; call `hub.wake()` after it). One per
     physical start: the key carries the start time, so a job restarted after a failed attempt is a new event."""
     entities: dict[str, int | str] = {"job_id": job.id, "printer_id": printer_id}
     envelope = EventEnvelope(name=STARTED, schema_version=CORE_EVENTS[STARTED].version, origin=origin, entities=entities,
                              dedup_key=f"{STARTED}:{job.id}:{printer_id}:{job.updated_at}",
                              payload={"loaded_filaments": list(loaded_filaments or [])})
-    return await hub.enqueue_durable(session, envelope)
+    accepted = await hub.enqueue_durable(session, envelope)
+    if accepted:
+        cfg = (await session.execute(select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job.id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
+        await session.execute(delete(JobDetail).where(JobDetail.job_id == job.id,
+            JobDetail.field.in_(["filament_usage", "filament_accounting"])))
+        # Generic printer facts, persisted in the physical-start transaction. Inventory interprets bindings itself.
+        await job_details.set_details(session, job.id, "core", {"filament_usage_context": {
+            "attempt_id": envelope.dedup_key, "printer_id": printer_id, "basis": usage_basis,
+            "slot_plan": filament_matching.plan_to_json(filament_matching.plan_for(cfg, loaded_filaments)),
+            "loaded_filaments": deepcopy(loaded_filaments or []),
+        }})
+    return accepted
 
 
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,

@@ -14,8 +14,8 @@ from sqlalchemy import select
 
 from ...eventing import EventEnvelope
 from ...models import Job, JobPrinterConfig
-from .. import job_details
-from . import config, deduction, outbox, provider, snapshots
+from .. import filament_usage, job_details
+from . import config, deduction, outbox, provider, refs, snapshots
 
 
 async def _config_for(session, job_id: int, printer_id: int | None) -> JobPrinterConfig | None:
@@ -34,7 +34,14 @@ async def snapshot_on_start(envelope: EventEnvelope) -> None:
             return
         job = await session.get(Job, job_id)
         cfg = await _config_for(session, job_id, printer_id)
-        spool_refs = deduction.snapshot_refs(cfg, envelope.payload.get("loaded_filaments") or []) if cfg is not None else []
+        context = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]
+        if context["status"] == "ok":
+            # An AMS rollover can use any already loaded spool. Snapshot possible replacements too;
+            # only the slots that actually consumed material are deducted at completion.
+            spool_refs = list(dict.fromkeys(r for slot in context["value"]["loaded_filaments"]
+                                            if not slot.get("empty") and (r := refs.slot_spool_ref(slot)) is not None))
+        else:
+            spool_refs = deduction.snapshot_refs(cfg, envelope.payload.get("loaded_filaments") or []) if cfg is not None else []
         pid = provider.provider_id()
         if job is None or job.status != "printing" or pid is None:
             return                                    # delivered late (the print already ended): the weight now is not the start weight
@@ -61,13 +68,45 @@ async def deduct_on_complete(envelope: EventEnvelope) -> None:
             usage = (await job_details.get_details_in(session, job_id, ["filament_usage"]))["filament_usage"]
             if usage["status"] == "ok" and isinstance(usage["value"], dict) and usage["value"].get("grams") is not None:
                 grams, breakdown = usage["value"]["grams"], usage["value"].get("breakdown")
-            if grams is None:
+            explicit_report = isinstance(usage["value"], dict) and any(
+                key in usage["value"] for key in ("version", "basis", "rollover"))
+            if grams is None and not explicit_report:
                 return
             cfg = await _config_for(session, job_id, printer_id) if job is not None else None
             if cfg is None or not (deduction.can_deduct() and await config.deduct_enabled(session)):
                 return
-            uses, notes = deduction.completion_uses(cfg, payload.get("loaded_filaments") or [], float(grams),
-                                                    breakdown if breakdown is not None else job.actual_filament_breakdown)
+            saved = await job_details.get_details_in(session, job_id, ["filament_usage_context", "filament_accounting"], origin="core")
+            context = saved["filament_usage_context"]["value"]
+            accounting = saved["filament_accounting"]["value"]
+            if accounting is not None:
+                # Completion is delivered at least once. Freeze the chosen report/allocation before any
+                # external writes so a later report revision cannot change the deduction on a retry.
+                if accounting["provider"] == provider.provider_id():
+                    uses, notes = accounting["uses"], accounting["notes"]
+                else:
+                    uses, notes = [], ["Inventory provider changed after usage was allocated; reconcile spool usage"]
+            elif context is not None:
+                report = usage["value"] if explicit_report else None
+                allocation = filament_usage.allocate(context, grams,
+                    breakdown if breakdown is not None else job.actual_filament_breakdown, report)
+                if allocation.reason:
+                    uses, notes = [], [allocation.reason]
+                elif not allocation.by_slot:
+                    uses, notes = [], []
+                else:
+                    uses, notes = deduction.completion_uses(cfg, context["loaded_filaments"], float(grams), None,
+                                                            usage_by_slot=allocation.by_slot)
+                await job_details.set_details(session, job_id, "core", {"filament_accounting": {
+                    "status": "needs_reconciliation" if notes else "planned", "source": allocation.source,
+                    "attempt_id": context["attempt_id"], "provider": provider.provider_id(),
+                    "by_slot": allocation.by_slot, "uses": uses, "notes": notes,
+                }})
+                await session.commit()
+            else:
+                if grams is None:
+                    return  # pre-context jobs retain the legacy completion path
+                uses, notes = deduction.completion_uses(cfg, payload.get("loaded_filaments") or [], float(grams),
+                                                        breakdown if breakdown is not None else job.actual_filament_breakdown)
     if not uses and not notes:
         return
     source = "queue" if payload.get("source") == "queue" else "manual_complete"
