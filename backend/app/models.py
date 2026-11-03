@@ -43,7 +43,7 @@ class Printer(Base):
     # BIZ-358: the process preset a "Printer default" job config (print_profile == "") slices with; NULL = none set.
     default_process_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     # BIZ-358: takes jobs in any loaded colour but never a multicolour one (filament_map of 2+ colours).
-    single_colour_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    single_colour_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class PrinterModelRecord(Base):

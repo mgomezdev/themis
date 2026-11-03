@@ -704,7 +704,7 @@ class QueueEngine:
                 if not verdict.allowed:
                     reasons.append(verdict.message)
                     continue
-            fit = filament_matching.evaluate(config, printer.loaded_filaments or [], conflicts.get(printer.id, set()))
+            fit = filament_matching.evaluate_for_printer(config, printer, conflicts.get(printer.id, set()))
             if fit.eligible:
                 return None
             reasons.extend(fit.reasons)
@@ -854,7 +854,7 @@ class QueueEngine:
             if cand_config.slice_failed:
                 await self._block_job(session, cand_job, cand_config.slice_error or "slicing failed")
                 return
-            cand_fit = filament_matching.evaluate(cand_config, loaded, conflicts)
+            cand_fit = filament_matching.evaluate_for_printer(cand_config, printer, conflicts)
             if cand_fit.eligible:
                 job, config, fit = cand_job, cand_config, cand_fit
                 break

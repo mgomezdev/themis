@@ -721,7 +721,7 @@ async def get_job_details(
         if p and p.id not in conflicts_by_printer:
             conflicts_by_printer[p.id] = await filament_matching.conflicts_for(loaded)
         conflicts = conflicts_by_printer.get(p.id, set()) if p else set()
-        fit = filament_matching.evaluate(cfg, loaded, conflicts)                  # why this printer does / does not match
+        fit = filament_matching.evaluate_for_printer(cfg, p, conflicts)          # why this printer does / does not match
         slot = _slot_for_config(cfg, loaded, conflicts) if p else None
         resolved.append((cfg, p, slot, fit))
         if inventory_refs.slot_spool_ref(slot) is not None:
