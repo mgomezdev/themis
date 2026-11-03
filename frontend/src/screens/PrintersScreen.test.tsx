@@ -196,7 +196,7 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   bed_x_mm: 256,
   bed_y_mm: 256,
   machine_rate_per_hour: null,
-  preferred_slicer_plugin_id: null,
+  preferred_slicer_plugin_id: null, default_process_profile: null, single_colour_only: false,
   quiet_start: null,
   quiet_end: null,
 };

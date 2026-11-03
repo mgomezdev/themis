@@ -208,3 +208,21 @@ describe('PerPrinterConfig — an inventory only fills the tuple', () => {
     expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentType: 'ABS', filamentSubtype: 'any' });
   });
 });
+
+describe('PerPrinterConfig printer default process (BIZ-358)', () => {
+  it('offers "Printer default" as a real choice ("") distinct from not chosen (null)', async () => {
+    const onChange = renderCfg(SINGLE);
+    const sel = await screen.findByTestId('print-profile-select') as HTMLSelectElement;
+    expect(sel.value).toBe('__unchosen__');
+    const def = [...sel.options].find(o => o.textContent === 'Printer default')!;
+    expect(def.value).toBe('');
+    fireEvent.change(sel, { target: { value: '' } });
+    expect(onChange).toHaveBeenCalledWith({ printProfile: '' });
+  });
+
+  it('shows a stored "" config as Printer default', async () => {
+    renderCfg(SINGLE, { ...defaultPerPrinterCfg(), printProfile: '' });
+    const sel = await screen.findByTestId('print-profile-select') as HTMLSelectElement;
+    expect(sel.selectedOptions[0].textContent).toBe('Printer default');
+  });
+});

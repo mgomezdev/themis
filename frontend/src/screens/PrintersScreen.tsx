@@ -136,6 +136,9 @@ export function EditForm({
   const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
+  const [processProfiles, setProcessProfiles] = useState<string[]>([]);
+  const [defaultProcess, setDefaultProcess] = useState<string>(printer.default_process_profile ?? '');
+  const [singleColourOnly, setSingleColourOnly] = useState<boolean>(printer.single_colour_only);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,10 +148,11 @@ export function EditForm({
 
   useEffect(() => {
     setFilamentProfiles([]);
+    setProcessProfiles([]);
     let alive = true;
     getPrinterProfiles(printer.id)
-      .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
-      .catch(() => { if (alive) setFilamentProfiles([]); });
+      .then(p => { if (alive) { setFilamentProfiles(p.filament_profiles); setProcessProfiles(p.print_profiles ?? []); } })
+      .catch(() => { if (alive) { setFilamentProfiles([]); setProcessProfiles([]); } });
     return () => { alive = false; };
   }, [printer.id, printer.machine_profile]);
 
@@ -171,6 +175,8 @@ export function EditForm({
         nozzle_variant: nozzle,
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
+        default_process_profile: defaultProcess || null,
+        single_colour_only: singleColourOnly,
       });
       onSave();
     } catch (e) {
@@ -203,6 +209,27 @@ export function EditForm({
 
         <NozzleVariantPicker modelUuid={printer.model_uuid} value={nozzle} onChange={setNozzle}
                              resolvedProfile={printer.machine_profile} reason={printer.machine_profile_reason} />
+
+        <div>
+          <label className="label" htmlFor={`default-process-${printer.id}`}>Default process profile</label>
+          <select
+            id={`default-process-${printer.id}`}
+            className="input"
+            value={defaultProcess}
+            onChange={e => setDefaultProcess(e.target.value)}
+          >
+            <option value="">— none —</option>
+            {/* a stored default the catalog no longer lists stays visible rather than silently dropping */}
+            {defaultProcess && !processProfiles.includes(defaultProcess) && <option value={defaultProcess}>{defaultProcess}</option>}
+            {processProfiles.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <div className="tiny muted" style={{ marginTop: 4 }}>Used by any job set to “Printer default”.</div>
+        </div>
+
+        <label className="row gap-2" style={{ alignItems: 'center' }}>
+          <input type="checkbox" checked={singleColourOnly} onChange={e => setSingleColourOnly(e.target.checked)} />
+          <span>Single colour only <span className="tiny muted">— takes any loaded colour, never multicolour jobs</span></span>
+        </label>
 
         <div>
           <label className="label">Build plate</label>

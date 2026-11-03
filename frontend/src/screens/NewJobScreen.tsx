@@ -1066,7 +1066,7 @@ export function NewJobScreen() {
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
       // A pre-sliced gcode job has no print profile — naming the printer(s) or model(s) is enough.
-      return !!pp && (isPreslicedKind(file?.type) || !!pp.printProfile);
+      return !!pp && (isPreslicedKind(file?.type) || pp.printProfile != null);   // "" = Printer default
     });
   };
 
