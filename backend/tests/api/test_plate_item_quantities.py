@@ -15,7 +15,7 @@ WANTED = [("a.stl", 5, "1"), ("b.stl", 4, "2")]
 
 
 def test_manifest_counts_are_split_over_items_of_one_file_in_item_order():
-    m = PlateManifest(plates={1: {0: 4}, 2: {0: 1, 1: 4}}, requested={0: 5, 1: 4})
+    m = PlateManifest(plates={1: {0: 4}, 2: {0: 1, 1: 4}})
     assert _plate_item_quantities(m, WANTED, ITEMS, [1, 2]) == [
         {"11": 2, "12": 2, "13": 0},
         {"11": 0, "12": 1, "13": 4},
@@ -27,12 +27,12 @@ def test_no_manifest_means_none():
 
 
 def test_totals_that_do_not_match_the_request_are_rejected():
-    short = PlateManifest(plates={1: {0: 4}, 2: {1: 4}}, requested={0: 5, 1: 4})          # input 0 placed 4 of 5
+    short = PlateManifest(plates={1: {0: 4}, 2: {1: 4}})          # input 0 placed 4 of 5
     assert _plate_item_quantities(short, WANTED, ITEMS, [1, 2]) is None
 
 
 def test_plates_that_differ_from_the_file_are_rejected():
-    m = PlateManifest(plates={1: {0: 5, 1: 4}}, requested={0: 5, 1: 4})
+    m = PlateManifest(plates={1: {0: 5, 1: 4}})
     assert _plate_item_quantities(m, WANTED, ITEMS, [1, 2]) is None                         # the file has plate 2 too
     assert _plate_item_quantities(m, WANTED, ITEMS, [1]) == [{"11": 2, "12": 3, "13": 4}]
 
@@ -67,10 +67,30 @@ def _two_plate_3mf() -> bytes:
     return buf.getvalue()
 
 
+_MANIFEST_MARK = "Metadata/test_manifest.json"
+
+
+def _two_plate_3mf_with_manifest() -> bytes:
+    """Plate 1 holds only the first input, plate 2 only the second (a mix round-robin gets wrong), recorded IN the file."""
+    buf = io.BytesIO(_two_plate_3mf())
+    with zipfile.ZipFile(buf, "a") as zf:
+        zf.writestr(_MANIFEST_MARK, json.dumps({"1": {"0": 3}, "2": {"1": 2}}))
+    return buf.getvalue()
+
+
 class _ManifestPacker(FakeProjectConstructor):
-    """Plate 1 holds only the first input, plate 2 only the second: a mix round-robin would get wrong."""
+    """Reads its manifest out of the file it is given, so a reused pack only gets counts by reading the stored file."""
     def plate_manifest(self, project_3mf):
-        return PlateManifest(plates={1: {0: 3}, 2: {1: 2}}, requested={0: 3, 1: 2})
+        with zipfile.ZipFile(project_3mf) as zf:
+            if _MANIFEST_MARK not in zf.namelist():
+                return None
+            raw = json.loads(zf.read(_MANIFEST_MARK))
+        return PlateManifest(plates={int(p): {int(i): n for i, n in c.items()} for p, c in raw.items()})
+
+
+class _BrokenManifestPacker(FakeProjectConstructor):
+    def plate_manifest(self, project_3mf):
+        raise RuntimeError("third-party bug")
 
 
 async def _generate(client, project_id, tmp_path, packer, **body):
@@ -78,6 +98,7 @@ async def _generate(client, project_id, tmp_path, packer, **body):
          patch("app.api.routes.projects.get_project_constructor", return_value=packer):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"process_preset": "0.20mm Standard", **body})
     assert resp.status_code == 200, resp.text
+    _generate.last = resp.json()
     return sorted(resp.json()["jobs"], key=lambda j: j["plate_number"])
 
 
@@ -94,7 +115,7 @@ async def test_generate_stores_the_manifest_counts_and_progress_follows_them(cli
         items.append((await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": fid, "quantity": qty})).json()["id"])
     a, b = items
 
-    jobs = await _generate(client, project_id, tmp_path, _ManifestPacker(output=_two_plate_3mf()))
+    jobs = await _generate(client, project_id, tmp_path, _ManifestPacker(output=_two_plate_3mf_with_manifest()))
     assert await _quantities(session_factory, [j["id"] for j in jobs]) == [{str(a): 3, str(b): 0}, {str(a): 0, str(b): 2}]
 
     async with session_factory() as s:                                  # plate 1 printed; report it all good
@@ -106,6 +127,7 @@ async def test_generate_stores_the_manifest_counts_and_progress_follows_them(cli
 
     # A reused pack (same recipe, allow_cached) reads the manifest from the stored file: same real counts.
     again = await _generate(client, project_id, tmp_path, _ManifestPacker(output=b"unused"), allow_cached=True)
+    assert _generate.last["files"][0]["pack_reused"] is True
     assert await _quantities(session_factory, [j["id"] for j in again]) == [{str(a): 3, str(b): 0}, {str(a): 0, str(b): 2}]
 
 
@@ -114,4 +136,12 @@ async def test_generate_without_a_manifest_keeps_the_round_robin_guess(client, u
     fid = await upload_3mf(filename="a.stl", data=_STL)
     item = (await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": fid, "quantity": 3})).json()["id"]
     jobs = await _generate(client, project_id, tmp_path, FakeProjectConstructor(output=_two_plate_3mf()))
+    assert await _quantities(session_factory, [j["id"] for j in jobs]) == [{str(item): 2}, {str(item): 1}]
+
+
+async def test_a_provider_whose_manifest_read_raises_falls_back_instead_of_failing(client, upload_3mf, session_factory, tmp_path):
+    project_id = (await client.post("/api/v1/projects", json={"name": "Broken"})).json()["id"]
+    fid = await upload_3mf(filename="a.stl", data=_STL)
+    item = (await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": fid, "quantity": 3})).json()["id"]
+    jobs = await _generate(client, project_id, tmp_path, _BrokenManifestPacker(output=_two_plate_3mf()))
     assert await _quantities(session_factory, [j["id"] for j in jobs]) == [{str(item): 2}, {str(item): 1}]

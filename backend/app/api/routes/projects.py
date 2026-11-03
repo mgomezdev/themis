@@ -1201,8 +1201,12 @@ def _plate_item_quantities(manifest, wanted: list[tuple[str, int, str]], group_i
 
 def _stored_manifest(store: ArtifactStore, key: str, constructor: ProjectConstructor):
     """The constructor's manifest for a stored pack (the reader needs a path, so the artifact is materialized)."""
-    with store.materialize(key) as local:
-        return constructor.plate_manifest(Path(local))
+    try:
+        with store.materialize(key) as local:
+            return constructor.plate_manifest(Path(local))
+    except Exception:            # a third-party provider that breaks the "never raises" rule must not fail a committed pack
+        logger.warning("plate manifest read failed for %s; using round-robin plate counts", key, exc_info=True)
+        return None
 
 
 def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:

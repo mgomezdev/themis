@@ -83,7 +83,6 @@ class LaminusProjectConstructor(ProjectConstructor):
                 counts = plates.setdefault(int(plate["plate"]), {})
                 for inst in plate.get("instances", []):
                     counts[int(inst["item"])] = counts.get(int(inst["item"]), 0) + 1
-            requested = {int(i["item"]): int(i["requested"]) for i in raw.get("items", [])}
-            return PlateManifest(plates=plates, requested=requested)
+            return PlateManifest(plates=plates)
         except (OSError, KeyError, ValueError, TypeError, AttributeError, zipfile.BadZipFile):
             return None

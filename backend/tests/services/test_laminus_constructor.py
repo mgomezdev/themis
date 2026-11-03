@@ -157,10 +157,11 @@ def test_plate_manifest_counts_instances_per_plate_and_input(tmp_path):
          "plates": [{"plate": 1, "instances": [{"item": 0, "part": "a.stl"}, {"item": 0, "part": "a.stl"}, {"item": 1, "part": "b.stl"}]},
                     {"plate": 2, "instances": [{"item": 0, "part": "a.stl"}]}]}
     got = constructor().plate_manifest(_pack_with(tmp_path, m))
-    assert got == c.PlateManifest(plates={1: {0: 2, 1: 1}, 2: {0: 1}}, requested={0: 3, 1: 1})
+    assert got == c.PlateManifest(plates={1: {0: 2, 1: 1}, 2: {0: 1}})
 
 
-@pytest.mark.parametrize("manifest", [None, "not json", {"version": 2, "plates": []}, {"version": 1}])
+@pytest.mark.parametrize("manifest", [None, "not json", {"version": 2, "plates": []}, {"version": 1},
+                                      {"version": 1, "plates": [{"plate": "x"}]}, {"version": 1, "plates": [{"plate": 1, "instances": [{}]}]}])
 def test_plate_manifest_is_none_when_absent_unreadable_or_unknown(tmp_path, manifest):
     assert constructor().plate_manifest(_pack_with(tmp_path, manifest)) is None
 

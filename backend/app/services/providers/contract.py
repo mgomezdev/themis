@@ -123,9 +123,8 @@ class CancelToken:
 @dataclass(frozen=True)
 class PlateManifest:
     """Per plate of a constructed project: how many instances came from each `ConstructRequest.inputs` index
-    (`plates[plate_number][input_index] = count`), plus how many of each input were requested."""
+    (`plates[plate_number][input_index] = count`)."""
     plates: Mapping[int, Mapping[int, int]]
-    requested: Mapping[int, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
