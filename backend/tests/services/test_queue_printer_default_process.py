@@ -75,18 +75,75 @@ async def test_production_slice_uses_the_printer_default(session_factory, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_claim_blocks_when_neither_job_nor_printer_has_a_process(session_factory):
+async def test_a_printer_without_a_default_skips_the_job_and_the_sweep_blocks_it_when_no_printer_can(session_factory):
     job_id = await _seed_job(session_factory, printer_id=1)
     await _set(session_factory, job_id, print_profile="", default=None)
     slicer = MagicMock()
-    qe = QueueEngine(session_factory, _make_mock_printer_manager([1]), slicer)
+    mgr = _make_mock_printer_manager([1])
+    mgr.liveness.return_value = "online"
+    qe = QueueEngine(session_factory, mgr, slicer)
     _install_fake_put(qe)
-    await qe._process_queue()
+    async with session_factory() as s:
+        await qe._try_claim_for_printer(s, 1)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        assert (job.status, job.assigned_printer_id) == ("queued", None)      # skipped, not blocked: another printer might
+    slicer.slice.assert_not_called()
+    await qe._sweep_unmatched_jobs()
     async with session_factory() as s:
         job = await s.get(Job, job_id)
         assert job.status == "blocked"
         assert "Printer 1" in job.block_reason and "default process profile" in job.block_reason
-        assert job.assigned_printer_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_printer_with_a_default_takes_the_job_a_printer_without_one_skipped(session_factory, tmp_path):
+    job_id = await _seed_job(session_factory, printer_id=1)
+    await _set(session_factory, job_id, print_profile="", default=None)
+    async with session_factory() as s:
+        s.add(Printer(id=2, name="Printer 2", printer_type="elegoo_centauri", connection_config={},
+                      machine_profile_override="Test Machine Preset", default_process_profile="P-2"))
+        await s.flush()
+        s.add(JobPrinterConfig(job_id=job_id, printer_id=2, print_profile="", filament_profile="PLA"))
+        await s.commit()
+    gcode = tmp_path / "o.gcode"
+    gcode.write_text("G28\n")
+    slicer = MagicMock()
+    slicer.slice.return_value = str(gcode)
+    qe = QueueEngine(session_factory, _make_mock_printer_manager([1, 2]), slicer)
+    _install_fake_put(qe)
+    async with session_factory() as s:
+        await qe._try_claim_for_printer(s, 1, slice_only=True)
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).status == "queued"
+    await qe._process_queue()
+
+    async def _printing():
+        async with session_factory() as s:
+            return (await s.get(Job, job_id)).status == "printing"
+
+    await wait_until(_printing, what="printer 2 to take the job")
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).assigned_printer_id == 2
+    assert slicer.slice.call_args.args[0].process_preset == "P-2"
+
+
+@pytest.mark.asyncio
+async def test_estimate_without_any_process_fails_with_the_actionable_reason(session_factory, caplog):
+    job_id = await _seed_job(session_factory, printer_id=1)
+    await _set(session_factory, job_id, print_profile="", default=None)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.estimate_status, job.estimate_token = "pending", 1
+        await s.commit()
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(session_factory, _make_mock_printer_manager([1]), slicer)
+    await engine.run_estimate(job_id)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        assert job.estimate_status == "failed"
+    assert "default process profile" in caplog.text            # the reason is logged (estimates store no message)
     slicer.slice.assert_not_called()
 
 

@@ -237,6 +237,7 @@ class QueueEngine:
 
         # Step 1 — Load job and resolve config
         token: int | None = None
+        process_missing: str | None = None
         machine_preset: str | None = None
         source_key: str | None = None
         filament_profiles: list[str] = []
@@ -267,6 +268,8 @@ class QueueEngine:
             # estimate stuck on "pending" forever.)
             printer = await session.get(Printer, config.printer_id) if config is not None else None
             uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+            process_missing = (missing_process_reason(uploaded_file, config, printer)
+                               if config is not None and printer is not None and uploaded_file is not None else None)
 
             # Capture all scalars before session closes
             machine_preset = ((await slicer_profiles.machine_profile_for(session, printer)) or "") if printer else ""
@@ -301,6 +304,9 @@ class QueueEngine:
             }
 
         # Step 2 — Pre-flight validation
+        if process_missing:
+            await self._fail_estimate(job_id, token, process_missing)
+            return
         if not machine_preset or not source_key or not filament_profiles:
             await self._fail_estimate(job_id, token, "missing machine preset, file, or filament profile")
             return
@@ -705,9 +711,10 @@ class QueueEngine:
                     reasons.append(verdict.message)
                     continue
             fit = filament_matching.evaluate_for_printer(config, printer, conflicts.get(printer.id, set()))
-            if fit.eligible:
+            missing = missing_process_reason(source_file, config, printer) if source_file is not None else None
+            if fit.eligible and not missing:
                 return None
-            reasons.extend(fit.reasons)
+            reasons.extend(fit.reasons + ([missing] if missing else []))
         unique = list(dict.fromkeys(r for r in reasons if r))[:3]
         return f"{NO_MATCH_PREFIX}: " + ("; ".join(unique) or "no printer in the fleet can run this job")
 
@@ -855,7 +862,10 @@ class QueueEngine:
                 await self._block_job(session, cand_job, cand_config.slice_error or "slicing failed")
                 return
             cand_fit = filament_matching.evaluate_for_printer(cand_config, printer, conflicts)
-            if cand_fit.eligible:
+            # A "Printer default" config on a printer with no default can't be sliced HERE: skip it like a filament mismatch
+            # (another printer may run it); the unmatched sweep blocks it when no printer can (BIZ-358).
+            if cand_fit.eligible and not missing_process_reason(
+                    await session.get(UploadedFile, cand_job.uploaded_file_id), cand_config, printer):
                 job, config, fit = cand_job, cand_config, cand_fit
                 break
         if job is None:
@@ -883,11 +893,6 @@ class QueueEngine:
                 await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
                                                     "cached version was sliced for that")
                 return
-
-        missing = missing_process_reason(source_file, config, printer) if source_file is not None else None
-        if missing:
-            await self._block_job(session, job, missing)
-            return
 
         # Pre-flight: resolve the slicing provider for THIS printer (its preferred `gcode.produce` plugin, else the capability
         # default) and make sure it is usable before claiming this job (BIZ-291). Block (not fail) so the job auto-retries when

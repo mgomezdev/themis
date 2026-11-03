@@ -703,7 +703,8 @@ async def update_printer(
         if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
             raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
         printer.preferred_slicer_plugin_id = wanted
-    if "default_process_profile" in body.model_fields_set:
+    if "default_process_profile" in body.model_fields_set and (body.default_process_profile or None) != printer.default_process_profile:
+        # re-validated only when it changes: an unrelated edit must not 422 because the catalog is down or the profile went stale
         printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     if body.single_colour_only is not None:
         printer.single_colour_only = body.single_colour_only

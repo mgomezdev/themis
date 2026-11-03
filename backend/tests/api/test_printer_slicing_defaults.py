@@ -59,3 +59,23 @@ async def test_single_colour_only_roundtrip(client):
     assert (await client.get(f"/api/v1/printers/{pid}")).json()["single_colour_only"] is True
     r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "renamed"})
     assert (await client.get(f"/api/v1/printers/{pid}")).json()["single_colour_only"] is True   # omitted = unchanged
+
+
+async def test_an_unrelated_edit_does_not_revalidate_the_stored_default(client):
+    """The editor always sends the field back: with the catalog down, saving a rename must not 422 on the unchanged default."""
+    pid = await _printer(client)
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=_CAT):
+        assert (await client.patch(f"/api/v1/printers/{pid}", json={"default_process_profile": "0.20mm Standard"})).status_code == 200
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=None):
+        r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "Renamed", "default_process_profile": "0.20mm Standard"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Renamed" and r.json()["default_process_profile"] == "0.20mm Standard"
+
+
+async def test_create_validates_the_default_too(client):
+    body = {"name": "P1S", "printer_type": "bambu", "connection_config": {}, "machine_profile_override": _MACHINE}
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=_CAT):
+        bad = await client.post("/api/v1/printers", json={**body, "default_process_profile": "0.12mm Fine @Other"})
+        good = await client.post("/api/v1/printers", json={**body, "default_process_profile": "0.20mm Standard"})
+    assert bad.status_code == 422
+    assert good.status_code == 201 and good.json()["default_process_profile"] == "0.20mm Standard"

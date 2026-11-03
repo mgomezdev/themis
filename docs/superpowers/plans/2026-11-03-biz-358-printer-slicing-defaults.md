@@ -16,7 +16,7 @@
 - Multicolour config = `len(config.filament_map or []) >= 2`.
 - Single-colour-only printers skip multicolour work (job stays `queued`); never block or fail for it. Fleet-wide nobody-can → existing unmatched sweep blocks.
 - Missing default on a "Printer default" non-presliced config → `blocked` (never `failed`), reason names the printer and the fix.
-- Migration `v058_printer_slicing_defaults` (v057 is taken by the in-flight `codex/biz-235-biz-366` branch).
+- Migration `v057_printer_slicing_defaults` (the migration suite requires contiguous versions; draft PR #173 renumbers its own v057 when it lands).
 
 ## Review Focus
 
