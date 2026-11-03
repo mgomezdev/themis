@@ -312,7 +312,8 @@ class JobModelTarget(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
-    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    # NULL = "Any printer" (BIZ-357): every printer, including ones with no registry model and ones added later.
+    model_uuid: Mapped[Optional[str]] = mapped_column(ForeignKey("printer_models.id"), index=True, nullable=True)
     print_profile: Mapped[str] = mapped_column(String(512))
     filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)

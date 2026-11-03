@@ -89,17 +89,17 @@ class PrinterConfigInput(AskFields):
 
 
 class ModelTargetInput(AskFields):
-    """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).
+    """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
-    model_uuid: str
+    model_uuid: str | None
     print_profile: str = ""
     filament_profile: str | None = None
     filament_map: list[dict] | None = None
 
     @field_validator("model_uuid")
     @classmethod
-    def _model_uuid_set(cls, v: str) -> str:
-        if not v or not v.strip():
+    def _model_uuid_set(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
             raise ValueError("model_uuid must not be blank")
         return v
 
@@ -157,9 +157,9 @@ async def _check_gcode_printers(
         if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
             raise HTTPException(422, f"{printer.name} {why}")
     for t in targets:
-        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
+        matching = await model_targets.printers_of_target(session, t.model_uuid)
         if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
-            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            label = await _target_label(session, t.model_uuid)
             raise HTTPException(422, f"No {label} printer can take this file: each one {why}")
 
 
@@ -182,10 +182,10 @@ async def _check_machine_eligibility(
         if not outcome.allowed:
             refused.append(outcome)
     for t in targets:
-        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
+        matching = await model_targets.printers_of_target(session, t.model_uuid)
         outcomes = [await eligibility.evaluate(session, uploaded_file, p, confirmed=confirmed) for p in matching]
         if outcomes and not any(o.allowed for o in outcomes):
-            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            label = await _target_label(session, t.model_uuid)
             refused.append(eligibility.Outcome(False, outcomes[0].code, f"No {label} printer can take this file: "
                                                                         f"{outcomes[0].message}"))
     if not refused:
@@ -214,23 +214,31 @@ async def _check_version_printers(
             raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
                                      "sliced for that printer model")
     for t in targets:
+        if t.model_uuid is None:
+            raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}: pick that printer model, "
+                                     "not Any printer")
         if version.machine_preset not in await slicer_profiles.profiles_of_model(session, t.model_uuid):
             label = await slicer_profiles.model_display_name(session, t.model_uuid)
             raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}, not "
                                      f"{label}")
 
 
+async def _target_label(session: AsyncSession, model_uuid: str | None) -> str:
+    return "Any printer" if model_uuid is None else await slicer_profiles.model_display_name(session, model_uuid)
+
+
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
-    seen: set[str] = set()
+    seen: set[str | None] = set()
     for t in targets:
         if t.model_uuid in seen:
-            raise HTTPException(422, f"Duplicate make/model target {t.model_uuid!r}")
+            raise HTTPException(422, "Any printer is listed more than once" if t.model_uuid is None
+                                else f"Duplicate make/model target {t.model_uuid!r}")
         seen.add(t.model_uuid)
 
 
 async def _require_known_models(session: AsyncSession, targets: list[ModelTargetInput]) -> None:
     for t in targets:
-        if await session.get(PrinterModelRecord, t.model_uuid) is None:
+        if t.model_uuid is not None and await session.get(PrinterModelRecord, t.model_uuid) is None:
             raise HTTPException(422, f"Unknown printer model {t.model_uuid!r}")
 
 

@@ -204,12 +204,12 @@ class ProjectPartUpdate(BaseModel):
 class GenerateRequest(BaseModel):
     eligible_printer_ids: list[int] = []
     # OrcaSlicer process/print preset name, resolved against each eligible
-    # printer's process catalog. No default is invented when omitted — an
-    # unset print_profile fails cleanly at slice time with an actionable error
-    # (see slicer_service._resolve_uuids) rather than silently misresolving.
+    # printer's process catalog. Omitted = each printer's own default process profile (BIZ-358).
     process_preset: Optional[str] = None
     # Printer models ("any printer of model X", registry UUIDs, BIZ-294) eligible alongside the specific printers above.
     eligible_model_uuids: list[str] = []
+    # Any printer at all, including ones added later (BIZ-357): an "Any printer" model target on every job.
+    eligible_any_printer: bool = False
     # Slicing cache (BIZ-192): keep each generated job's production slice in the library as a cached version.
     save_slice: bool = False
     # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
@@ -1304,7 +1304,9 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         )).scalars().all()
         eligible_printers = list(rows)
     model_printers: list[Printer] = []
-    if body.eligible_model_uuids:
+    if body.eligible_any_printer:
+        model_printers = list((await session.execute(select(Printer))).scalars().all())
+    elif body.eligible_model_uuids:
         model_printers = list((await session.execute(
             select(Printer).where(Printer.model_uuid.in_(body.eligible_model_uuids))
         )).scalars().all())
@@ -1518,7 +1520,8 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                     print_profile=body.process_preset or "",
                     **tuple_columns(ask),
                 ))
-            for model_uuid in dict.fromkeys(body.eligible_model_uuids):
+            target_models: list[str | None] = [None] if body.eligible_any_printer else list(dict.fromkeys(body.eligible_model_uuids))
+            for model_uuid in target_models:
                 session.add(JobModelTarget(
                     job_id=j.id,
                     model_uuid=model_uuid,
