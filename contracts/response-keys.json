@@ -55,6 +55,8 @@
     "bed_y_mm",
     "machine_rate_per_hour",
     "preferred_slicer_plugin_id",
+    "default_process_profile",
+    "single_colour_only",
     "quiet_start",
     "quiet_end"
   ],

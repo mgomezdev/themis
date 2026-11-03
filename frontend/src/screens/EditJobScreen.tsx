@@ -179,7 +179,7 @@ export function EditJobScreen() {
 
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return gcode ? !!pp : !!(pp?.printProfile);
+    return gcode ? !!pp : pp?.printProfile != null;      // "" = Printer default
   });
 
   async function handleSave() {
@@ -340,7 +340,7 @@ export function EditJobScreen() {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
                   const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
-                  const done = gcode ? !!pp : !!(pp?.printProfile);
+                  const done = gcode ? !!pp : pp?.printProfile != null;
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />

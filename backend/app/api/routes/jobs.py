@@ -25,7 +25,7 @@ from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config
+from ...services.queue_engine import effective_process_profile, queue_engine, _slot_for_config
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider
 from ...services.slicer_service import DEFAULT_BED_MM, SliceError, SliceRequest, slice_side_mapping
 from ...plugins.capabilities.filament_inventory import InvSpool
@@ -533,10 +533,11 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
     machine_uuid = catalog.ref_for("machine", machine_name)
-    process_uuid = catalog.ref_for("process", body.print_profile)
+    process_name = effective_process_profile(body, printer)     # "" = the printer's default (BIZ-358)
+    process_uuid = catalog.ref_for("process", process_name)
     if not machine_uuid or not process_uuid:
         return {**empty, "has_embedded_settings": True,
-                "error": f"Profile not found in sidecar: machine={machine_name!r} process={body.print_profile!r}"}
+                "error": f"Profile not found in sidecar: machine={machine_name!r} process={process_name!r}"}
 
     # Filament content doesn't affect the curated (process) diff. If the named
     # filament isn't in the catalog, pick the first compatible one as a stand-in.
@@ -720,7 +721,7 @@ async def get_job_details(
         if p and p.id not in conflicts_by_printer:
             conflicts_by_printer[p.id] = await filament_matching.conflicts_for(loaded)
         conflicts = conflicts_by_printer.get(p.id, set()) if p else set()
-        fit = filament_matching.evaluate(cfg, loaded, conflicts)                  # why this printer does / does not match
+        fit = filament_matching.evaluate_for_printer(cfg, p, conflicts)          # why this printer does / does not match
         slot = _slot_for_config(cfg, loaded, conflicts) if p else None
         resolved.append((cfg, p, slot, fit))
         if inventory_refs.slot_spool_ref(slot) is not None:
@@ -1089,7 +1090,7 @@ def _build_slice_request(
         source_key=uploaded_file.relative_path,
         plate_number=job.plate_number,
         machine_preset=machine_preset,
-        process_preset=config.print_profile,
+        process_preset=effective_process_profile(config, printer),
         filament_presets=filament_presets,
         filament_colours=[colour] if colour else [],
         export_args=export_args,

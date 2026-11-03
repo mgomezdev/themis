@@ -84,6 +84,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
+`default_process_profile: str?`, `single_colour_only: bool` (v057, BIZ-358) — the process preset a "Printer default" config slices with (PATCH validates it against the machine profile's compatible presets; null clears), and a flag that keeps multicolour configs (filament_map of 2+) off the printer via `filament_matching.evaluate_for_printer` (skip, never block; the unmatched sweep blocks if no printer can take it).
 `preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
@@ -202,7 +203,7 @@ with `services/job_details.get_details`. Names and values are not enforced. Stan
 `print_seconds`, `filament_usage`, `blocked_reason`; core also writes `failure_reason` and `last_failure` (`{reason, printer_id, at}`, a dead printer).
 
 ### job_printer_configs  (one row per (job, eligible printer))
-`id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
+`id, job_id FK, printer_id FK, print_profile` (orca process preset; `""` = "Printer default", resolved at slice time to `printers.default_process_profile` by `queue_engine.effective_process_profile`; a printer with neither is skipped at claim like a filament mismatch, and the unmatched sweep blocks the job when no printer can run it), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
 loaded-filament slot), `ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (v053: the job's filament **ask** tuple →
 matched against `printer.loaded_filaments`; NULL = undefined; subtype is required whenever type is set), `tool_index?` (nullable int,
