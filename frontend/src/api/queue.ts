@@ -38,15 +38,15 @@ export interface PrinterConfigInput extends Partial<FilamentAsk> {
   filament_map?: FilamentMapEntry[] | null;
 }
 
-/** Eligible on any printer of the registry model `model_uuid` (BIZ-294). */
+/** Eligible on any printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357). */
 export interface ModelTargetInput extends Partial<FilamentAsk> {
-  model_uuid: string;
+  model_uuid: string | null;
   print_profile: string;
   filament_profile?: string | null;
 }
 
 export interface ApiModelTarget extends FilamentAsk {
-  model_uuid: string;
+  model_uuid: string | null;      // null = "Any printer"
   model_label: string | null;     // "<manufacturer> <model>"
   print_profile: string;
   filament_profile: string | null;

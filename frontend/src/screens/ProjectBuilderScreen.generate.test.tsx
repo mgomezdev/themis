@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectBuilderScreen } from './ProjectBuilderScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
+import { pickPrinter } from '../test/pickPrinter';
 
 const FILES = [
   { id: 1, original_filename: 'Bracket.stl', relative_path: 'Bracket.stl', folder: '', size_bytes: 1, plate_count: 1, uploaded_at: '', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
@@ -70,7 +71,7 @@ async function newProjectWithBracket(name = 'Shelf set') {
 }
 async function openPicker() {
   await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
-  await screen.findByText('Printer A');
+  await screen.findByRole('button', { name: '+ Printer' });
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -81,8 +82,8 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await newProjectWithBracket();
     await openPicker();
 
-    await userEvent.click(screen.getByRole('checkbox', { name: /Printer A/ }));
-    await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
+    await pickPrinter(/Printer A/);
+    await pickPrinter(/Printer B/);
     await waitFor(() => expect(screen.getByTestId('process-preset-select').textContent).toContain('0.20mm Standard'));
     await userEvent.selectOptions(screen.getByTestId('process-preset-select'), '0.20mm Standard');
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));
@@ -98,7 +99,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
       file_id: 1, quantity: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({
-      eligible_printer_ids: [1, 2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
+      eligible_printer_ids: [1, 2], eligible_model_uuids: [], eligible_any_printer: false, process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
     });
   });
 
@@ -109,8 +110,8 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await openPicker();
 
     expect(screen.queryByText('Retired')).toBeNull();
-    await userEvent.click(screen.getByRole('checkbox', { name: /Printer A/ }));
-    await userEvent.click(screen.getByRole('checkbox', { name: /Mini/ }));
+    await pickPrinter(/Printer A/);
+    await pickPrinter(/Mini/);
     expect(screen.getByText('Pack bed: 180×200 mm (smallest selected)')).toBeTruthy();
   });
 
@@ -122,7 +123,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
 
     await screen.findByText('1 job added to queue');
-    expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({ eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false });
+    expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({ eligible_printer_ids: [], eligible_model_uuids: [], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false });
   });
 
   it('keeps the builder on screen so the result is visible, and lets Retry reuse the saved project', async () => {
@@ -221,7 +222,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     });
     await newProjectWithBracket();
     await openPicker();
-    await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
+    await pickPrinter(/Printer B/);
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await screen.findByText('Generation timed out. Try fewer parts or reduce quantities.');
 
@@ -229,8 +230,8 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
 
     await screen.findByText('1 job added to queue');
     expect(api.to('POST', '/api/v1/projects/7/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [2], process_preset: null, allow_cached: true, save_slice: false },
-      { eligible_printer_ids: [2], process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], eligible_model_uuids: [], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], eligible_model_uuids: [], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false },
     ]);
   });
 });

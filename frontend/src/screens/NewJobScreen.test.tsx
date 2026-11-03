@@ -20,6 +20,7 @@ vi.mock('../api/inventory', async importOriginal => ({
 
 import * as inventoryApi from '../api/inventory';
 import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
+import { pickPrinter } from '../test/pickPrinter';
 
 function mockSpoolmanConnected() {
   vi.mocked(inventoryApi.useInventory).mockReturnValue(activeInventory());
@@ -107,12 +108,12 @@ async function uploadAndExpand(user: ReturnType<typeof userEvent.setup>) {
   const file = new File(['dummy'], 'model.3mf', { type: 'application/octet-stream' });
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   await user.upload(input, file);
-  await waitFor(() => expect(screen.getByText('Barnabus')).toBeTruthy());
+  await screen.findByRole('button', { name: '+ Printer' });
 }
 
 /** Select Barnabus as an eligible printer and wait for its config row to appear. */
-async function selectPrinter(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByText('Barnabus'));
+async function selectPrinter(_user?: ReturnType<typeof userEvent.setup>) {   // the picker is driven through pickPrinter
+  await pickPrinter('Barnabus');
   await waitFor(() => expect(screen.getByText('Print profile')).toBeTruthy());
 }
 

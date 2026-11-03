@@ -98,7 +98,7 @@ describe('ProjectBuilderScreen', () => {
     await user.click(await screen.findByTitle('Add Bracket.stl'));
     await user.click(screen.getByRole('button', { name: 'Create…' }));
 
-    await screen.findByText('Printer A');
+    await screen.findByRole('button', { name: '+ Printer' });
     expect(screen.getByRole('button', { name: 'Create without dispatch' })).toBeTruthy();
   });
 });

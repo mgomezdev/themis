@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
-import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
+import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, toggleKey, useEnabledPrinters } from '../components/PrinterTargetPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
@@ -195,7 +195,8 @@ export function ProjectBuilderScreen() {
   const [generateError, setGenerateError] = useState('');
   const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
-  const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
+  const [eligibleKeys, setEligibleKeys] = useState<string[]>([]);       // PrinterTargetPicker selection keys (BIZ-357)
+  const targetPrinters = useEnabledPrinters();
   const [processPreset, setProcessPreset] = useState<string | null>(null);
 
   // Undo toast for accidental removals (items, links, non-printed parts)
@@ -488,7 +489,7 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  async function handleGenerate(printerIds: number[]) {
+  async function handleGenerate(keys: string[]) {
     if (!name.trim() || items.length === 0) return;
     setSaving(true);
     setGenerateError('');
@@ -500,7 +501,8 @@ export function ProjectBuilderScreen() {
       // error is shown here and a retry reuses the saved project instead of creating a second one.
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
       setGenerating(true);
-      const result = await generateProject(pid, printerIds, processPreset);
+      const t = splitTargets(keys);
+      const result = await generateProject(pid, t.printerIds, processPreset, {}, { modelUuids: t.modelUuids, anyPrinter: t.anyPrinter });
       setGenerateResult({ jobCount: result.jobs.length });
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
@@ -883,21 +885,22 @@ export function ProjectBuilderScreen() {
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
               Eligible printers
             </div>
-            <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
+            <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
+            <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
             <div style={{ marginTop: 12 }}>
-              <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+              <ProcessPresetPicker printerIds={coveredPrinterIds(eligibleKeys, targetPrinters)} value={processPreset} onChange={setProcessPreset} />
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button
-                className={eligiblePrinterIds.length === 0 ? 'btn sm' : 'btn primary sm'}
-                onClick={() => handleGenerate(eligiblePrinterIds)}
+                className={eligibleKeys.length === 0 ? 'btn sm' : 'btn primary sm'}
+                onClick={() => handleGenerate(eligibleKeys)}
                 disabled={!canSave || items.length === 0}
-                title={eligiblePrinterIds.length === 0
+                title={eligibleKeys.length === 0
                   ? 'No printers selected — jobs will be created but not dispatched'
                   : undefined}
               >
-                {eligiblePrinterIds.length === 0 ? 'Create without dispatch' : 'Create'}
+                {eligibleKeys.length === 0 ? 'Create without dispatch' : 'Create'}
               </button>
             </div>
           </div>
@@ -932,7 +935,7 @@ export function ProjectBuilderScreen() {
           }}>
             <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
             <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
-            <button className="btn sm" onClick={() => handleGenerate(eligiblePrinterIds)} disabled={generating || saving}>Retry</button>
+            <button className="btn sm" onClick={() => handleGenerate(eligibleKeys)} disabled={generating || saving}>Retry</button>
           </div>
         )}
 

@@ -176,11 +176,19 @@ export interface GenerateCacheOptions {
   saveSlice?: boolean;
 }
 
+/** Groups of printers eligible alongside the specific ones (BIZ-357): any printer of these models, or any printer at all. */
+export interface GenerateGroups {
+  modelUuids?: string[];
+  anyPrinter?: boolean;
+}
+
 export const generateProject = (
   projectId: number, eligiblePrinterIds: number[] = [], processPreset: string | null = null,
-  cache: GenerateCacheOptions = {},
+  cache: GenerateCacheOptions = {}, groups: GenerateGroups = {},
 ) => request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', {
   eligible_printer_ids: eligiblePrinterIds,
+  eligible_model_uuids: groups.modelUuids ?? [],
+  eligible_any_printer: groups.anyPrinter ?? false,
   process_preset: processPreset,
   allow_cached: cache.allowCached ?? true,
   save_slice: cache.saveSlice ?? false,
