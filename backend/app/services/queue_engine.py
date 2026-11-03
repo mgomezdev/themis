@@ -73,6 +73,19 @@ def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
     return None
 
 
+def effective_process_profile(config, printer) -> str:
+    """The process preset a config slices with: its own, else ("Printer default" = "") the printer's default (BIZ-358)."""
+    return ((config.print_profile if config else "") or (printer.default_process_profile if printer else "") or "")
+
+
+def missing_process_reason(source_file, config, printer) -> str | None:
+    """Why `config` can't be sliced on `printer` for want of a process profile, or None. Pre-sliced files need none."""
+    if is_presliced_file(source_file) or effective_process_profile(config, printer):
+        return None
+    return (f"{printer.name} has no default process profile: set one on the printer (Printers → Edit) or choose a "
+            "process profile for this job")
+
+
 def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
@@ -85,7 +98,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "machine_preset": machine_preset if printer else None,   # resolved from the model mapping + nozzle variant (BIZ-294)
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
-        "print_profile": config.print_profile if config else None,
+        "print_profile": effective_process_profile(config, printer) if config else None,
         "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
         # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
@@ -224,6 +237,7 @@ class QueueEngine:
 
         # Step 1 — Load job and resolve config
         token: int | None = None
+        process_missing: str | None = None
         machine_preset: str | None = None
         source_key: str | None = None
         filament_profiles: list[str] = []
@@ -254,10 +268,12 @@ class QueueEngine:
             # estimate stuck on "pending" forever.)
             printer = await session.get(Printer, config.printer_id) if config is not None else None
             uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+            process_missing = (missing_process_reason(uploaded_file, config, printer)
+                               if config is not None and printer is not None and uploaded_file is not None else None)
 
             # Capture all scalars before session closes
             machine_preset = ((await slicer_profiles.machine_profile_for(session, printer)) or "") if printer else ""
-            print_profile = (config.print_profile or "") if config else ""
+            print_profile = effective_process_profile(config, printer) if config else ""
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
@@ -288,6 +304,9 @@ class QueueEngine:
             }
 
         # Step 2 — Pre-flight validation
+        if process_missing:
+            await self._fail_estimate(job_id, token, process_missing)
+            return
         if not machine_preset or not source_key or not filament_profiles:
             await self._fail_estimate(job_id, token, "missing machine preset, file, or filament profile")
             return
@@ -691,10 +710,11 @@ class QueueEngine:
                 if not verdict.allowed:
                     reasons.append(verdict.message)
                     continue
-            fit = filament_matching.evaluate(config, printer.loaded_filaments or [], conflicts.get(printer.id, set()))
-            if fit.eligible:
+            fit = filament_matching.evaluate_for_printer(config, printer, conflicts.get(printer.id, set()))
+            missing = missing_process_reason(source_file, config, printer) if source_file is not None else None
+            if fit.eligible and not missing:
                 return None
-            reasons.extend(fit.reasons)
+            reasons.extend(fit.reasons + ([missing] if missing else []))
         unique = list(dict.fromkeys(r for r in reasons if r))[:3]
         return f"{NO_MATCH_PREFIX}: " + ("; ".join(unique) or "no printer in the fleet can run this job")
 
@@ -841,8 +861,11 @@ class QueueEngine:
             if cand_config.slice_failed:
                 await self._block_job(session, cand_job, cand_config.slice_error or "slicing failed")
                 return
-            cand_fit = filament_matching.evaluate(cand_config, loaded, conflicts)
-            if cand_fit.eligible:
+            cand_fit = filament_matching.evaluate_for_printer(cand_config, printer, conflicts)
+            # A "Printer default" config on a printer with no default can't be sliced HERE: skip it like a filament mismatch
+            # (another printer may run it); the unmatched sweep blocks it when no printer can (BIZ-358).
+            if cand_fit.eligible and not missing_process_reason(
+                    await session.get(UploadedFile, cand_job.uploaded_file_id), cand_config, printer):
                 job, config, fit = cand_job, cand_config, cand_fit
                 break
         if job is None:

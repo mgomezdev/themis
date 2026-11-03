@@ -118,6 +118,8 @@ export interface ApiPrinter {
   bed_y_mm: number;
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
   preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
+  default_process_profile: string | null;   // what a "Printer default" job config slices with; null = none set
+  single_colour_only: boolean;              // never takes multicolour work
   quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
   quiet_end: string | null;
 }
@@ -153,6 +155,8 @@ export interface UpdatePrinterBody {
   bed_y_mm?: number;
   machine_rate_per_hour?: number | null;
   preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
+  default_process_profile?: string | null;     // null clears; must be compatible with the printer's machine profile
+  single_colour_only?: boolean;
   quiet_start?: string | null;
   quiet_end?: string | null;
 }

@@ -138,6 +138,19 @@ def evaluate(config, loaded: list | None, conflicts=frozenset()) -> Verdict:
     return Verdict(False, [], _why_not(ask, loaded, conflicts))
 
 
+def is_multicolour(config) -> bool:
+    """A config that prints two or more colours (its filament_map routes 2+ model filaments)."""
+    return len(getattr(config, "filament_map", None) or []) >= 2
+
+
+def evaluate_for_printer(config, printer, conflicts=frozenset()) -> Verdict:
+    """`evaluate` against `printer`'s loaded slots, plus the printer's own policy: a "single colour only" printer never takes
+    multicolour work (BIZ-358). `printer` None = no slots on record."""
+    if printer is not None and printer.single_colour_only and is_multicolour(config):
+        return Verdict(False, [], [f"{printer.name} takes single-colour work only"])
+    return evaluate(config, (printer.loaded_filaments if printer is not None else None) or [], conflicts)
+
+
 def slot_for_config(config, loaded: list | None, conflicts=frozenset(), plan: list | None = None) -> dict | None:
     """The slot the config prints with (its first colour's), or None. With a stored `plan` (claim time) that wins."""
     loaded = list(loaded or [])
