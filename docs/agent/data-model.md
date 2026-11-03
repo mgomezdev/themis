@@ -203,7 +203,7 @@ with `services/job_details.get_details`. Names and values are not enforced. Stan
 `print_seconds`, `filament_usage`, `blocked_reason`; core also writes `failure_reason` and `last_failure` (`{reason, printer_id, at}`, a dead printer).
 
 ### job_printer_configs  (one row per (job, eligible printer))
-`id, job_id FK, printer_id FK, print_profile` (orca process preset; `""` = "Printer default", resolved at slice time to `printers.default_process_profile` by `queue_engine.effective_process_profile`; a non-presliced claim with neither blocks), `filament_profile?` (legacy /
+`id, job_id FK, printer_id FK, print_profile` (orca process preset; `""` = "Printer default", resolved at slice time to `printers.default_process_profile` by `queue_engine.effective_process_profile`; a printer with neither is skipped at claim like a filament mismatch, and the unmatched sweep blocks the job when no printer can run it), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
 loaded-filament slot), `ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (v053: the job's filament **ask** tuple →
 matched against `printer.loaded_filaments`; NULL = undefined; subtype is required whenever type is set), `tool_index?` (nullable int,
