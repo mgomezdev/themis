@@ -1162,6 +1162,53 @@ async def _stored(store: ArtifactStore, key: str) -> bool:
         return False
 
 
+def _round_robin_quantities(group_items, num_plates: int) -> list[dict[str, int]]:
+    """The pre-manifest guess: each item's quantity spread evenly over the plates, the remainder on the first ones."""
+    return [{str(item.id): item.quantity // num_plates + (1 if i < item.quantity % num_plates else 0) for item in group_items}
+            for i in range(num_plates)]
+
+
+def _plate_item_quantities(manifest, wanted: list[tuple[str, int, str]], group_items, plate_nums: list[int]) -> list[dict[str, int]] | None:
+    """Per plate (in `plate_nums` order), how many of each project item it holds, from the constructor's `PlateManifest`
+    (BIZ-359). `wanted[i]` is pack input i = (key, total qty, file id); items sharing a file are filled in item order. None when
+    there is no manifest or it disagrees with the request (plates, input indexes or per-input totals): never half-trusted."""
+    if manifest is None or set(manifest.plates) != set(plate_nums):
+        return None
+    totals = [0] * len(wanted)
+    for counts in manifest.plates.values():
+        for idx, n in counts.items():
+            if not 0 <= idx < len(wanted):
+                return None
+            totals[idx] += n
+    if totals != [qty for _, qty, _ in wanted]:
+        return None
+    by_file: dict[str, list] = {}
+    for item in group_items:
+        by_file.setdefault(str(item.file_id), []).append(item)
+    left = {item.id: item.quantity for item in group_items}
+    out: list[dict[str, int]] = []
+    for plate in plate_nums:
+        q = {str(item.id): 0 for item in group_items}
+        for idx, n in sorted(manifest.plates[plate].items()):
+            for item in by_file.get(wanted[idx][2], []):
+                take = min(n, left[item.id])
+                q[str(item.id)] += take
+                left[item.id] -= take
+                n -= take
+        out.append(q)
+    return out
+
+
+def _stored_manifest(store: ArtifactStore, key: str, constructor: ProjectConstructor):
+    """The constructor's manifest for a stored pack (the reader needs a path, so the artifact is materialized)."""
+    try:
+        with store.materialize(key) as local:
+            return constructor.plate_manifest(Path(local))
+    except Exception:            # a third-party provider that breaks the "never raises" rule must not fail a committed pack
+        logger.warning("plate manifest read failed for %s; using round-robin plate counts", key, exc_info=True)
+        return None
+
+
 def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
     """Plate numbers of a stored pack: the zip reader needs a path, so the artifact is materialized."""
     with store.materialize(key) as local:
@@ -1445,15 +1492,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                                   pack_content_hash=pack_hash)
 
         effective_plates = plate_nums or [1]
-        num_plates = len(effective_plates)
-        plate_item_qtys: list[dict[str, int]] = []
-        for i in range(num_plates):
-            plate_q: dict[str, int] = {}
-            for item in group_items:
-                base = item.quantity // num_plates
-                extra = 1 if i < (item.quantity % num_plates) else 0
-                plate_q[str(item.id)] = base + extra
-            plate_item_qtys.append(plate_q)
+        # Real per-plate counts from the pack's manifest (BIZ-359); the round-robin guess only for a pack that reports none.
+        manifest = await asyncio.to_thread(_stored_manifest, pack_store, new_file.relative_path, constructor)
+        plate_item_qtys = _plate_item_quantities(manifest, stl_wanted, group_items, effective_plates)
+        if plate_item_qtys is None:
+            if manifest is not None:
+                logger.warning("project %s: pack manifest disagrees with the request; using round-robin plate counts", proj.id)
+            plate_item_qtys = _round_robin_quantities(group_items, len(effective_plates))
 
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
