@@ -13635,6 +13635,22 @@
               }
             ],
             "title": "Machine Rate Per Hour"
+          },
+          "default_process_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Process Profile"
+          },
+          "single_colour_only": {
+            "type": "boolean",
+            "title": "Single Colour Only",
+            "default": false
           }
         },
         "type": "object",
@@ -13856,6 +13872,28 @@
               }
             ],
             "title": "Preferred Slicer Plugin Id"
+          },
+          "default_process_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Process Profile"
+          },
+          "single_colour_only": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Colour Only"
           }
         },
         "type": "object",
