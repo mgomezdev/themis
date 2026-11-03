@@ -121,6 +121,14 @@ class CancelToken:
 # ── targets, settings, requests, results ──────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
+class PlateManifest:
+    """Per plate of a constructed project: how many instances came from each `ConstructRequest.inputs` index
+    (`plates[plate_number][input_index] = count`), plus how many of each input were requested."""
+    plates: Mapping[int, Mapping[int, int]]
+    requested: Mapping[int, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TargetPrinter:
     """Construction/production target. Decision: BOTH. `bed_mm` (x, y, z) is always supplied by Themis (from the model
     registry entry, or the user's value for a custom model) so a provider never looks a model up. `model_uuid` is the core
@@ -269,6 +277,11 @@ class ProjectConstructor(_Provider):
     def construct(self, request: ConstructRequest, output_dir: Path, *, timeout: float = DEFAULT_PRODUCE_TIMEOUT_S,
                   cancel: CancelToken | None = None) -> Artifact:
         """Writes one `PROJECT_3MF` into `output_dir`. Raises ProviderError."""
+
+    def plate_manifest(self, project_3mf: Path) -> "PlateManifest | None":
+        """What `construct` put on each plate of `project_3mf` (BIZ-359), or None when this provider (or this file) reports none.
+        Local, blocking file read; never raises for an unreadable file."""
+        return None
 
 
 class GcodeProducer(_Provider):

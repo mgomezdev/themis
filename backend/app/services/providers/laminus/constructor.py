@@ -5,11 +5,13 @@ STL only: `/pack` drops a 3MF's geometry, modifiers and per-object settings, so 
 "cannot preserve it" rule). `target.model_uuid` is not needed: the pack is geometry-only, slicing profiles apply at dispatch."""
 from __future__ import annotations
 
+import json
+import zipfile
 from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, ConstructRequest, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode,
-    InputKind, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
+    InputKind, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
 )
 from .sidecar_client import (
     DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady, SidecarTimeout, SidecarUnreachable,
@@ -17,6 +19,7 @@ from .sidecar_client import (
 
 PROVIDER_ID = "laminus"
 OUTPUT_NAME = "project.3mf"
+MANIFEST_ENTRY = "Metadata/laminus_manifest.json"      # written by /pack, /projects/subset, /projects/merge (feature `pack.manifest`)
 
 
 class LaminusProjectConstructor(ProjectConstructor):
@@ -67,3 +70,20 @@ class LaminusProjectConstructor(ProjectConstructor):
         out = Path(output_dir) / OUTPUT_NAME
         out.write_bytes(packed)
         return Artifact(out, ArtifactKind.PROJECT_3MF, self.identity)
+
+    def plate_manifest(self, project_3mf: Path) -> PlateManifest | None:
+        """Read the sidecar's manifest (schema version 1) out of a packed project; None when absent, unreadable or unknown."""
+        try:
+            with zipfile.ZipFile(project_3mf) as zf:
+                raw = json.loads(zf.read(MANIFEST_ENTRY))
+            if raw.get("version") != 1 or not isinstance(raw.get("plates"), list):
+                return None
+            plates: dict[int, dict[int, int]] = {}
+            for plate in raw["plates"]:
+                counts = plates.setdefault(int(plate["plate"]), {})
+                for inst in plate.get("instances", []):
+                    counts[int(inst["item"])] = counts.get(int(inst["item"]), 0) + 1
+            requested = {int(i["item"]): int(i["requested"]) for i in raw.get("items", [])}
+            return PlateManifest(plates=plates, requested=requested)
+        except (OSError, KeyError, ValueError, TypeError, AttributeError, zipfile.BadZipFile):
+            return None
