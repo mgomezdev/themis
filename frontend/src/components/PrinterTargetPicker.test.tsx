@@ -66,4 +66,12 @@ describe('PrinterTargetPicker (BIZ-357)', () => {
       model_targets: [{ model_uuid: null }], printer_configs: [{ printer_id: 3 }],
     });
   });
+
+  it('Escape closes the menu', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: '+ Printer' }));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
 });

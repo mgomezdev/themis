@@ -20,8 +20,10 @@ export function PrinterTargetPicker({ printers, selected, onToggle }: {
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
   }, [open]);
 
   const groups = useMemo(() => [...modelGroups(printers).entries()], [printers]);
@@ -46,7 +48,7 @@ export function PrinterTargetPicker({ printers, selected, onToggle }: {
                     onClick={() => onToggle(key)} style={{ marginLeft: 4, padding: 0, minWidth: 0, height: 'auto' }}>×</button>
           </span>
         ))}
-        <button type="button" className="pill idle" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        <button type="button" className="pill idle" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-haspopup="menu"
                 style={{ cursor: 'pointer' }}>+ Printer</button>
       </div>
 

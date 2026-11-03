@@ -88,3 +88,43 @@ async def test_project_generate_with_any_printer_packs_for_the_smallest_bed_and_
         targets = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
     assert [t.model_uuid for t in targets] == [None]
     assert big in await _printer_ids(session_factory, job_id) and len(await _printer_ids(session_factory, job_id)) == 2
+
+
+async def test_a_printer_with_a_model_added_later_gets_the_job_and_keeps_it_on_resync(
+        client, session_factory, upload_3mf, create_printer):
+    job_id = (await _post(client, {"uploaded_file_id": await upload_3mf(), "model_targets": [ANY]})).json()["id"]
+    late = await create_printer(name="Late")                      # has a registry model
+    async def _sync():
+        async with session_factory() as s:
+            await model_targets.sync_targets_for_printer(s, await s.get(Printer, late))
+            await s.commit()
+
+    async def _config():
+        async with session_factory() as s:
+            return (await s.execute(select(JobPrinterConfig).where(
+                JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == late))).scalar_one()
+
+    await _sync()
+    async with session_factory() as s:     # what a claim leaves on the row; deleting + re-adding the config would lose it
+        cfg = await s.get(JobPrinterConfig, (await _config()).id)
+        cfg.slot_plan = [{"model_filament": None, "slot": 0}]
+        await s.commit()
+    await _sync()
+    assert (await _config()).slot_plan == [{"model_filament": None, "slot": 0}]
+
+
+async def test_a_printer_that_loses_its_model_drops_model_configs_but_keeps_any_printer(
+        client, session_factory, upload_3mf, create_printer, model_uuid_of):
+    p = await create_printer(name="A")
+    model = await model_uuid_of(p)
+    by_model = (await _post(client, {"uploaded_file_id": await upload_3mf(),
+                                     "model_targets": [{**ANY, "model_uuid": model}]})).json()["id"]
+    by_any = (await _post(client, {"uploaded_file_id": await upload_3mf(), "model_targets": [ANY]})).json()["id"]
+    async with session_factory() as s:
+        printer = await s.get(Printer, p)
+        printer.model_uuid = None
+        await s.commit()
+        await model_targets.sync_targets_for_printer(s, printer)
+        await s.commit()
+    assert p not in await _printer_ids(session_factory, by_model)
+    assert p in await _printer_ids(session_factory, by_any)

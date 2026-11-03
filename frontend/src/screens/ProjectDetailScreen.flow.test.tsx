@@ -130,6 +130,28 @@ describe('ProjectDetailScreen - generating jobs', () => {
     expect(screen.getByText('No parts — edit the project to add parts.')).toBeTruthy();
   });
 
+  it('sends Any printer and model groups as their own generate fields (BIZ-357)', async () => {
+    const withModels = [{ ...PRINTERS[0], model_uuid: 'm-p1s', model_label: 'Bambu Lab P1S' }, PRINTERS[1]];
+    const { api } = open({ 'GET /api/v1/printers': withModels, 'POST /api/v1/projects/42/generate': () => generated(1) });
+    await ready();
+
+    await userEvent.click(button('Generate…'));
+    await pickPrinter('Any Bambu Lab P1S');
+    await pickPrinter('Printer B');
+    await userEvent.click(button('Generate'));
+    await screen.findByText(/1 job queued/);
+
+    await userEvent.click(button('Generate…'));
+    await pickPrinter('Any printer');
+    await userEvent.click(button('Generate'));
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/42/generate')).toHaveLength(2));
+
+    expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
+      { eligible_printer_ids: [2], eligible_model_uuids: ['m-p1s'], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], eligible_model_uuids: ['m-p1s'], eligible_any_printer: true, process_preset: null, allow_cached: true, save_slice: false },
+    ]);
+  });
+
   it('generates for the chosen printers, reports the job count and reloads the job list', async () => {
     const { api, state } = open({
       'POST /api/v1/projects/42/generate': () => {
