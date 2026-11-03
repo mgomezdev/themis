@@ -62,6 +62,8 @@ class PrinterCreate(BaseModel):
     bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
     bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
+    default_process_profile: str | None = None      # BIZ-358: what a "Printer default" job config slices with
+    single_colour_only: bool = False
 
 
 class PrinterUpdate(BaseModel):
@@ -84,6 +86,8 @@ class PrinterUpdate(BaseModel):
     quiet_end: str | None = None
     # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
     preferred_slicer_plugin_id: str | None = None
+    default_process_profile: str | None = None      # explicit null (or "") clears it
+    single_colour_only: bool | None = None
 
     @model_validator(mode="after")
     def _quiet_hours_pair(self):
@@ -146,6 +150,23 @@ async def _check_variant(session: AsyncSession, model_uuid: str | None, raw: dic
     return variant.as_dict()
 
 
+async def _check_default_process(session: AsyncSession, printer: Printer, name: str | None) -> str | None:
+    """A default process profile must be one of the process presets compatible with the printer's machine profile (BIZ-358)."""
+    if not name:
+        return None
+    machine = await slicer_profiles.machine_profile_for(session, printer)
+    if not machine:
+        raise HTTPException(422, f"{printer.name} has no machine profile yet: map its model in Settings > Printer models first")
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        raise HTTPException(422, "The slicer's profile catalog is unavailable, so the process profile can't be checked; try again later")
+    slicer = get_slicing_provider()
+    compat = slicer.compatible_presets if slicer else default_compatible_presets
+    if name not in {p.name for p in compat(cat, machine, "process")}:
+        raise HTTPException(422, f"Process profile {name!r} is not compatible with {machine!r}")
+    return name
+
+
 def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = None) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
@@ -176,6 +197,8 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
         "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
+        "default_process_profile": p.default_process_profile,
+        "single_colour_only": bool(p.single_colour_only),
         "connected": live_client.connected if live_client else False,
     }
 
@@ -337,7 +360,9 @@ async def create_printer(
         bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
         bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
         machine_rate_per_hour=body.machine_rate_per_hour,
+        single_colour_only=body.single_colour_only,
     )
+    printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
@@ -678,6 +703,10 @@ async def update_printer(
         if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
             raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
         printer.preferred_slicer_plugin_id = wanted
+    if "default_process_profile" in body.model_fields_set:
+        printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
+    if body.single_colour_only is not None:
+        printer.single_colour_only = body.single_colour_only
     await session.commit()
     await session.refresh(printer)
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too

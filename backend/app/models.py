@@ -40,6 +40,10 @@ class Printer(Base):
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # The `gcode.produce` plugin this printer slices with (BIZ-291); NULL = the capability default. Not a FK: a plugin may go dormant.
     preferred_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # BIZ-358: the process preset a "Printer default" job config (print_profile == "") slices with; NULL = none set.
+    default_process_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # BIZ-358: takes jobs in any loaded colour but never a multicolour one (filament_map of 2+ colours).
+    single_colour_only: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class PrinterModelRecord(Base):
