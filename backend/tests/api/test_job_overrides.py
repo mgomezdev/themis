@@ -327,3 +327,17 @@ async def test_check_overrides_serializes_the_providers_inspection_dto_to_the_un
     }
     (call,) = [c for c in provider.fmt.calls if c[0] == "inspect_overrides"]
     assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one
+
+
+async def test_check_overrides_diffs_against_the_printer_default_process_for_a_printer_default_config(check):
+    """BIZ-358: print_profile "" means the printer's default process, so the diff resolves that preset, not ""."""
+    from tests.catalog_helpers import catalog_from_dict
+    compat = catalog_from_dict({"machine": _CATALOG["machine"], "filament": [],
+                                "process": [{"name": "0.20mm Standard", "uuid": "p-1", "compatible_printers": ["Bambu Lab P1S 0.4"]}]})
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=compat):
+        resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), print_profile="",
+                                    printer={"default_process_profile": "0.20mm Standard"},
+                                    merged={"layer_height": "0.28"})
+    assert resp.status_code == 200, resp.text
+    assert "error" not in resp.json()
+    assert [c[2] for c in _merge_calls(sidecar)] == ["p-1"]

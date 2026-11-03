@@ -73,6 +73,19 @@ def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
     return None
 
 
+def effective_process_profile(config, printer) -> str:
+    """The process preset a config slices with: its own, else ("Printer default" = "") the printer's default (BIZ-358)."""
+    return ((config.print_profile if config else "") or (printer.default_process_profile if printer else "") or "")
+
+
+def missing_process_reason(source_file, config, printer) -> str | None:
+    """Why `config` can't be sliced on `printer` for want of a process profile, or None. Pre-sliced files need none."""
+    if is_presliced_file(source_file) or effective_process_profile(config, printer):
+        return None
+    return (f"{printer.name} has no default process profile: set one on the printer (Printers → Edit) or choose a "
+            "process profile for this job")
+
+
 def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
@@ -85,7 +98,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "machine_preset": machine_preset if printer else None,   # resolved from the model mapping + nozzle variant (BIZ-294)
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
-        "print_profile": config.print_profile if config else None,
+        "print_profile": effective_process_profile(config, printer) if config else None,
         "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
         # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
@@ -257,7 +270,7 @@ class QueueEngine:
 
             # Capture all scalars before session closes
             machine_preset = ((await slicer_profiles.machine_profile_for(session, printer)) or "") if printer else ""
-            print_profile = (config.print_profile or "") if config else ""
+            print_profile = effective_process_profile(config, printer) if config else ""
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
@@ -870,6 +883,11 @@ class QueueEngine:
                 await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
                                                     "cached version was sliced for that")
                 return
+
+        missing = missing_process_reason(source_file, config, printer) if source_file is not None else None
+        if missing:
+            await self._block_job(session, job, missing)
+            return
 
         # Pre-flight: resolve the slicing provider for THIS printer (its preferred `gcode.produce` plugin, else the capability
         # default) and make sure it is usable before claiming this job (BIZ-291). Block (not fail) so the job auto-retries when
