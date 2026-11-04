@@ -53,6 +53,9 @@ describe('PrintResultsModal (BIZ-364)', () => {
     expect(screen.getByTestId('succeeded-Lid.stl').textContent).toBe('0');
     fireEvent.click(screen.getByRole('button', { name: 'Nothing failed' }));
     expect(screen.getByTestId('succeeded-Bracket.stl').textContent).toBe('4');
+    fireEvent.change(screen.getByLabelText('Failed Bracket.stl'), { target: { value: '1.7' } }); // whole parts only
+    expect(screen.getByTestId('succeeded-Bracket.stl').textContent).toBe('3');
+    fireEvent.change(screen.getByLabelText('Failed Bracket.stl'), { target: { value: '0' } });
     fireEvent.change(screen.getByLabelText('Failed Lid.stl'), { target: { value: '9' } });       // capped at what was on the plate
     expect(screen.getByTestId('succeeded-Lid.stl').textContent).toBe('0');
     fireEvent.click(screen.getByRole('button', { name: 'Clear plate' }));

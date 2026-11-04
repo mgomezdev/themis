@@ -38,7 +38,7 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-label="Print results" onClick={e => { e.stopPropagation(); onClose(); }}
+    <div className="modal-backdrop" role="dialog" aria-label="Print results" onClick={e => e.stopPropagation()}   // a stray click keeps the counts
          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
       <div className="card" style={{ padding: 20, minWidth: 360, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Print results</div>
@@ -53,7 +53,7 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
           <span className="tag-key">Part</span><span className="tag-key">Succeeded</span><span className="tag-key">Failed</span>
           {pending.parts.map(p => (
             <PartRow key={p.project_item_id} name={p.file_name} quantity={p.quantity} failed={failed[p.project_item_id] ?? 0}
-                     onChange={n => setFailed({ ...failed, [p.project_item_id]: Math.min(p.quantity, Math.max(0, n)) })} />
+                     onChange={n => setFailed({ ...failed, [p.project_item_id]: Math.min(p.quantity, Math.max(0, Math.trunc(n) || 0)) })} />
           ))}
         </div>
         {error && <div style={{ color: 'var(--err)', fontSize: 13, marginTop: 10 }}>{error}</div>}

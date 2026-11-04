@@ -858,6 +858,8 @@ async def plate_cleared(
     they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
     printer = await _get_or_404(printer_id, session)
     outcome: dict = {}
+    recorded: dict | None = None
+    job = None
     if body is not None and body.job_id is not None:
         from ...models import Job
         from ...services import print_results
@@ -868,13 +870,16 @@ async def plate_cleared(
             raise HTTPException(422, f"Job {body.job_id} did not print on {printer.name}")
         if job.project_id is None or job.status not in ("complete", "failed"):
             raise HTTPException(409, f"Job {body.job_id} is not a finished project job")
-        outcome = await print_results.record_and_restore(
+        recorded = await print_results.record_and_restore(
             session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
     printer.awaiting_plate_clear = False
-    await session.commit()
+    await session.commit()                 # results + the clear are in before any repacking
     printer_manager.set_awaiting_plate_clear(printer_id, False)
+    if recorded:
+        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
+        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
     queue_engine.wake()
-    return {"ok": True, **outcome}         # + requeued_job_ids / held when results were reported
+    return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported
 
 
 @router.post(

@@ -177,3 +177,53 @@ async def test_reporting_results_needs_jobs_write_and_a_finished_project_job(
     r = await client.post(f"/api/v1/printers/{a}/plate-cleared", json=body, headers={"X-Api-Key": raw})
     assert r.status_code == 403
     assert (await client.post(f"/api/v1/printers/{a}/plate-cleared", headers={"X-Api-Key": raw})).status_code == 200   # plain clear
+
+
+async def test_results_are_reported_once(client, upload_3mf, create_printer, session_factory, tmp_path):
+    pid, item, job_id, a, _ = await _setup(client, upload_3mf, create_printer, tmp_path)
+    await _printed(session_factory, job_id, a)
+    assert (await _clear(client, tmp_path, a, job_id, {item: 1})).status_code == 200
+    async with session_factory() as s:
+        (await s.get(Printer, a)).awaiting_plate_clear = True
+        await s.commit()
+    assert (await _clear(client, tmp_path, a, job_id, {item: 1})).status_code == 409
+    assert (await client.put(f"/api/v1/jobs/{job_id}/outcome", json={"failures": []})).status_code == 409   # no re-review
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_failed == 1
+    assert (await _clear(client, tmp_path, a, job_id, {9999: 1})).status_code in (409, 422)
+
+
+async def test_a_requeue_that_cannot_be_packed_holds_the_parts_and_still_clears_the_plate(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    from app.services.providers.contract import ErrorCode, ProviderError
+    pid, item, job_id, a, _ = await _setup(client, upload_3mf, create_printer, tmp_path)
+    await _printed(session_factory, job_id, a)
+    broken = FakeProjectConstructor(outputs=[ProviderError(ErrorCode.FAILED, "builder down")])
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=broken):
+        r = await client.post(f"/api/v1/printers/{a}/plate-cleared", json={
+            "job_id": job_id, "results": [{"project_item_id": item, "quantity_failed": 2}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["requeued_job_ids"] == [] and r.json()["held"] == [{"project_item_id": item, "quantity": 2}]
+    assert r.json()["requeue_errors"]
+    async with session_factory() as s:
+        pi = await s.get(ProjectItem, item)
+        assert (pi.quantity_completed, pi.quantity_failed, pi.quantity_held) == (1, 2, 2)
+        assert (await s.get(Printer, a)).awaiting_plate_clear is False
+    assert [e["resolution"] for e in (await client.get(f"/api/v1/projects/{pid}/failures")).json()] == ["held"]
+
+
+async def test_after_a_reprint_failures_count_afresh(client, upload_3mf, create_printer, session_factory, tmp_path):
+    pid, item, job_id, a, b = await _setup(client, upload_3mf, create_printer, tmp_path, qty=1)
+    await _printed(session_factory, job_id, a)
+    retry = (await _clear(client, tmp_path, a, job_id, {item: 1})).json()["requeued_job_ids"][0]
+    await _printed(session_factory, retry, b)
+    assert (await _clear(client, tmp_path, b, retry, {item: 1})).json()["held"]        # A + B: held
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        reprint = (await client.post(f"/api/v1/projects/{pid}/items/{item}/held", json={"action": "reprint"})).json()["requeued_job_ids"][0]
+    await _printed(session_factory, reprint, a)
+    r = await _clear(client, tmp_path, a, reprint, {item: 1})                            # first failure after the reprint
+    assert r.json()["held"] == [] and len(r.json()["requeued_job_ids"]) == 1
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_failed == 3                      # failed attempts, not outstanding

@@ -28,7 +28,8 @@ async def _retry_limit(session: AsyncSession) -> int:
 
 async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, failures: dict[int, int]) -> dict:
     """Record `job`'s per-part results (failures = {project_item_id: quantity_failed}; everything else on the plate succeeded),
-    then requeue or hold the failed parts. Caller commits. Returns {"requeued_job_ids", "held": [{project_item_id, quantity}]}."""
+    and decide per failed part: requeue or hold. Caller commits, then calls `requeue_reported` (so the results and the plate
+    clear are never lost to a packing error). Returns {"held": [...], "requeue": {project_item_id: quantity}}."""
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to report")
     if (await session.execute(select(JobItemFailure.id).where(JobItemFailure.job_id == job.id,
@@ -63,9 +64,11 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
         pi.quantity_completed += qty - failed
         resolution = None
         if failed:
+            # Distinct printers it failed on since a person last Reprinted or Dropped it (those reset the count).
             printers = set((await session.execute(select(JobItemFailure.printer_id).where(
                 JobItemFailure.project_item_id == item_id, JobItemFailure.quantity_failed > 0,
-                JobItemFailure.printer_id.is_not(None)))).scalars()) | {printer_id}
+                JobItemFailure.printer_id.is_not(None),
+                JobItemFailure.resolution.in_(["requeued", "held"])))).scalars()) | {printer_id}
             if len(printers) >= limit:
                 resolution = "held"
                 pi.quantity_held += failed
@@ -78,8 +81,31 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
     job.outcome = "reviewed"
     job.updated_at = now
     await session.flush()
-    job_ids = await requeue_parts(session, job, requeue) if requeue else []
-    return {"requeued_job_ids": job_ids, "held": held}
+    return {"held": held, "requeue": requeue}
+
+
+async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, int]) -> dict:
+    """After the results are committed: pack each failed part set anew, one pack at a time. A pack that can't be built (no
+    builder, a missing model, a provider error) holds its parts for a person instead of losing them; the error is returned."""
+    job_ids: list[int] = []
+    held: list[dict] = []
+    errors: list[str] = []
+    job_id = job.id                        # a rollback below expires the ORM objects: re-read them by id
+    for item_id, qty in requeue.items():
+        try:
+            job_ids += await requeue_parts(session, await session.get(Job, job_id), {item_id: qty})
+        except Exception as exc:          # noqa: BLE001 - any failure here must turn into a hold, never a lost part
+            await session.rollback()
+            errors.append(str(getattr(exc, "detail", exc)))
+            pi = await session.get(ProjectItem, item_id)
+            row = (await session.execute(select(JobItemFailure).where(
+                JobItemFailure.job_id == job_id, JobItemFailure.project_item_id == item_id))).scalar_one_or_none()
+            if pi is not None and row is not None:
+                pi.quantity_held += qty
+                row.resolution = "held"
+                held.append({"project_item_id": item_id, "quantity": qty})
+            await session.commit()
+    return {"requeued_job_ids": job_ids, "held": held, **({"requeue_errors": errors} if errors else {})}
 
 
 def _targets_of_job(configs: list[JobPrinterConfig], model_targets: list[JobModelTarget]) -> list[tuple[str, str]]:
@@ -156,8 +182,7 @@ async def resolve_held(session: AsyncSession, project_id: int, item_id: int, act
     for jif in held:
         jif.resolution = "reprinted" if action == "reprint" else "dropped"
     job_ids: list[int] = []
-    if action == "reprint":
-        item.quantity_failed = max(0, item.quantity_failed - qty)          # they get another go: no longer counted as failed
+    if action == "reprint":                     # quantity_failed keeps counting failed attempts: it is not reduced here
         source = await session.get(Job, held[-1].job_id) if held else None
         if source is not None:
             await session.flush()

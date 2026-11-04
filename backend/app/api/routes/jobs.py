@@ -1534,6 +1534,10 @@ async def mark_job_outcome(
         raise HTTPException(400, "This job has no project items to mark")
 
     plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
+    reported = (await session.execute(select(JobItemFailure.id).where(
+        JobItemFailure.job_id == job_id, JobItemFailure.resolution.is_not(None)).limit(1))).first()
+    if reported:      # BIZ-364: results reported at plate clear already requeued / held its failed parts
+        raise HTTPException(409, "This job's print results were reported when its plate was cleared")
 
     # Reverse previous increments
     old_jifs = (await session.execute(
