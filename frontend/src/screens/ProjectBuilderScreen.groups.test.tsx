@@ -12,7 +12,7 @@ const group = (id: number, name: string) => ({
   id, project_id: 7, name, sort_order: id, is_default: id === 1, strategy: 'fixed', envelope_x: null, envelope_y: null,
   mix_colours: false, targets: [], max_parts: null, pool: null, pool_warning: null,
 });
-const GROUPS = [group(1, 'Default Group'), group(2, 'Fine')];
+const GROUPS = [group(1, 'Default Group'), group(2, 'Fine'), group(4, 'Draft')];
 const item = (id: number, fileId: number, name: string, groupId: number, over: object = {}) => ({
   id, project_id: 7, file_id: fileId, file_name: name, quantity: 1, quantity_completed: 0, quantity_failed: 0,
   filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: id, group_id: groupId,
@@ -26,14 +26,15 @@ const PROJECT = {
 };
 
 function open() {
+  const groups = [...GROUPS];
   const api = stubFetch({
     'GET /api/v1/files': FILES,
     'GET /api/v1/plugins': { plugins: [], selections: {} },
     'GET /api/v1/printers': [],
     'GET /api/v1/projects/7': PROJECT,
-    'GET /api/v1/projects/7/groups': GROUPS,
+    'GET /api/v1/projects/7/groups': () => groups,
     'GET /api/v1/files/3/objects': [],
-    'POST /api/v1/projects/7/groups': group(3, 'Group 2'),
+    'POST /api/v1/projects/7/groups': () => { groups.push(group(3, 'Group 2')); return group(3, 'Group 2'); },
     'PUT /api/v1/projects/7/groups/order': (c: { body: unknown }) =>
       (c.body as { group_ids: number[] }).group_ids.map(id => GROUPS.find(g => g.id === id)!),
     'PATCH /api/v1/projects/7': PROJECT,
@@ -205,6 +206,16 @@ describe('Builder Groups tab (BIZ-363)', () => {
     expect(await screen.findByDisplayValue('Fine')).toBeTruthy();
     drag(screen.getByTestId('badge-2'), screen.getByTestId('badge-1'));
     await waitFor(() => expect(api.to('PUT', '/api/v1/projects/7/groups/order')).toHaveLength(1));
-    expect(api.to('PUT', '/api/v1/projects/7/groups/order')[0].body).toEqual({ group_ids: [2, 1] });
+    expect(api.to('PUT', '/api/v1/projects/7/groups/order')[0].body).toEqual({ group_ids: [2, 1, 4] });
+  });
+
+  it('a badge dragged onto a later one lands after it (so it can move to the end)', async () => {
+    const api = open();
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: /^Groups/ }));
+    await screen.findByDisplayValue('Default Group');
+    drag(screen.getByTestId('badge-1'), screen.getByTestId('badge-4'));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/projects/7/groups/order')).toHaveLength(1));
+    expect(api.to('PUT', '/api/v1/projects/7/groups/order')[0].body).toEqual({ group_ids: [2, 4, 1] });
   });
 });

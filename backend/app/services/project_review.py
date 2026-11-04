@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import PartSize, Printer, Project, ProjectItem, UploadedFile
@@ -91,9 +92,11 @@ async def part_sizes(session: AsyncSession, items: list[ProjectItem], files: dic
                 size = measured[fkey][idx] if idx < len(measured[fkey]) else None
                 out[item_id] = size
                 if size is not None and keys[item_id] not in cached:
-                    cached[keys[item_id]] = PartSize(part_key=keys[item_id], size_x_mm=size[0], size_y_mm=size[1],
-                                                     size_z_mm=size[2], measured_at=now)
-                    session.add(cached[keys[item_id]])
+                    cached[keys[item_id]] = size
+                    # Two reviews can measure the same new part at once: the first write wins, the other is a no-op.
+                    await session.execute(sqlite_insert(PartSize).values(
+                        part_key=keys[item_id], size_x_mm=size[0], size_y_mm=size[1], size_z_mm=size[2], measured_at=now,
+                    ).on_conflict_do_nothing(index_elements=["part_key"]))
         await session.commit()
     return out
 

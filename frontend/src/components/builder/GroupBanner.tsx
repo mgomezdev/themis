@@ -56,8 +56,10 @@ export function GroupBanner({ groups, counts, selected, onSelect, showAll, onDro
       if (ids && ids.length && onDropItems) { onDropItems(ids, target); return; }
       const moved = Number(e.dataTransfer.getData(DRAG_GROUP));
       if (onReorder && moved && typeof target === 'number' && moved !== target) {
-        const order = groups.map(g => g.id).filter(id => id !== moved);
-        order.splice(order.indexOf(target), 0, moved);
+        const ids = groups.map(g => g.id);
+        const forward = ids.indexOf(moved) < ids.indexOf(target);
+        const order = ids.filter(id => id !== moved);
+        order.splice(order.indexOf(target) + (forward ? 1 : 0), 0, moved);    // dropped on a later badge: after it
         onReorder(order);
       }
     },

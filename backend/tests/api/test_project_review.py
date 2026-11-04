@@ -153,3 +153,39 @@ async def test_printer_bed_height_is_saved_and_cleared(client, create_printer):
     assert (await client.get(f"/api/v1/printers/{a}")).json()["bed_z_mm"] is None
     assert (await client.patch(f"/api/v1/printers/{a}", json={"bed_z_mm": 0})).status_code == 422
     assert c.ProviderError                                                                          # (contract import used above)
+
+
+async def test_two_reviews_measuring_the_same_new_part_at_once_both_succeed(client, upload_3mf, create_printer, tmp_path):
+    """Review: the Builder can fire two reviews back to back; the second insert of a part's size must not 500."""
+    import asyncio
+    a = await create_printer(name="A", bed_z_mm=250.0)
+    pid, _, _ = await _project(client, upload_3mf, [{"target_key": str(a), "process_profile": "0.2"}], ["part.stl"])
+    m = Measurer({"part.stl": (10.0, 10.0, 10.0)})
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=m):
+        r1, r2 = await asyncio.gather(client.get(f"/api/v1/projects/{pid}/review"), client.get(f"/api/v1/projects/{pid}/review"))
+    assert (r1.status_code, r2.status_code) == (200, 200)
+    assert r1.json()["open"] == r2.json()["open"] == 0
+
+
+async def test_a_size_already_cached_by_another_review_is_not_written_twice(client, upload_3mf, create_printer, session_factory, tmp_path):
+    from sqlalchemy import select
+    from app.models import PartSize, ProjectItem, UploadedFile
+    from app.services import project_review
+    a = await create_printer(name="A", bed_z_mm=250.0)
+    pid, _, ids = await _project(client, upload_3mf, [{"target_key": str(a), "process_profile": "0.2"}], ["part.stl"])
+    async with session_factory() as s:
+        item = await s.get(ProjectItem, ids["part.stl"])
+        files = {item.file_id: await s.get(UploadedFile, item.file_id)}
+        with patch("app.config.get_library_dir", return_value=tmp_path / "library"):
+            first = await project_review.part_sizes(s, [item], files, Measurer({"part.stl": (1.0, 2.0, 3.0)}))
+    async with session_factory() as s:          # a review that started before the first commit: its cache read was empty
+        item = await s.get(ProjectItem, ids["part.stl"])
+        with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+             patch.object(project_review, "select", wraps=project_review.select) as sel:
+            sel.side_effect = lambda *a, **k: select(PartSize).where(PartSize.part_key == "nothing")   # sees no cache
+            second = await project_review.part_sizes(s, [item], files, Measurer({"part.stl": (9.0, 9.0, 9.0)}))
+    async with session_factory() as s:
+        rows = (await s.execute(select(PartSize))).scalars().all()
+    assert first[item.id] == (1.0, 2.0, 3.0) and second[item.id] == (9.0, 9.0, 9.0)
+    assert [(r.size_x_mm, r.size_y_mm, r.size_z_mm) for r in rows] == [(1.0, 2.0, 3.0)]     # first write wins, no error

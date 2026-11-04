@@ -9,6 +9,7 @@ import { GroupBanner, type BannerSelection } from '../components/builder/GroupBa
 import { ItemSections, type BulkAction } from '../components/builder/ItemSections';
 import { BuilderTabs, ReviewPanel, type BuilderTab } from '../components/builder/ReviewPanel';
 import { CustomerPicker } from '../components/CustomerPicker';
+import { promoteProject } from '../api/customers';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile, FolderNode } from '../data/types';
@@ -276,8 +277,9 @@ export function ProjectBuilderScreen() {
         fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
       })),
       del,
-      links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
-      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
+      // Server ids are left out: a save fills them in, and that is not an edit.
+      links: lks.map(l => ({ url: l.url, label: l.label })),
+      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost })),
     });
   }
 
@@ -356,7 +358,16 @@ export function ProjectBuilderScreen() {
   useEffect(() => {
     if (!projectId) { setGroups([]); return; }
     let alive = true;
-    listProjectGroups(projectId).then(gs => { if (alive) setGroups(Array.isArray(gs) ? gs : []); }).catch(() => {});
+    listProjectGroups(projectId).then(gs => {
+      if (!alive) return;
+      const list = Array.isArray(gs) ? gs : [];
+      setGroups(list);
+      // A deleted group's items are the Default Group's now (the server moved them): never save a dead group id.
+      const ids = new Set(list.map(g => g.id));
+      setItems(prev => (prev.some(it => it.group_id != null && !ids.has(it.group_id))
+        ? prev.map(it => (it.group_id != null && !ids.has(it.group_id) ? { ...it, group_id: null } : it)) : prev));
+      setBannerSel(sel => (sel === 'all' || ids.has(sel) ? sel : 'all'));
+    }).catch(() => {});
     return () => { alive = false; };
   }, [projectId, groupsTick]);
   const defaultGroupId = groups.find(g => g.is_default)?.id ?? null;
@@ -479,6 +490,7 @@ export function ProjectBuilderScreen() {
       await patchProject(projectId, projectFields);
       for (const id of deletedItemIds) {
         await deleteProjectItem(projectId, id);
+        setDeletedItemIds(prev => prev.filter(x => x !== id));
       }
       const existing = items.filter(i => i.serverId);
       const newOnes = items.filter(i => !i.serverId);
@@ -506,16 +518,22 @@ export function ProjectBuilderScreen() {
       }
       for (const id of deletedLinkIds) {
         await deleteProjectLink(projectId, id);
+        setDeletedLinkIds(prev => prev.filter(x => x !== id));
       }
       for (const lk of links) {
         if (lk.serverId) {
           await updateProjectLink(projectId, lk.serverId, { url: lk.url, label: lk.label || null });
         } else {
-          await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
+          // 1. Later saves (the Builder stays open) update this link instead of adding it again.
+          const added = await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
+          if (added && typeof added.id === 'number') {
+            setLinks(prev => prev.map(l => (l.localId === lk.localId ? { ...l, serverId: added.id } : l)));
+          }
         }
       }
       for (const id of deletedPartIds) {
         await deleteProjectPart(projectId, id);
+        setDeletedPartIds(prev => prev.filter(x => x !== id));
       }
       for (const pt of parts) {
         if (pt.serverId) {
@@ -523,10 +541,13 @@ export function ProjectBuilderScreen() {
             name: pt.name, quantity: pt.quantity, allocated: pt.allocated, unit_cost: unitCostValue(pt),
           });
         } else {
-          await addProjectPart(projectId, {
+          const added = await addProjectPart(projectId, {
             name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
             ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
           });
+          if (added && typeof added.id === 'number') {
+            setParts(prev => prev.map(p => (p.localId === pt.localId ? { ...p, serverId: added.id } : p)));
+          }
         }
       }
       return projectId;
@@ -569,7 +590,6 @@ export function ProjectBuilderScreen() {
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
-      else setGroupsTick(t => t + 1);
       return pid;
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -579,11 +599,16 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  const loadReview = useCallback(async (pid: number) => {
+  const [reviewedSnap, setReviewedSnap] = useState<string | null>(null);
+  const loadReview = useCallback(async (pid: number, snap: string) => {
     setReviewLoading(true);
     setReviewError(null);
-    try { setReview(await getProjectReview(pid)); } catch (e) { setReviewError(e instanceof Error ? e.message : String(e)); }
-    finally { setReviewLoading(false); }
+    try {
+      setReview(await getProjectReview(pid));
+      setReviewedSnap(snap);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : String(e));   // shown instead of the checks; Queue stays disabled
+    } finally { setReviewLoading(false); }
   }, []);
 
   /** Queue project: save, then generate every group with its own printers (BIZ-360); the Review gate keeps this for 0 errors. */
@@ -599,7 +624,7 @@ export function ProjectBuilderScreen() {
       setGenerating(true);
       const result = await generateProject(pid);
       setGenerateResult({ jobCount: result.jobs.length, warnings: (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w) });
-      loadReview(pid);
+      loadReview(pid, currentSnap);
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -619,9 +644,14 @@ export function ProjectBuilderScreen() {
     const key = `${projectId}:${currentSnap}:${groupsTick}`;
     if (reviewFor.current === key) return;
     reviewFor.current = key;
+    const snap = currentSnap;
     (async () => {
-      if (isDirty && canSave) { if ((await handleSave()) === null) return; }
-      loadReview(projectId);
+      if (isDirty && canSave && (await handleSave()) === null) {
+        setReview(null);                 // the checks would describe what isn't saved
+        setReviewedSnap(null);
+        return;
+      }
+      loadReview(projectId, snap);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, projectId, currentSnap, groupsTick]);
@@ -654,8 +684,26 @@ export function ProjectBuilderScreen() {
     </div>
   );
 
+  async function promote() {
+    if (!projectId) return;
+    try {
+      await promoteProject(projectId, 'planning');
+      setIsDraft(false);
+      setGroupsTick(t => t + 1);               // re-run the checks
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   const detailsTab = (
     <div className="col gap-3">
+        {isDraft && projectId && (
+          <div className="row gap-3" role="status" style={{ alignItems: 'center', padding: '10px 14px', borderRadius: 6,
+                                                            border: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+            <span className="small" style={{ flex: 1 }}>This is a draft (a customer request). Promote it to planning to queue it.</span>
+            <button className="btn sm" onClick={promote}>Promote to planning</button>
+          </div>
+        )}
         {/* Project metadata fields */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1043,7 +1091,8 @@ export function ProjectBuilderScreen() {
   );
 
   const open = review?.open ?? null;
-  const queueBlocked = !projectId || isDraft || !review || reviewLoading || (open ?? 1) > 0 || items.length === 0;
+  const queueBlocked = !projectId || isDraft || !review || reviewLoading || !!reviewError || reviewedSnap !== currentSnap
+    || (open ?? 1) > 0 || items.length === 0;
   return (
     <div className="col gap-3" style={{ height: '100%' }}>
       <div className="row between" style={{ alignItems: 'baseline' }}>

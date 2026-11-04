@@ -163,6 +163,23 @@ describe('ProjectBuilderScreen - Save draft', () => {
     expect(api.to('PUT', '/api/v1/projects/7/items/50')).toEqual([]);
   });
 
+  it('a retry after a save failed part-way does not delete the removed item again', async () => {
+    let puts = 0, deletes = 0;
+    const api = await existing(open('/projects/7/edit', {
+      'GET /api/v1/projects/7': { ...EXISTING, items: [...EXISTING.items, { ...EXISTING.items[0], id: 49, file_id: 2, file_name: 'Widget.stl' }] },
+      'DELETE /api/v1/projects/7/items/49': () => (++deletes === 1 ? { deleted: 49 } : new Reply(404, 'gone')),
+      'PUT /api/v1/projects/7/items/50': () => (++puts === 1 ? new Reply(500, 'blip') : EXISTING.items[0]),
+    }));
+    await userEvent.click(screen.getAllByTitle('Remove')[1]);                       // Widget.stl (saved as item 49)
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText(/Save failed: 500 blip/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(puts).toBe(2));
+    expect(deletes).toBe(1);
+    await waitFor(() => expect(screen.queryByText(/Save failed/)).toBeNull());
+    expect(api.to('DELETE', '/api/v1/projects/7/items/49')).toHaveLength(1);
+  });
+
   it('cannot save without a name', async () => {
     open('/projects/new');
     const save = await screen.findByRole('button', { name: 'Save draft' });
@@ -258,6 +275,82 @@ describe('ProjectBuilderScreen - Review and Queue project', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await screen.findByText('1 job added to queue');
     expect(api.to('POST', '/api/v1/projects/7/generate')).toHaveLength(2);
+  });
+});
+
+describe('ProjectBuilderScreen - review fixes (BIZ-363)', () => {
+  it('a new link and part are added once, then updated, however often the Builder saves', async () => {
+    const api = await existing(open('/projects/7/edit', {
+      'PUT /api/v1/projects/7/links/70': { id: 70 }, 'PUT /api/v1/projects/7/parts/80': { id: 80 },
+    }));
+    await userEvent.click(screen.getByRole('tab', { name: /^Details/ }));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://x.test');
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), 'magnet');
+    await reviewAndQueue();                                                  // Review saves, then Queue saves again
+    await screen.findByText('2 jobs added to queue');
+    expect(api.to('POST', '/api/v1/projects/7/links')).toHaveLength(1);
+    expect(api.to('POST', '/api/v1/projects/7/parts')).toHaveLength(1);
+    expect(api.to('PUT', '/api/v1/projects/7/links/70')).toHaveLength(1);
+    expect(api.to('PUT', '/api/v1/projects/7/parts/80')).toHaveLength(1);
+  });
+
+  it('runs the checks once per Review visit', async () => {
+    const api = await existing();
+    fireEvent.change(screen.getByLabelText('Quantity of Bracket.stl'), { target: { value: '3' } });
+    await toTab(/^Review/);
+    await screen.findByText('Every item is in a group');
+    await waitFor(() => expect(queueBtn().disabled).toBe(false));
+    expect(api.to('GET', '/api/v1/projects/7/review')).toHaveLength(1);
+  });
+
+  it('a failed check run leaves Queue disabled instead of trusting the last result', async () => {
+    let calls = 0;
+    await existing(open('/projects/7/edit', {
+      'GET /api/v1/projects/7/review': () => (++calls === 1 ? CLEAN : new Reply(500, 'boom')),
+    }));
+    await toTab(/^Review/);
+    await waitFor(() => expect(queueBtn().disabled).toBe(false));
+    await toTab(/^Items/);
+    fireEvent.change(screen.getByLabelText('Quantity of Bracket.stl'), { target: { value: '9' } });
+    await toTab(/^Review/);
+    expect(await screen.findByText(/Couldn't run the checks/)).toBeTruthy();
+    expect(queueBtn().disabled).toBe(true);
+  });
+
+  it('items of a group that was deleted move to the Default Group and save without it', async () => {
+    let groups = [group(1, 'Default Group'), group(2, 'Fine')];
+    const api = open('/projects/7/edit', {
+      'GET /api/v1/projects/7': { ...EXISTING, items: [{ ...EXISTING.items[0], group_id: 2 }] },
+      'GET /api/v1/projects/7/groups': () => groups,
+      'DELETE /api/v1/projects/7/groups/2': () => { groups = [group(1, 'Default Group')]; return new Reply(204); },
+    });
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await waitFor(() => expect(screen.getByTestId('badge-2').textContent).toContain('1 item'));
+    await toTab(/^Groups/);
+    await userEvent.click(screen.getByTestId('badge-2'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByTestId('badge-2')).toBeNull());
+    expect(screen.getByTestId('badge-1').textContent).toContain('1 item');
+    await toTab(/^Items/);
+    fireEvent.change(screen.getByLabelText('Quantity of Bracket.stl'), { target: { value: '4' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/projects/7/items/50')).toHaveLength(1));
+    expect(api.to('PUT', '/api/v1/projects/7/items/50')[0].body).not.toHaveProperty('group_id');
+  });
+
+  it('a draft is promoted to planning from the Details tab', async () => {
+    const api = open('/projects/7/edit', {
+      'GET /api/v1/projects/7': { ...EXISTING, stage: 'draft' },
+      'POST /api/v1/projects/7/promote': { ok: true },
+    });
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await toTab(/^Details/);
+    await userEvent.click(screen.getByRole('button', { name: 'Promote to planning' }));
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/7/promote')).toHaveLength(1));
+    expect(api.to('POST', '/api/v1/projects/7/promote')[0].body).toEqual({ stage: 'planning' });
+    expect(screen.queryByRole('button', { name: 'Promote to planning' })).toBeNull();
   });
 });
 
