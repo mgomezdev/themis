@@ -1171,8 +1171,10 @@ async def delete_part(
 # ---------------------------------------------------------------------------
 
 async def _max_queue_position(session: AsyncSession) -> float:
-    result = await session.execute(select(func.max(Job.queue_position)))
-    return result.scalar_one_or_none() or 0.0
+    """The last place in the queue: jobs and pools (BIZ-362: a pool is a queue entry too), so nothing ties with a pool."""
+    jobs = (await session.execute(select(func.max(Job.queue_position)))).scalar_one_or_none() or 0.0
+    pools = (await session.execute(select(func.max(ProjectGroup.queue_position)))).scalar_one_or_none() or 0.0
+    return max(jobs, pools)
 
 
 def _parse_plate_nums(path: Path) -> list[int]:
@@ -1731,6 +1733,16 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             continue                                         # an empty group adds nothing to the queue
         saved = [(t.target_key, t.process_profile) for t in await project_groups.targets_of(session, pgroup.id)]
         targets = saved or (legacy if pgroup.is_default else [])
+        if pgroup.strategy == "pool":
+            # BIZ-362: Split / Together items wait in the pool for printers to claim; the pool takes its place in the queue.
+            from ...services import pools
+            if any(pools.poolable(i) for i in pg_items):
+                pgroup.queue_position = await _max_queue_position(session) + 1.0
+                await session.commit()
+            pg_items = [i for i in pg_items if not pools.poolable(i)]
+            if not pg_items:
+                groups_out.append({"id": pgroup.id, "pool": True})
+                continue
         group_packs, out, explicit = await _plan_group_packs(session, pgroup, pg_items, targets, library)
         packs.extend(group_packs)
         groups_out.append(out)
@@ -1762,6 +1774,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
 
     jobs_out, files_out = await _queue_packs(session, proj, packs, constructor,
                                              allow_cached=body.allow_cached, save_slice=body.save_slice)
+    packed_groups = [g for g in groups_out if not g.get("pool")]
 
     proj.updated_at = _now_iso()
     await session.commit()
@@ -1774,7 +1787,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         "files": files_out,
         "eligible_printer_ids": list(all_explicit),
         # The first group's pack bed (the pre-groups shape); every group's is in `groups`.
-        "pack_bed_x": groups_out[0]["pack_bed_x"] if groups_out else 256.0,
-        "pack_bed_y": groups_out[0]["pack_bed_y"] if groups_out else 256.0,
+        "pack_bed_x": packed_groups[0]["pack_bed_x"] if packed_groups else 256.0,
+        "pack_bed_y": packed_groups[0]["pack_bed_y"] if packed_groups else 256.0,
         "groups": groups_out,
     }

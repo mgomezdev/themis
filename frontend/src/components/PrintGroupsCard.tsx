@@ -79,6 +79,15 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
   const [env, setEnv] = useState({ x: group.envelope_x?.toString() ?? '', y: group.envelope_y?.toString() ?? '' });
   useEffect(() => { setName(group.name); setEnv({ x: group.envelope_x?.toString() ?? '', y: group.envelope_y?.toString() ?? '' }); },
             [group.name, group.envelope_x, group.envelope_y]);
+  // BIZ-362: a pool packs each claimed plate for the claiming printer's own bed, so it has no envelope.
+  const pool = group.strategy === 'pool';
+  const [maxParts, setMaxParts] = useState(group.max_parts?.toString() ?? '');
+  useEffect(() => { setMaxParts(group.max_parts?.toString() ?? ''); }, [group.max_parts]);
+  const saveMaxParts = () => {
+    const n = maxParts.trim() === '' ? null : Math.floor(Number(maxParts));
+    if (n !== null && !(n >= 1)) { setMaxParts(group.max_parts?.toString() ?? ''); return; }
+    if (n !== group.max_parts) onPatch({ max_parts: n });
+  };
   const keys = group.targets.map(t => t.target_key);
   const auto = group.envelope_x == null;
   // What "auto" packs for now: the smallest bed among the printers the targets cover (the custom envelope starts from it).
@@ -123,6 +132,32 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
       )}
 
       <div className="row gap-2" style={{ alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+        <span className="label" style={{ margin: 0 }}>Pack</span>
+        <select className="select" aria-label={`Packing for ${group.name}`} value={pool ? 'pool' : 'fixed'}
+                onChange={e => onPatch({ strategy: e.target.value as 'fixed' | 'pool' })} style={{ maxWidth: 260 }}>
+          <option value="fixed">Now, for one bed size</option>
+          <option value="pool">When a printer picks it up</option>
+        </select>
+        {pool && (
+          <>
+            <span className="small">at most</span>
+            <input className="input" aria-label="Most parts per plate" style={{ width: 70 }} placeholder="any" value={maxParts}
+                   onChange={e => setMaxParts(e.target.value)} onBlur={saveMaxParts} />
+            <span className="tiny muted">parts per plate (blank = as many as fit)</span>
+          </>
+        )}
+      </div>
+      {pool && group.pool && (
+        <div className="tiny muted" style={{ marginTop: 6 }} data-testid={`pool-${group.id}`}>
+          {group.pool.done} done · {group.pool.printing} printing · {group.pool.left} left
+        </div>
+      )}
+      {pool && group.pool_warning && (
+        <div className="tiny" role="alert" style={{ color: 'var(--warn, #f59e0b)', marginTop: 4 }}>{group.pool_warning}</div>
+      )}
+
+      {!pool && (
+      <div className="row gap-2" style={{ alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
         <span className="label" style={{ margin: 0 }}>Pack for</span>
         <label className="row gap-1 small" style={{ alignItems: 'center' }}>
           <input type="checkbox" checked={auto}
@@ -141,6 +176,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
           </>
         )}
       </div>
+      )}
 
       {items.length > 0 && (
         <div className="col gap-1" style={{ marginTop: 10 }}>

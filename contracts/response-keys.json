@@ -66,6 +66,7 @@
     "quiet_start",
     "quiet_end"
   ],
+  "queue_pool": ["group_id", "name", "project_id", "project_name", "queue_position", "done", "printing", "left", "warning"],
   "queue_job": [
     "id",
     "uploaded_file_id",
@@ -82,7 +83,8 @@
     "save_slice_name",
     "allow_cached_slice",
     "sliced_version_id",
-    "slice_cache_info"
+    "slice_cache_info",
+    "pool_group_id"
   ],
   "job_details_core": [
     "id",
@@ -187,7 +189,10 @@
     "envelope_x",
     "envelope_y",
     "mix_colours",
-    "targets"
+    "targets",
+    "max_parts",
+    "pool",
+    "pool_warning"
   ],
   "project_link": [
     "id",

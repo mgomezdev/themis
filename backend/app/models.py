@@ -230,6 +230,8 @@ class Job(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     project_item_quantities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # BIZ-362: the pool (print group) this plate was packed from at claim time; plain int, no FK (the group may be deleted).
+    pool_group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     # --- Actual values (set at production slice time, before GcodeFile deleted) ---
     actual_filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     actual_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -548,6 +550,10 @@ class ProjectGroup(Base):
     envelope_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Colour rule: different single colours may share a plate (toolchangers / forced swaps). Stored; packing honours it with BIZ-356.
     mix_colours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # BIZ-362 pools: at most this many parts per claimed plate (NULL = as many as fit), and the pool's place in the queue (set at
+    # generate; NULL = not queued).
+    max_parts: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class ProjectGroupTarget(Base):

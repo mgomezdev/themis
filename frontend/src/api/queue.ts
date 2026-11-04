@@ -91,7 +91,23 @@ export interface ApiJob {
   allow_cached_slice: boolean;       // print a matching cached version instead of slicing when claimed
   sliced_version_id: number | null;  // the cached version this job prints / printed
   slice_cache_info: SliceCacheInfo | null;
+  pool_group_id?: number | null;     // BIZ-362 (queue rows): the print pool this plate was packed from at claim time
 }
+
+/** A pooled print group of a queued project (BIZ-362): one queue entry each idle printer packs its next plate from. */
+export interface QueuePool {
+  group_id: number;
+  name: string;
+  project_id: number;
+  project_name: string | null;
+  queue_position: number;
+  done: number;
+  printing: number;
+  left: number;
+  warning: string | null;            // why it is stuck: no eligible printer can take the remaining parts
+}
+
+export const getQueuePools = () => request<QueuePool[]>('/api/v1/queue/pools');
 
 /** The latest slicing-cache decision for a job (+ the outcome of saving its slice), for the job-details debug view. */
 export interface SliceCacheInfo {

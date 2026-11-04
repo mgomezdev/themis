@@ -177,6 +177,9 @@ export interface ProjectGroup {
   envelope_y: number | null;
   mix_colours: boolean;
   targets: ProjectGroupTarget[];
+  max_parts: number | null;                 // pool: parts per claimed plate cap (null = as many as fit)
+  pool: { done: number; printing: number; left: number } | null;   // pool groups only (BIZ-362)
+  pool_warning: string | null;
 }
 
 export interface ProjectGroupPatch {
@@ -185,6 +188,8 @@ export interface ProjectGroupPatch {
   envelope_y?: number | null;
   mix_colours?: boolean;
   targets?: ProjectGroupTarget[];
+  strategy?: 'fixed' | 'pool';
+  max_parts?: number | null;
 }
 
 /** One reported failure (BIZ-364): what failed where and when, and what happened to the failed parts. */
