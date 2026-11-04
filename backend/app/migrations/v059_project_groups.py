@@ -34,7 +34,7 @@ async def up(conn) -> None:
     cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(project_items)"))).fetchall()}
     if "group_id" not in cols:
         await conn.execute(text(
-            "ALTER TABLE project_items ADD COLUMN group_id INTEGER REFERENCES project_groups(id) ON DELETE SET NULL"))
+            "ALTER TABLE project_items ADD COLUMN group_id INTEGER"))
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_project_items_group_id ON project_items (group_id)"))
     # Backfill: one Default Group per project that has none, holding the items that have no group.
     await conn.execute(text(

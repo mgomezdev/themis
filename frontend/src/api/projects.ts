@@ -30,6 +30,7 @@ export interface ProjectItem {
   filament_subtype: string | null;
   filament_color: string | null;
   sort_order: number;
+  group_id: number | null;        // its print group (BIZ-360)
 }
 
 export interface ProjectLink {

@@ -161,7 +161,8 @@
     "filament_type",
     "filament_subtype",
     "filament_color",
-    "sort_order"
+    "sort_order",
+    "group_id"
   ],
   "project_link": [
     "id",

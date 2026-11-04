@@ -489,8 +489,10 @@ class ProjectItem(Base):
     # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    # The print group this item belongs to (BIZ-360); NULL only transiently (an item is always put in the Default Group).
-    group_id: Mapped[Optional[int]] = mapped_column(ForeignKey("project_groups.id", ondelete="SET NULL"), nullable=True, index=True)
+    # The print group this item belongs to (BIZ-360); NULL only transiently (an item is always put in the Default Group). Plain
+    # integer, no FK (like job_printer_configs.model_target_id): SQLite can't DROP a column a foreign key names, and deleting a
+    # group moves its items to the Default Group explicitly.
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
 
 class ProjectGroup(Base):
