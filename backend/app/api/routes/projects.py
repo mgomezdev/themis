@@ -1171,8 +1171,10 @@ async def delete_part(
 # ---------------------------------------------------------------------------
 
 async def _max_queue_position(session: AsyncSession) -> float:
-    result = await session.execute(select(func.max(Job.queue_position)))
-    return result.scalar_one_or_none() or 0.0
+    """The last place in the queue: jobs and pools (BIZ-362: a pool is a queue entry too), so nothing ties with a pool."""
+    jobs = (await session.execute(select(func.max(Job.queue_position)))).scalar_one_or_none() or 0.0
+    pools = (await session.execute(select(func.max(ProjectGroup.queue_position)))).scalar_one_or_none() or 0.0
+    return max(jobs, pools)
 
 
 def _parse_plate_nums(path: Path) -> list[int]:

@@ -519,8 +519,10 @@ class QueueEngine:
         if self._slice_worker_task:
             self._slice_worker_task.cancel()
             await asyncio.gather(self._slice_worker_task, return_exceptions=True)
-        for t in list(self._estimate_tasks):
+        for t in list(self._estimate_tasks) + list(self._pool_tasks):
             t.cancel()
+        if self._pool_tasks:
+            await asyncio.gather(*self._pool_tasks, return_exceptions=True)
         if self._estimate_tasks:
             await asyncio.gather(*self._estimate_tasks, return_exceptions=True)
         self._executor.shutdown(wait=False)
@@ -841,6 +843,8 @@ class QueueEngine:
         printer = await session.get(Printer, printer_id)
         if printer is None or not printer.queue_on:
             return
+        if printer_id in self._pool_busy.values():
+            return                   # BIZ-362: its pool plate is being packed; it claims that plate next
 
         # "Any printer of this model" jobs: keep this printer's materialized configs current before looking.
         await model_targets.sync_targets_for_printer(session, printer)
@@ -879,7 +883,7 @@ class QueueEngine:
         rows = (await session.execute(stmt)).all()
         # BIZ-362: pools take their place in the queue by position; a pool this printer can use packs its next plate (in the
         # background) and the printer waits for it; any pool problem is a skip, never a block.
-        pools_left = [] if only_job is not None else [
+        pools_left = [] if only_job is not None or slice_only else [     # an offline printer never reserves pool parts
             g for g in await pools.active_pools(session) if await pools.eligible_on(session, g, printer)]
         for cand_job, cand_config in rows + [(None, None)]:
             while pools_left and (cand_job is None or pools_left[0].queue_position <= cand_job.queue_position):
@@ -990,22 +994,25 @@ class QueueEngine:
         return True
 
     async def _pack_pool_plate(self, gid: int, printer_id: int, constructor, snapshot: tuple) -> None:
+        job_id = None
         try:
             job_id = await pools.pack_plate(self._factory, gid, printer_id, constructor)
         except NothingFits:
-            self._pool_nofit[(gid, printer_id)] = snapshot
-            self.wake()                                # the printer can claim the next job now
+            self._pool_nofit[(gid, printer_id)] = snapshot   # the printer claims the next job now
         except Exception:                              # noqa: BLE001 - a pack problem is a skip with a backoff, never a failure
             logger.warning("pool %s: packing a plate for printer %s failed; retrying in %ss", gid, printer_id,
                            POOL_BACKOFF_S, exc_info=True)
             self._pool_backoff[gid] = _monotonic() + POOL_BACKOFF_S
         else:
             self._pool_backoff.pop(gid, None)
-            self.wake()
-            if job_id is not None:
-                await self._broadcast_job(job_id)
         finally:
             self._pool_busy.pop(gid, None)
+        self.wake()
+        if job_id is not None:
+            try:
+                await self._broadcast_job(job_id)
+            except Exception:                          # noqa: BLE001 - a broadcast never fails the pack
+                logger.warning("pool %s: broadcasting job %s failed", gid, job_id, exc_info=True)
 
     async def settle_pool_packs(self) -> None:
         """Wait for the in-flight pool packs (tests, shutdown)."""
@@ -1087,7 +1094,9 @@ class QueueEngine:
         result = await session.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
-            .values(status="blocked", block_reason=reason, assigned_printer_id=None, updated_at=_now())
+            # BIZ-362: a pool plate is bound to one printer; it is cancelled instead, so its parts go back into the pool.
+            .values(status="cancelled" if job.pool_group_id is not None else "blocked", block_reason=reason,
+                    assigned_printer_id=None, updated_at=_now())
         )
         if result.rowcount == 0:
             return  # no longer blockable — don't resurrect a cancelled job
@@ -1487,7 +1496,7 @@ class QueueEngine:
                 config.slice_error = error
 
             if job:
-                job.status = "blocked"
+                job.status = "cancelled" if job.pool_group_id is not None else "blocked"   # pool plate: parts back to the pool
                 job.block_reason = f"slicing failed: {error}"
                 job.assigned_printer_id = None
                 job.updated_at = _now()
@@ -1503,7 +1512,8 @@ class QueueEngine:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job:
-                job.status = "failed"
+                # Nothing printed: a pool plate is cancelled instead, so its parts go back into the pool (BIZ-362).
+                job.status = "cancelled" if job.pool_group_id is not None else "failed"
                 job.completed_at = _now()
                 job.block_reason = reason
                 job.assigned_printer_id = None

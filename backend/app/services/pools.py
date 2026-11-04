@@ -108,13 +108,26 @@ PACK_FOLDER = "Job Pack 3MFs"
 
 
 def _next_plate(store, constructor, wanted, target, max_parts):
-    """`constructor.next_plate` over the stored files `wanted` = [(key, qty, ref, select)] -> (3MF bytes, consumed). Blocking."""
+    """`constructor.next_plate` over the stored files `wanted` = [(key, copies, ref, select)] -> (3MF bytes, copies taken per
+    input). The provider counts instances: a 3MF plate bundle is several per copy, so they are divided by the instances per copy
+    the plate's manifest says were requested (as generation does, BIZ-359). Blocking."""
     with contextlib.ExitStack() as stack:
         inputs = tuple(ConstructInput(stack.enter_context(store.materialize(key)), qty, ref,
                                       **{k: v for k, v in sel.items() if v is not None}) for key, qty, ref, sel in wanted)
         out_dir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         artifact, consumed = constructor.next_plate(ConstructRequest(inputs, target), out_dir, max_parts=max_parts)
-        return artifact.path.read_bytes(), consumed
+        try:
+            manifest = constructor.plate_manifest(artifact.path)
+        except Exception:                              # noqa: BLE001 - a broken manifest reader means one instance per copy
+            manifest = None
+        requested = getattr(manifest, "requested", None) or {}
+        copies = {}
+        for i, n in consumed.items():
+            if 0 <= i < len(wanted) and n > 0:
+                per_copy = max(1, requested.get(i, wanted[i][1]) // wanted[i][1])
+                if n // per_copy:
+                    copies[i] = n // per_copy
+        return artifact.path.read_bytes(), copies
 
 
 async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> int | None:
@@ -132,15 +145,19 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         items = [i for i in await items_of(session, group) if i.id in take]
         if not items:
             return None
-        ask = tuple(getattr(items[0], c) for c in _ASK)       # one filament ask per plate: the first takeable item's
-        items = [i for i in items if tuple(getattr(i, c) for c in _ASK) == ask]
-        wanted = []
+        by_ask: dict[tuple, list] = {}                         # one filament ask per plate, tried in item order
         for item in items:
-            f = await session.get(UploadedFile, item.file_id)
-            kind = item.kind or "stl"
-            wanted.append((f.relative_path, take[item.id], f"item-{item.id}",
-                           {"object_id": item.source_ref if kind == "3mf_object" else None,
-                            "plate": int(item.source_ref) if kind == "3mf_plate" else None, "rule": item.pack_rule or "split"}))
+            by_ask.setdefault(tuple(getattr(item, c) for c in _ASK), []).append(item)
+        attempts = []
+        for ask, ask_items in by_ask.items():
+            wanted = []
+            for item in ask_items:
+                f = await session.get(UploadedFile, item.file_id)
+                kind = item.kind or "stl"
+                wanted.append((f.relative_path, take[item.id], f"item-{item.id}",
+                               {"object_id": item.source_ref if kind == "3mf_object" else None,
+                                "plate": int(item.source_ref) if kind == "3mf_plate" else None, "rule": item.pack_rule or "split"}))
+            attempts.append((ask, ask_items, wanted))
         base = target_of(printer)
         target = TargetPrinter(base.bed_mm, base.model_uuid, machine_profile=await machine_profile_for(session, printer))
         profile = await process_for(session, group, printer)
@@ -148,10 +165,16 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         position, max_parts, project_id, order_id = group.queue_position, group.max_parts, project.id, project.order_id
         slug = re.sub(r"[^a-z0-9]+", "-", project.name.lower()).strip("-") or "project"
 
-    packed, consumed = await asyncio.to_thread(_next_plate, store, constructor, wanted, target, max_parts)
-    quantities = {str(items[i].id): n for i, n in consumed.items() if 0 <= i < len(items) and n > 0}
-    if not quantities:
-        raise NothingFits("the plate took no parts")
+    for ask, items, wanted in attempts:
+        try:
+            packed, copies = await asyncio.to_thread(_next_plate, store, constructor, wanted, target, max_parts)
+        except NothingFits:
+            continue                                           # this ask's parts don't fit this bed: try the next ask
+        quantities = {str(items[i].id): n for i, n in copies.items()}
+        if quantities:
+            break
+    else:
+        raise NothingFits("no remaining part fits this bed")
 
     now = datetime.now(timezone.utc).isoformat()
     key = f"{PACK_FOLDER}/pool-{group_id}/{slug}-{uuid.uuid4().hex[:8]}.3mf"
