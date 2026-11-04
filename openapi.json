@@ -6322,6 +6322,271 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/groups": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List a project's print groups, in queue order",
+        "operationId": "list_groups_api_v1_projects__project_id__groups_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Groups Api V1 Projects  Project Id  Groups Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add a print group (last in queue order)",
+        "operationId": "create_group_api_v1_projects__project_id__groups_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Group Api V1 Projects  Project Id  Groups Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/groups/{group_id}": {
+      "patch": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Configure a print group",
+        "description": "Only the fields sent change. `targets` replaces the whole list; `envelope_x`/`envelope_y` null = auto (the smallest bed among the printers the targets cover).",
+        "operationId": "patch_group_api_v1_projects__project_id__groups__group_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Group Api V1 Projects  Project Id  Groups  Group Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete a print group (its items move to the Default Group)",
+        "operationId": "delete_group_api_v1_projects__project_id__groups__group_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The Default Group can't be deleted"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/groups/order": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Set the queue order of a project's print groups",
+        "operationId": "order_groups_api_v1_projects__project_id__groups_order_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupOrder"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Order Groups Api V1 Projects  Project Id  Groups Order Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "tags": [
@@ -11843,6 +12108,125 @@
         ],
         "title": "GithubBody"
       },
+      "GroupCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "GroupCreate"
+      },
+      "GroupOrder": {
+        "properties": {
+          "group_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Group Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group_ids"
+        ],
+        "title": "GroupOrder"
+      },
+      "GroupPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "envelope_x": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Envelope X"
+          },
+          "envelope_y": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Envelope Y"
+          },
+          "mix_colours": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix Colours"
+          },
+          "targets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupTargetIn"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          }
+        },
+        "type": "object",
+        "title": "GroupPatch"
+      },
+      "GroupTargetIn": {
+        "properties": {
+          "target_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Target Key"
+          },
+          "process_profile": {
+            "type": "string",
+            "title": "Process Profile",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_key"
+        ],
+        "title": "GroupTargetIn"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -14184,6 +14568,17 @@
               }
             ],
             "title": "Sort Order"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
           }
         },
         "type": "object",

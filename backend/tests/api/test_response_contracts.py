@@ -109,6 +109,7 @@ async def test_project_detail_items_links_parts_and_jobs_carry_their_keys(client
 
     assert_carries("project", project)
     assert_carries("project_item", project["items"][0])
+    assert_carries("project_group", (await client.get(f"/api/v1/projects/{project_id}/groups")).json()[0])
     assert_carries("project_link", project["links"][0])
     assert_carries("project_part", project["parts"][0])
     assert_carries("project_job", project_jobs[0])

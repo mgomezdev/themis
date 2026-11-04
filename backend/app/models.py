@@ -489,6 +489,42 @@ class ProjectItem(Base):
     # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # The print group this item belongs to (BIZ-360); NULL only transiently (an item is always put in the Default Group). Plain
+    # integer, no FK (like job_printer_configs.model_target_id): SQLite can't DROP a column a foreign key names, and deleting a
+    # group moves its items to the Default Group explicitly.
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class ProjectGroup(Base):
+    """An ordered print group of a project (BIZ-360): which printers take its jobs (`targets`), the bed envelope it packs for, and
+    the colour rule. Exactly one per project is the Default Group (renamable, never deleted; new items land in it)."""
+    __tablename__ = "project_groups"
+    __table_args__ = (Index("ux_project_groups_one_default", "project_id", unique=True, sqlite_where=text("is_default = 1")),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    strategy: Mapped[str] = mapped_column(String(20), default="fixed", server_default="fixed")   # "fixed" (now) | "pool" (BIZ-362)
+    # Fixed-bed envelope in mm; NULL = auto (the smallest bed among the printers the targets cover).
+    envelope_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    envelope_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Colour rule: different single colours may share a plate (toolchangers / forced swaps). Stored; packing honours it with BIZ-356.
+    mix_colours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+class ProjectGroupTarget(Base):
+    """One eligibility entry of a group: `target_key` is the shared selection key (`<printer id>`, `model:<uuid>`, `any`) and
+    `process_profile` the process preset its jobs slice with ("" = the printer's own default, BIZ-358)."""
+    __tablename__ = "project_group_targets"
+    __table_args__ = (UniqueConstraint("group_id", "target_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("project_groups.id", ondelete="CASCADE"), index=True)
+    target_key: Mapped[str] = mapped_column(String(64))
+    process_profile: Mapped[str] = mapped_column(String(512), default="", server_default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class WebhookConfig(Base):

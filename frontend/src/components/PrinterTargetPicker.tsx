@@ -105,7 +105,7 @@ export function useEnabledPrinters(): ApiPrinter[] {
   const [printers, setPrinters] = useState<ApiPrinter[]>([]);
   useEffect(() => {
     let alive = true;
-    fetchPrinters().then(ps => { if (alive) setPrinters(ps.filter(p => p.enabled)); }).catch(console.error);
+    fetchPrinters().then(ps => { if (alive) setPrinters(Array.isArray(ps) ? ps.filter(p => p.enabled) : []); }).catch(console.error);
     return () => { alive = false; };
   }, []);
   return printers;

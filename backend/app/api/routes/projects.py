@@ -24,8 +24,8 @@ from ._filament_ask import AskFields, ask_columns, ask_out, normalize as _normal
 from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
+from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
+from ...services import idempotency, job_costs, model_targets, project_events, project_groups, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
@@ -145,6 +145,7 @@ class ProjectItemUpdate(BaseModel):
     filament_subtype: Optional[str] = None
     filament_color: Optional[str] = None
     sort_order: Optional[int] = None
+    group_id: Optional[int] = None          # move the item to another print group of the same project (BIZ-360)
 
     @field_validator("quantity")
     @classmethod
@@ -232,6 +233,7 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "quantity_failed": item.quantity_failed,
         **ask_out(item),
         "sort_order": item.sort_order,
+        "group_id": item.group_id,
     }
 
 
@@ -484,6 +486,7 @@ async def _create_project(body: ProjectCreate, session: AsyncSession, progress: 
         if existing is None:
             raise
         return await _project_dict(existing, session), False
+    await project_groups.ensure_default_group(session, proj.id)      # every project has its Default Group (BIZ-360)
     if proj.amount_paid and proj.amount_paid > 0:
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
@@ -820,6 +823,7 @@ async def add_item(
         quantity=body.quantity,
         **ask_columns(body),
         sort_order=body.sort_order,
+        group_id=(await project_groups.ensure_default_group(session, project_id)).id,   # new items land in the Default Group
     )
     session.add(item)
     proj.updated_at = _now_iso()
@@ -899,6 +903,11 @@ async def update_item(
         item.ask_manufacturer, item.ask_type, item.ask_subtype, item.ask_color = ask.manufacturer, ask.type, ask.subtype, ask.color
     if body.sort_order is not None:
         item.sort_order = body.sort_order
+    if body.group_id is not None:
+        group = await session.get(ProjectGroup, body.group_id)
+        if group is None or group.project_id != project_id:
+            raise HTTPException(422, f"Group {body.group_id} is not a print group of project {project_id}")
+        item.group_id = group.id
     await session.commit()
     await session.refresh(item)
     f = await session.get(UploadedFile, item.file_id)
@@ -1343,31 +1352,6 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                                  "(Settings -> Plugins); it is required for generation")
     checked_ready = False
 
-    # Resolve eligible printers and compute the smallest bed dimensions.
-    eligible_printers: list[Printer] = []
-    if body.eligible_printer_ids:
-        rows = (await session.execute(
-            select(Printer).where(Printer.id.in_(body.eligible_printer_ids))
-        )).scalars().all()
-        eligible_printers = list(rows)
-    model_printers: list[Printer] = []
-    if body.eligible_any_printer:
-        model_printers = list((await session.execute(select(Printer))).scalars().all())
-    elif body.eligible_model_uuids:
-        model_printers = list((await session.execute(
-            select(Printer).where(Printer.model_uuid.in_(body.eligible_model_uuids))
-        )).scalars().all())
-
-    # Pack for the smallest bed among everything that could take the job (explicit picks + matching models).
-    bed_printers = eligible_printers + [p for p in model_printers if p.id not in {e.id for e in eligible_printers}]
-    if bed_printers:
-        pack_bed_x = min(p.bed_x_mm for p in bed_printers)
-        pack_bed_y = min(p.bed_y_mm for p in bed_printers)
-    else:
-        pack_bed_x, pack_bed_y = 256.0, 256.0
-    bed_models = {p.model_uuid for p in bed_printers}
-    target = TargetPrinter((pack_bed_x, pack_bed_y, 250.0), next(iter(bed_models)) if len(bed_models) == 1 else None)
-
     item_rows = (
         await session.execute(
             select(ProjectItem)
@@ -1379,34 +1363,60 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Group items by filament requirement (the ask tuple)
-    groups: dict[FilamentTuple, list[ProjectItem]] = {}
-    for item in item_rows:
-        groups.setdefault(row_tuple(item), []).append(item)
+    # Print groups (BIZ-360), in queue order. A Default Group with no saved targets takes the request's eligibility (the
+    # pre-groups API), so existing callers keep working.
+    print_groups = await project_groups.groups_of(session, project_id)
+    legacy = [(str(pid), body.process_preset or "") for pid in dict.fromkeys(body.eligible_printer_ids)]
+    legacy += ([(project_groups.ANY_KEY, body.process_preset or "")] if body.eligible_any_printer else
+               [(project_groups.MODEL_PREFIX + u, body.process_preset or "") for u in dict.fromkeys(body.eligible_model_uuids)])
 
     library = get_library_store()
+    packs: list[dict] = []          # one per (print group, filament ask), in queue order
+    groups_out: list[dict] = []
+    all_explicit: dict[int, Printer] = {}
+    for pgroup in print_groups:
+        pg_items = [i for i in item_rows if i.group_id == pgroup.id]
+        if not pg_items:
+            continue                                         # an empty group adds nothing to the queue
+        saved = [(t.target_key, t.process_profile) for t in await project_groups.targets_of(session, pgroup.id)]
+        targets = saved or (legacy if pgroup.is_default else [])
+        envelope = (float(pgroup.envelope_x), float(pgroup.envelope_y)) if pgroup.envelope_x and pgroup.envelope_y else None
+        resolved = await project_groups.resolve(session, targets, envelope)
+        pack_bed_x, pack_bed_y = envelope or project_groups.auto_envelope(resolved.covered)
+        bed_models = {p.model_uuid for p in resolved.covered}
+        target = TargetPrinter((pack_bed_x, pack_bed_y, 250.0), next(iter(bed_models)) if len(bed_models) == 1 else None)
+        all_explicit.update({p.id: p for p, _ in resolved.printers})
+        out = {"id": pgroup.id, "pack_bed_x": pack_bed_x, "pack_bed_y": pack_bed_y}
+        if not resolved.printers and not resolved.models:
+            # Its jobs will sit unclaimed (the unmatched sweep blocks them); say so instead of a silent 200.
+            out["warning"] = (f"{pgroup.name}: no printer can take these jobs" + (
+                " (the envelope leaves out every selected printer)" if targets else " (choose eligible printers)"))
+        groups_out.append(out)
 
-    # Resolve STL keys per group (+ what each group packs from, for pack reuse)
-    group_keys: dict[FilamentTuple, list[tuple[str, int, str]]] = {}
-    group_recipe: dict[FilamentTuple, list[tuple[str, int]]] = {}
-    for key, group_items in groups.items():
-        wanted: dict[str, tuple[str, int, str]] = {}   # one entry per library file; repeats sum their quantity
-        group_recipe[key] = []
-        for item in group_items:
-            f = await session.get(UploadedFile, item.file_id)
-            if f is None:
-                raise HTTPException(422, f"File {item.file_id} not found in library")
-            if not f.original_filename.lower().endswith(".stl"):
-                raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-            if not await _stored(library, f.relative_path):
-                raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            prior = wanted[f.relative_path][1] if f.relative_path in wanted else 0
-            wanted[f.relative_path] = (f.relative_path, prior + item.quantity, str(f.id))
-            # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
-            await refresh_content_hash(f, library)
-            group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
-        group_keys[key] = list(wanted.values())
-    pack_mode = {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}
+        # Group items by filament requirement (the ask tuple)
+        by_ask: dict[FilamentTuple, list[ProjectItem]] = {}
+        for item in pg_items:
+            by_ask.setdefault(row_tuple(item), []).append(item)
+        # Resolve STL keys per ask (+ what each pack is made from, for pack reuse)
+        for ask, ask_items in by_ask.items():
+            wanted: dict[str, tuple[str, int, str]] = {}   # one entry per library file; repeats sum their quantity
+            recipe: list[tuple[str, int]] = []
+            for item in ask_items:
+                f = await session.get(UploadedFile, item.file_id)
+                if f is None:
+                    raise HTTPException(422, f"File {item.file_id} not found in library")
+                if not f.original_filename.lower().endswith(".stl"):
+                    raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
+                if not await _stored(library, f.relative_path):
+                    raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
+                prior = wanted[f.relative_path][1] if f.relative_path in wanted else 0
+                wanted[f.relative_path] = (f.relative_path, prior + item.quantity, str(f.id))
+                # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
+                await refresh_content_hash(f, library)
+                recipe.append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
+            packs.append({"group_id": pgroup.id, "ask": ask, "items": ask_items, "wanted": list(wanted.values()),
+                          "recipe": recipe, "target": target, "resolved": resolved,
+                          "pack_mode": {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}})
 
     # Clean up legacy single-result file unless an active job holds it
     if proj.result_file_id is not None:
@@ -1439,11 +1449,11 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
-    for ask, stl_wanted in group_keys.items():
-        group_items = groups[ask]
+    for pack in packs:
+        ask, stl_wanted, group_items, target = pack["ask"], pack["wanted"], pack["items"], pack["target"]
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
-        recipe_hash = slice_cache.sha256_of({"items": group_recipe[ask], "pack": pack_mode})
+        recipe_hash = slice_cache.sha256_of({"items": pack["recipe"], "pack": pack["pack_mode"]})
         reused = await _reusable_pack(session, recipe_hash) if body.allow_cached else None
         now = _now_iso()
 
@@ -1552,25 +1562,23 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             "cached_plates": cached_plates,
         })
 
-        # Create printer configs for each eligible printer × job. The machine preset
-        # is deliberately NOT set here — queue_engine reads it fresh from the printer
-        # at dispatch time. print_profile is the *process* preset and must come from
-        # the user (body.process_preset); machine_profile_override is a machine
-        # preset name and can never resolve against the process catalog.
+        # Create printer configs for each of the group's eligible printers × job, each with its target's process profile
+        # ("" = the printer's own default, BIZ-358). The machine preset is deliberately NOT set here — queue_engine reads it
+        # fresh from the printer at dispatch time.
+        resolved = pack["resolved"]
         for j in new_jobs:
-            for p in eligible_printers:
+            for p, profile in resolved.printers:
                 session.add(JobPrinterConfig(
                     job_id=j.id,
                     printer_id=p.id,
-                    print_profile=body.process_preset or "",
+                    print_profile=profile,
                     **tuple_columns(ask),
                 ))
-            target_models: list[str | None] = [None] if body.eligible_any_printer else list(dict.fromkeys(body.eligible_model_uuids))
-            for model_uuid in target_models:
+            for model_uuid, profile in resolved.models:
                 session.add(JobModelTarget(
                     job_id=j.id,
                     model_uuid=model_uuid,
-                    print_profile=body.process_preset or "",
+                    print_profile=profile,
                     filament_profile=None,   # the loaded slot supplies the preset on each matching printer
                     **tuple_columns(ask),
                 ))
@@ -1591,6 +1599,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
 
         jobs_out.extend({
             "id": j.id,
+            "group_id": pack["group_id"],
             "uploaded_file_id": j.uploaded_file_id,
             "plate_number": j.plate_number,
             "queue_position": j.queue_position,
@@ -1606,7 +1615,9 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         "project_id": proj.id,
         "jobs": jobs_out,
         "files": files_out,
-        "eligible_printer_ids": [p.id for p in eligible_printers],
-        "pack_bed_x": pack_bed_x,
-        "pack_bed_y": pack_bed_y,
+        "eligible_printer_ids": list(all_explicit),
+        # The first group's pack bed (the pre-groups shape); every group's is in `groups`.
+        "pack_bed_x": groups_out[0]["pack_bed_x"] if groups_out else 256.0,
+        "pack_bed_y": groups_out[0]["pack_bed_y"] if groups_out else 256.0,
+        "groups": groups_out,
     }

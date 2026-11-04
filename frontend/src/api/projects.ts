@@ -30,6 +30,7 @@ export interface ProjectItem {
   filament_subtype: string | null;
   filament_color: string | null;
   sort_order: number;
+  group_id: number | null;        // its print group (BIZ-360)
 }
 
 export interface ProjectLink {
@@ -147,6 +148,47 @@ export interface ProjectItemCreate extends Partial<FilamentAsk> {
   file_id: number;
   quantity: number;
   sort_order?: number;
+  group_id?: number;              // update only: move to another print group of the project (BIZ-360)
+}
+
+/** One eligibility entry of a print group: a PrinterTargetPicker key and its process profile ("" = Printer default). */
+export interface ProjectGroupTarget {
+  target_key: string;
+  process_profile: string;
+}
+
+/** A print group (BIZ-360): its items print on its targets, packed for its envelope (null = auto), in group order. */
+export interface ProjectGroup {
+  id: number;
+  project_id: number;
+  name: string;
+  sort_order: number;
+  is_default: boolean;
+  strategy: string;
+  envelope_x: number | null;
+  envelope_y: number | null;
+  mix_colours: boolean;
+  targets: ProjectGroupTarget[];
+}
+
+export interface ProjectGroupPatch {
+  name?: string;
+  envelope_x?: number | null;
+  envelope_y?: number | null;
+  mix_colours?: boolean;
+  targets?: ProjectGroupTarget[];
+}
+
+export const listProjectGroups = (projectId: number) => request<ProjectGroup[]>(`/api/v1/projects/${projectId}/groups`);
+export const createProjectGroup = (projectId: number, name: string) =>
+  request<ProjectGroup>(`/api/v1/projects/${projectId}/groups`, json('POST', { name }));
+export const patchProjectGroup = (projectId: number, groupId: number, body: ProjectGroupPatch) =>
+  request<ProjectGroup>(`/api/v1/projects/${projectId}/groups/${groupId}`, json('PATCH', body));
+export const orderProjectGroups = (projectId: number, groupIds: number[]) =>
+  request<ProjectGroup[]>(`/api/v1/projects/${projectId}/groups/order`, json('PUT', { group_ids: groupIds }));
+export async function deleteProjectGroup(projectId: number, groupId: number): Promise<void> {
+  const resp = await apiFetch(`/api/v1/projects/${projectId}/groups/${groupId}`, { method: 'DELETE' });   // 204: no body
+  if (!resp.ok) throw new Error(`${resp.status} ${await resp.text().catch(() => resp.statusText)}`);
 }
 
 export const getProjects = () => request<Project[]>('/api/v1/projects');
