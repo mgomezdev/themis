@@ -285,6 +285,8 @@ export interface QueueConfig {
   check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
   /** Minutes a printer may be offline before it is declared dead (its running job fails and goes back to the top of the queue). 0 = never. */
   printer_dead_after_minutes: number;
+  /** A part is held for a person after failing on this many different printers (BIZ-364). */
+  part_retry_limit: number;
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

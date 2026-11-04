@@ -6,7 +6,8 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, getPlateResults, type PlateResults, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { PrintResultsModal } from '../components/PrintResultsModal';
 import { CAP, useInventory, useSpools } from '../api/inventory';
 import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
@@ -887,19 +888,31 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
   printerId: string; refetchFleet: () => void; block?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState<PlateResults | null>(null);
   return (
-    <button
-      className="btn primary sm"
-      style={block ? { width: '100%' } : undefined}
-      disabled={busy}
-      onClick={async (e) => {
-        e.stopPropagation();
-        setBusy(true);
-        try { await markPlateCleared(printerId); refetchFleet(); }
-        finally { setBusy(false); }
-      }}>
-      {Icons.check} Ready for new work
-    </button>
+    <>
+      <button
+        className="btn primary sm"
+        style={block ? { width: '100%' } : undefined}
+        disabled={busy}
+        onClick={async (e) => {
+          e.stopPropagation();
+          setBusy(true);
+          try {
+            // A finished project job asks what printed first (BIZ-364); anything else is a plain clear.
+            const pending = await getPlateResults(printerId).catch(() => null);
+            if (pending?.job_id != null && pending.parts.length > 0) { setAsking(pending); return; }
+            await markPlateCleared(printerId);
+            refetchFleet();
+          } finally { setBusy(false); }
+        }}>
+        {Icons.check} Ready for new work
+      </button>
+      {asking && (
+        <PrintResultsModal printerId={printerId} pending={asking} onClose={() => setAsking(null)}
+                           onDone={() => { setAsking(null); refetchFleet(); }} />
+      )}
+    </>
   );
 }
 

@@ -31,6 +31,7 @@ export interface ProjectItem {
   filament_color: string | null;
   sort_order: number;
   group_id: number | null;        // its print group (BIZ-360)
+  quantity_held: number;          // failed parts held for a person after too many printers (BIZ-364)
 }
 
 export interface ProjectLink {
@@ -178,6 +179,23 @@ export interface ProjectGroupPatch {
   mix_colours?: boolean;
   targets?: ProjectGroupTarget[];
 }
+
+/** One reported failure (BIZ-364): what failed where and when, and what happened to the failed parts. */
+export interface ProjectFailure {
+  id: number;
+  project_item_id: number;
+  file_name: string | null;
+  job_id: number;
+  printer_id: number | null;
+  printer_name: string | null;
+  quantity_failed: number;
+  created_at: string | null;
+  resolution: string | null;      // requeued | held | reprinted | dropped
+}
+
+export const listProjectFailures = (projectId: number) => request<ProjectFailure[]>(`/api/v1/projects/${projectId}/failures`);
+export const resolveHeldParts = (projectId: number, itemId: number, action: 'reprint' | 'drop') =>
+  request<{ requeued_job_ids: number[] }>(`/api/v1/projects/${projectId}/items/${itemId}/held`, json('POST', { action }));
 
 export const listProjectGroups = (projectId: number) => request<ProjectGroup[]>(`/api/v1/projects/${projectId}/groups`);
 export const createProjectGroup = (projectId: number, name: string) =>

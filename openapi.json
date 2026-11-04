@@ -1715,13 +1715,61 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/plate-results": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "The project job whose print results are still to report on this plate (BIZ-364)",
+        "description": "The latest finished project job on this printer with no reported results yet, and its parts (name \u00d7 quantity on the\nplate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear.",
+        "operationId": "plate_results_api_v1_printers__printer_id__plate_results_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Plate Results Api V1 Printers  Printer Id  Plate Results Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [
           "printers"
         ],
         "summary": "Confirm plate cleared",
-        "description": "Mark the printer's bed as cleared so the queue engine can assign the next job.",
+        "description": "Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record\nwhat printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once\nthey have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook).",
         "operationId": "plate_cleared_api_v1_printers__printer_id__plate_cleared_post",
         "parameters": [
           {
@@ -1734,6 +1782,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PlateResults"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7921,6 +7986,120 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/failures": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "The project's failure log (BIZ-364)",
+        "description": "Every reported failure, oldest first: part, job, printer, when, and what happened to the failed parts (`requeued`, `held`, `reprinted`, `dropped`).",
+        "operationId": "project_failures_api_v1_projects__project_id__failures_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Project Failures Api V1 Projects  Project Id  Failures Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/items/{item_id}/held": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Reprint or drop an item's held parts (BIZ-364)",
+        "operationId": "resolve_held_parts_api_v1_projects__project_id__items__item_id__held_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Resolve Held Parts Api V1 Projects  Project Id  Items  Item Id  Held Post"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Nothing of this item is held"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/payments": {
       "get": {
         "tags": [
@@ -12240,6 +12419,23 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HeldAction": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reprint",
+              "drop"
+            ],
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "HeldAction"
+      },
       "HomeBody": {
         "properties": {
           "axes": {
@@ -13556,6 +13752,25 @@
         ],
         "title": "OverrideCheckRequest"
       },
+      "PartResult": {
+        "properties": {
+          "project_item_id": {
+            "type": "integer",
+            "title": "Project Item Id"
+          },
+          "quantity_failed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Quantity Failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_item_id",
+          "quantity_failed"
+        ],
+        "title": "PartResult"
+      },
       "PasswordBody": {
         "properties": {
           "password": {
@@ -13680,6 +13895,32 @@
         },
         "type": "object",
         "title": "PaymentPatch"
+      },
+      "PlateResults": {
+        "properties": {
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PartResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "PlateResults",
+        "description": "What printed on the plate being cleared (BIZ-364). Parts not listed all succeeded."
       },
       "PluginTest": {
         "properties": {
@@ -14993,6 +15234,19 @@
             ],
             "title": "Printer Dead After Minutes"
           },
+          "part_retry_limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Retry Limit"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -15051,6 +15305,10 @@
             "type": "integer",
             "title": "Printer Dead After Minutes"
           },
+          "part_retry_limit": {
+            "type": "integer",
+            "title": "Part Retry Limit"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -15079,6 +15337,7 @@
         "required": [
           "check_interval_minutes",
           "printer_dead_after_minutes",
+          "part_retry_limit",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

@@ -334,8 +334,33 @@ export function reconnectPrinter(id: string): Promise<void> {
 
 /** Mark the printer ready for new work (plate cleared) so it can claim the next job.
  *  Same endpoint a QR code / home-automation trigger would hit. */
-export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> {
-  return request(`${BASE}/${id}/plate-cleared`, { method: 'POST' });
+export function markPlateCleared(id: string | number, results?: PlateResultsIn): Promise<PlateClearedOut> {
+  return request(`${BASE}/${id}/plate-cleared`, results
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(results) }
+    : { method: 'POST' });
+}
+
+/** What printed on the plate being cleared (BIZ-364): parts not listed all succeeded. */
+export interface PlateResultsIn {
+  job_id: number;
+  results: { project_item_id: number; quantity_failed: number }[];
+}
+
+export interface PlateClearedOut {
+  ok: boolean;
+  requeued_job_ids?: number[];                                  // failed parts packed again (reported results only)
+  held?: { project_item_id: number; quantity: number }[];       // failed on too many printers: a person decides
+}
+
+/** The project job whose results are still to report on this printer's plate; `job_id` null = nothing to ask. */
+export interface PlateResults {
+  job_id: number | null;
+  project_id: number | null;
+  parts: { project_item_id: number; file_name: string; quantity: number }[];
+}
+
+export function getPlateResults(id: string | number): Promise<PlateResults> {
+  return request(`${BASE}/${id}/plate-results`);
 }
 
 export interface DiscoveredPrinter {

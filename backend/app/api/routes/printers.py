@@ -5,7 +5,7 @@ import os
 import socket
 import time as _time
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
@@ -100,6 +100,17 @@ class PrinterUpdate(BaseModel):
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("quiet_start and quiet_end must be set together (or both null)")
         return self
+
+
+class PartResult(BaseModel):
+    project_item_id: int
+    quantity_failed: int = Field(ge=0)
+
+
+class PlateResults(BaseModel):
+    """What printed on the plate being cleared (BIZ-364). Parts not listed all succeeded."""
+    job_id: Optional[int] = None
+    results: list[PartResult] = []
 
 
 class LightBody(BaseModel):
@@ -796,25 +807,79 @@ async def delete_printer(
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
 
+@router.get(
+    "/{printer_id}/plate-results",
+    summary="The project job whose print results are still to report on this plate (BIZ-364)",
+    responses={404: {"description": "Printer not found"}},
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def plate_results(printer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """The latest finished project job on this printer with no reported results yet, and its parts (name × quantity on the
+    plate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear."""
+    import json as _json
+    from sqlalchemy import select as _select
+    from ...models import Job, JobItemFailure, ProjectItem, UploadedFile
+    await _get_or_404(printer_id, session)
+    reported = _select(JobItemFailure.job_id).where(JobItemFailure.resolution.is_not(None))
+    job = (await session.execute(
+        _select(Job).where(Job.assigned_printer_id == printer_id, Job.project_id.is_not(None),
+                           Job.project_item_quantities.is_not(None), Job.status.in_(["complete", "failed"]),
+                           Job.id.not_in(reported))
+        .order_by(Job.updated_at.desc(), Job.id.desc()).limit(1))).scalar_one_or_none()
+    if job is None:
+        return {"job_id": None, "project_id": None, "parts": []}
+    parts = []
+    for key, qty in _json.loads(job.project_item_quantities).items():
+        item = await session.get(ProjectItem, int(key))
+        if item is None or int(qty) <= 0:
+            continue
+        f = await session.get(UploadedFile, item.file_id)
+        parts.append({"project_item_id": item.id, "file_name": f.original_filename if f else f"[file {item.file_id}]",
+                      "quantity": int(qty)})
+    return {"job_id": job.id, "project_id": job.project_id, "parts": parts}
+
+
 @router.post(
     "/{printer_id}/plate-cleared",
     summary="Confirm plate cleared",
     responses={
         404: {"description": "Printer not found"},
     },
-    dependencies=[Depends(require_scope("printers:control"))],
+    dependencies=[],      # printers:control is checked by the `key` dependency below (results also need jobs:write)
 )
 async def plate_cleared(
     printer_id: int,
+    body: Optional[PlateResults] = None,
+    key=Depends(require_scope("printers:control")),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Mark the printer's bed as cleared so the queue engine can assign the next job."""
+    """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
+    what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
+    they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
     printer = await _get_or_404(printer_id, session)
+    outcome: dict = {}
+    recorded: dict | None = None
+    job = None
+    if body is not None and body.job_id is not None:
+        from ...models import Job
+        from ...services import print_results
+        if "jobs:write" not in (getattr(key, "scopes", None) or []):
+            raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
+        job = await session.get(Job, body.job_id)
+        if job is None or job.assigned_printer_id != printer_id:
+            raise HTTPException(422, f"Job {body.job_id} did not print on {printer.name}")
+        if job.project_id is None or job.status not in ("complete", "failed"):
+            raise HTTPException(409, f"Job {body.job_id} is not a finished project job")
+        recorded = await print_results.record_and_restore(
+            session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
     printer.awaiting_plate_clear = False
-    await session.commit()
+    await session.commit()                 # results + the clear are in before any repacking
     printer_manager.set_awaiting_plate_clear(printer_id, False)
+    if recorded:
+        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
+        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
     queue_engine.wake()
-    return {"ok": True}
+    return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported
 
 
 @router.post(

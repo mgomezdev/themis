@@ -352,6 +352,8 @@ class QueueConfig(Base):
     # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
     # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
     printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    # A part is held after failing on this many different printers (BIZ-364).
+    part_retry_limit: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -474,6 +476,8 @@ class ProjectItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
     quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
+    # Failed parts held for a person after failing on `part_retry_limit` different printers (BIZ-364): Reprint or Drop.
+    quantity_held: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Filament requirement spec — "any" means no constraint
     filament_type: Mapped[str] = mapped_column(String(50), default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
@@ -625,6 +629,11 @@ class JobItemFailure(Base):
     project_item_id: Mapped[int] = mapped_column(ForeignKey("project_items.id", ondelete="CASCADE"))
     quantity_failed: Mapped[int] = mapped_column(Integer)
     quantity_on_plate: Mapped[int] = mapped_column(Integer)
+    # BIZ-364 failure log: the printer it printed on (plain int: a deleted printer keeps its history), when it was reported, and
+    # what happened to the failed parts: "requeued" | "held" | "reprinted" | "dropped" (NULL = a plain outcome review).
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    resolution: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
 
 class MaintenanceItem(Base):
