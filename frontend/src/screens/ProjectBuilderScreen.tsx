@@ -1,3 +1,4 @@
+import { ItemSourcePicker, initialSource, type ItemKind, type PackRule } from '../components/ItemSourcePicker';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
@@ -99,6 +100,9 @@ interface LocalItem extends FilamentAsk {
   file_name: string;
   quantity: number;
   sort_order: number;
+  kind: ItemKind;                 // BIZ-356: STL, a 3MF plate or object, or gcode
+  source_ref: string | null;
+  pack_rule: PackRule;
 }
 
 const askOf = (it: FilamentAsk): FilamentAsk => ({
@@ -261,9 +265,9 @@ export function ProjectBuilderScreen() {
 
   // File tree state
   const { files: allFiles } = useFiles({});
-  const stlFiles = allFiles.filter(f =>
-    f.original_filename.toLowerCase().endsWith('.stl') && !f.missing,
-  );
+  // Every model and pre-sliced file can be an item (BIZ-356): STLs, 3MF plates/objects, gcode plates.
+  const stlFiles = allFiles.filter(f => /\.(stl|3mf|gcode)$/i.test(f.original_filename) && !f.missing);
+  const fileById = new Map(allFiles.map(f => [f.id, f]));
   const [selectedFolder, setSelectedFolder] = useState('');
   const [search, setSearch] = useState('');
   const searchLower = search.trim().toLowerCase();
@@ -297,6 +301,7 @@ export function ProjectBuilderScreen() {
         file_id: it.file_id,
         file_name: it.file_name,
         quantity: it.quantity,
+        kind: it.kind ?? 'stl', source_ref: it.source_ref ?? null, pack_rule: it.pack_rule ?? 'split',
         filament_manufacturer: it.filament_manufacturer,
         filament_type: it.filament_type,
         filament_subtype: it.filament_subtype,
@@ -329,7 +334,8 @@ export function ProjectBuilderScreen() {
 
   function addFile(f: LibraryFile) {
     setItems(prev => {
-      const existing = prev.find(it => it.file_id === f.id);
+      // A repeat pick of an STL adds a copy; a 3MF / gcode pick is its own row (another plate or object of it).
+      const existing = prev.find(it => it.file_id === f.id && it.kind === 'stl');
       if (existing) {
         return prev.map(it =>
           it.localId === existing.localId ? { ...it, quantity: it.quantity + 1 } : it,
@@ -344,6 +350,7 @@ export function ProjectBuilderScreen() {
           quantity: 1,
           ...NO_ASK,
           sort_order: prev.length,
+          ...initialSource(f.kind),
         },
       ];
     });
@@ -410,6 +417,7 @@ export function ProjectBuilderScreen() {
           quantity: it.quantity,
           ...askOf(it),
           sort_order: it.sort_order,
+          pack_rule: it.pack_rule,
         });
       }
       for (let i = 0; i < newOnes.length; i++) {
@@ -419,6 +427,7 @@ export function ProjectBuilderScreen() {
           quantity: it.quantity,
           ...askOf(it),
           sort_order: it.sort_order,
+          kind: it.kind, source_ref: it.source_ref, pack_rule: it.pack_rule,
         });
       }
       for (const id of deletedLinkIds) {
@@ -456,6 +465,7 @@ export function ProjectBuilderScreen() {
           quantity: it.quantity,
           ...askOf(it),
           sort_order: i,
+          kind: it.kind, source_ref: it.source_ref, pack_rule: it.pack_rule,
         });
       }
       for (const lk of links) {
@@ -819,6 +829,10 @@ export function ProjectBuilderScreen() {
                     }} title={it.file_name}>
                       {it.file_name}
                     </span>
+                    <ItemSourcePicker fileId={it.file_id} fileKind={fileById.get(it.file_id)?.kind ?? (it.kind === 'stl' ? 'stl' : '3mf')}
+                                      plateCount={fileById.get(it.file_id)?.plate_count ?? 1}
+                                      kind={it.kind} sourceRef={it.source_ref} packRule={it.pack_rule} fixedSource={!!it.serverId}
+                                      onChange={v => updateItem(it.localId, v)} />
                     {it.serverId && (() => {
                       const si = serverItems.get(it.serverId!);
                       if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;

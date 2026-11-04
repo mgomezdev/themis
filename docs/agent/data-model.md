@@ -38,7 +38,7 @@ webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
 notification_config (singleton id=1: ntfy/discord/email — see its own section below)
 projects            ← project_items.project_id, project_links.project_id, project_parts.project_id,
                        jobs.project_id
-project_items       ← job_item_failures.project_item_id; group_id (plain int → project_groups.id, no FK; v059)
+project_items       ← job_item_failures.project_item_id; group_id (plain int → project_groups.id, no FK; v059); v061 kind (stl | 3mf_object | 3mf_plate | gcode), source_ref (object id / plate), pack_rule (split | together | solo | locked), source_hash (BIZ-356)
 project_groups      (project_id CASCADE; one is_default per project; v059) ← project_group_targets (group_id CASCADE; unique (group_id, target_key))
 project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)
 project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,

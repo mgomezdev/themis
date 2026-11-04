@@ -123,8 +123,9 @@ class CancelToken:
 @dataclass(frozen=True)
 class PlateManifest:
     """Per plate of a constructed project: how many instances came from each `ConstructRequest.inputs` index
-    (`plates[plate_number][input_index] = count`)."""
+    (`plates[plate_number][input_index] = count`), and per input how many instances were requested (qty × parts per copy)."""
     plates: Mapping[int, Mapping[int, int]]
+    requested: Mapping[int, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,19 @@ class ConstructInput:
     path: Path
     quantity: int
     ref: str
+    # BIZ-356: which part of a 3MF this input is (None = the whole model / an STL), and how its copies are placed:
+    # "split" (default) | "together" (each copy whole on one plate) | "solo" (each instance alone on its plate).
+    object_id: str | None = None
+    plate: int | None = None
+    rule: str = "split"
+
+
+@dataclass(frozen=True)
+class ModelObject:
+    """One object of a 3MF, as a provider lists it (BIZ-356)."""
+    id: str
+    name: str
+    instances: int = 1
 
 
 @dataclass(frozen=True)
@@ -276,6 +290,10 @@ class ProjectConstructor(_Provider):
     def construct(self, request: ConstructRequest, output_dir: Path, *, timeout: float = DEFAULT_PRODUCE_TIMEOUT_S,
                   cancel: CancelToken | None = None) -> Artifact:
         """Writes one `PROJECT_3MF` into `output_dir`. Raises ProviderError."""
+
+    def list_objects(self, model_3mf: Path) -> "list[ModelObject]":
+        """The objects of a 3MF, for picking project items (BIZ-356). Raises ProviderError when the provider can't read it."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot list 3MF objects")
 
     def plate_manifest(self, project_3mf: Path) -> "PlateManifest | None":
         """What `construct` put on each plate of `project_3mf` (BIZ-359), or None when this provider (or this file) reports none.

@@ -97,6 +97,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
       file_id: 1, quantity: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0,
+      kind: 'stl', source_ref: null, pack_rule: 'split',
     });
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({
       eligible_printer_ids: [1, 2], eligible_model_uuids: [], eligible_any_printer: false, process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
@@ -255,9 +256,11 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
     ]);
     expect(api.to('PUT', '/api/v1/projects/7/items/50')[0].body).toEqual({
       quantity: 5, filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, sort_order: 0,
+      pack_rule: 'split',
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
       file_id: 2, quantity: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 1,
+      kind: 'stl', source_ref: null, pack_rule: 'split',
     });
     expect(where()).toBe('/projects/7/edit');
   });

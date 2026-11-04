@@ -74,7 +74,7 @@ const PROJECT_GROUP = {
 
 const PROJECT_ITEM = {
   id: 1, project_id: 1, file_id: 1, file_name: 1, quantity: 1, quantity_completed: 1, quantity_failed: 1,
-  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1, group_id: 1, quantity_held: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1, group_id: 1, quantity_held: 1, kind: 1, source_ref: 1, pack_rule: 1,
 } satisfies Record<keyof ProjectItem, 1>;
 
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;

@@ -476,6 +476,13 @@ class ProjectItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
     quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
+    # What the item is (BIZ-356): "stl" | "3mf_object" (source_ref = object id) | "3mf_plate" (source_ref = plate number) |
+    # "gcode" (source_ref = plate of a .gcode.3mf, else 1); its packing rule "split" | "together" | "solo" | "locked"; and the
+    # file's content hash when the object/plate was picked (a changed file must be re-picked).
+    kind: Mapped[str] = mapped_column(String(20), default="stl", server_default="stl")
+    source_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    pack_rule: Mapped[str] = mapped_column(String(20), default="split", server_default="split")
+    source_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # Failed parts held for a person after failing on `part_retry_limit` different printers (BIZ-364): Reprint or Drop.
     quantity_held: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Filament requirement spec — "any" means no constraint

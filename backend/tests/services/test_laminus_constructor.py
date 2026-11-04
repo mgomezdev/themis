@@ -64,12 +64,34 @@ def test_a_bed_without_a_positive_size_is_an_unsupported_target_and_nothing_is_s
     assert sidecar.requests == []
 
 
-def test_a_3mf_input_is_unsupported_because_pack_cannot_preserve_it(sidecar, tmp_path):  # noqa: F811
+def test_3mf_objects_plates_and_rules_go_to_the_mixed_pack(sidecar, tmp_path):  # noqa: F811
+    """BIZ-356: anything but plain split STLs is packed by /pack/mixed, each source uploaded once, the selection in input order."""
+    import json as _json
     proj = tmp_path / "p.3mf"
     proj.write_bytes(b"PK")
-    req = _req(tmp_path, c.ConstructInput(_stl(tmp_path), 1, "1"), c.ConstructInput(proj, 1, "2"))
-    assert _construct_error(lambda: constructor().construct(req, tmp_path)) is c.ErrorCode.UNSUPPORTED_INPUT
-    assert sidecar.requests == []
+    stl = _stl(tmp_path)
+    req = _req(tmp_path, c.ConstructInput(stl, 2, "1"), c.ConstructInput(proj, 3, "item-5", object_id="8"),
+               c.ConstructInput(proj, 1, "item-6", plate=2, rule="together"), c.ConstructInput(stl, 1, "item-7", rule="solo"))
+    art = constructor().construct(req, tmp_path)
+    assert art.path.read_bytes() == b"MIXED"
+    (call,) = [r for r in sidecar.requests if r.url.path == "/api/v1/pack/mixed"]
+    body = call.content.decode("latin-1")
+    sel = _json.loads(body.split('name="selection"')[1].split("\r\n\r\n", 1)[1].split("\r\n--", 1)[0])
+    assert sel == [{"file": "0_a.stl", "qty": 2}, {"file": "1_p.3mf", "qty": 3, "id": 8},
+                   {"file": "1_p.3mf", "qty": 1, "plate": 2, "rule": "together"}, {"file": "0_a.stl", "qty": 1, "rule": "solo"}]
+    assert body.count('name="files"') == 2
+    assert 'name="bed_x"' in body
+
+
+def test_plain_split_stls_still_use_pack(sidecar, tmp_path):  # noqa: F811
+    constructor().construct(_req(tmp_path), tmp_path)
+    assert [r.url.path for r in sidecar.requests] == ["/api/v1/pack"]
+
+
+def test_list_objects_reads_the_sidecar_inspect(sidecar, tmp_path):  # noqa: F811
+    proj = tmp_path / "p.3mf"
+    proj.write_bytes(b"PK")
+    assert constructor().list_objects(proj) == [c.ModelObject("3", "Gear", 2), c.ModelObject("8", "Axle", 1)]
 
 
 def test_no_inputs_is_unsupported(sidecar, tmp_path):  # noqa: F811
@@ -157,7 +179,7 @@ def test_plate_manifest_counts_instances_per_plate_and_input(tmp_path):
          "plates": [{"plate": 1, "instances": [{"item": 0, "part": "a.stl"}, {"item": 0, "part": "a.stl"}, {"item": 1, "part": "b.stl"}]},
                     {"plate": 2, "instances": [{"item": 0, "part": "a.stl"}]}]}
     got = constructor().plate_manifest(_pack_with(tmp_path, m))
-    assert got == c.PlateManifest(plates={1: {0: 2, 1: 1}, 2: {0: 1}})
+    assert got == c.PlateManifest(plates={1: {0: 2, 1: 1}, 2: {0: 1}}, requested={0: 3, 1: 1})
 
 
 @pytest.mark.parametrize("manifest", [None, "not json", {"version": 2, "plates": []}, {"version": 1},

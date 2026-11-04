@@ -124,10 +124,22 @@ class ProjectShareOut(BaseModel):
     created_at: Optional[str] = None
 
 
+ItemKind = Literal["stl", "3mf_object", "3mf_plate", "gcode"]
+PackRule = Literal["split", "together", "solo", "locked"]
+# Which packing rules each kind can use (BIZ-356); the first is the default. gcode prints as sliced.
+_RULES: dict[str, tuple[str, ...]] = {"stl": ("split", "solo"), "3mf_object": ("split", "solo"),
+                                     "3mf_plate": ("split", "together", "solo", "locked"), "gcode": ("locked",)}
+
+
 class ProjectItemCreate(AskFields):
     file_id: int
     quantity: int = 1
     sort_order: int = 0
+    # BIZ-356: what of the file this item is. Omitted = inferred from the file: an STL; a .gcode / .gcode.3mf (plate
+    # `source_ref`, default 1); a .3mf's plate `source_ref` (default 1). `source_ref` = object id for "3mf_object".
+    kind: Optional[ItemKind] = None
+    source_ref: Optional[str] = Field(default=None, max_length=64)
+    pack_rule: Optional[PackRule] = None
 
     @field_validator("quantity")
     @classmethod
@@ -146,6 +158,7 @@ class ProjectItemUpdate(BaseModel):
     filament_color: Optional[str] = None
     sort_order: Optional[int] = None
     group_id: Optional[int] = None          # move the item to another print group of the same project (BIZ-360)
+    pack_rule: Optional[PackRule] = None    # BIZ-356: must be one its kind allows
 
     @field_validator("quantity")
     @classmethod
@@ -235,6 +248,9 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "sort_order": item.sort_order,
         "group_id": item.group_id,
         "quantity_held": item.quantity_held or 0,
+        "kind": item.kind or "stl",
+        "source_ref": item.source_ref,
+        "pack_rule": item.pack_rule or "split",
     }
 
 
@@ -816,14 +832,15 @@ async def add_item(
     f = await session.get(UploadedFile, body.file_id)
     if f is None:
         raise HTTPException(404, f"File {body.file_id} not found")
-    if is_presliced_name(f.original_filename):   # project items get packed and sliced: gcode can't be
-        raise HTTPException(422, f"{f.original_filename} is already sliced — add the model it was sliced from")
+    kind, ref, rule = _item_kind(f, body.kind, body.source_ref, body.pack_rule)
     item = ProjectItem(
         project_id=project_id,
         file_id=body.file_id,
         quantity=body.quantity,
         **ask_columns(body),
         sort_order=body.sort_order,
+        kind=kind, source_ref=ref, pack_rule=rule,
+        source_hash=f.content_hash if kind in ("3mf_object", "3mf_plate") else None,
         group_id=(await project_groups.ensure_default_group(session, project_id)).id,   # new items land in the Default Group
     )
     session.add(item)
@@ -904,6 +921,10 @@ async def update_item(
         item.ask_manufacturer, item.ask_type, item.ask_subtype, item.ask_color = ask.manufacturer, ask.type, ask.subtype, ask.color
     if body.sort_order is not None:
         item.sort_order = body.sort_order
+    if body.pack_rule is not None:
+        if body.pack_rule not in _RULES.get(item.kind or "stl", ()):
+            raise HTTPException(422, f"A {item.kind or 'stl'} item can't use the {body.pack_rule!r} rule")
+        item.pack_rule = body.pack_rule
     if body.group_id is not None:
         group = await session.get(ProjectGroup, body.group_id)
         if group is None or group.project_id != project_id:
@@ -1190,17 +1211,23 @@ def _plate_item_quantities(manifest, wanted: list[tuple[str, int, str]], group_i
             if not 0 <= idx < len(wanted):
                 return None
             totals[idx] += n
-    if totals != [qty for _, qty, _ in wanted]:
+    # A bundle (a 3MF plate) is several parts per copy (BIZ-356): count copies, from the manifest's requested instances.
+    requested = getattr(manifest, "requested", None) or {}
+    per_copy = [max(1, requested.get(i, w[1]) // w[1]) for i, w in enumerate(wanted)]
+    if totals != [w[1] * per_copy[i] for i, w in enumerate(wanted)]:
         return None
     by_file: dict[str, list] = {}
     for item in group_items:
         by_file.setdefault(str(item.file_id), []).append(item)
     left = {item.id: item.quantity for item in group_items}
+    by_ref = {f"item-{item.id}": [item] for item in group_items}
     out: list[dict[str, int]] = []
     for plate in plate_nums:
         q = {str(item.id): 0 for item in group_items}
         for idx, n in sorted(manifest.plates[plate].items()):
-            for item in by_file.get(wanted[idx][2], []):
+            n //= per_copy[idx]
+            ref = wanted[idx][2]
+            for item in by_ref.get(ref) or by_file.get(ref, []):
                 take = min(n, left[item.id])
                 q[str(item.id)] += take
                 left[item.id] -= take
@@ -1230,7 +1257,9 @@ def _construct_stored_models(store: ArtifactStore, constructor: ProjectConstruct
     """Build one project from the stored STLs `wanted` = (key, quantity, ref), each passed once. The constructor takes paths,
     so each artifact is materialized for the duration of the call. Blocking: call from a worker thread."""
     with contextlib.ExitStack() as stack:
-        inputs = tuple(ConstructInput(stack.enter_context(store.materialize(k)), qty, ref) for k, qty, ref in wanted)
+        inputs = tuple(ConstructInput(stack.enter_context(store.materialize(w[0])), w[1], w[2],
+                                      **({k: v for k, v in w[3].items() if v is not None} if len(w) > 3 else {}))
+                       for w in wanted)
         out_dir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         return constructor.construct(ConstructRequest(inputs, target), out_dir, cancel=cancel).path.read_bytes()
 
@@ -1340,6 +1369,30 @@ async def generate_project(
     return result
 
 
+def _item_kind(f: UploadedFile, kind: str | None, ref: str | None, rule: str | None) -> tuple[str, str | None, str]:
+    """Validate (and infer) what of `f` an item is (BIZ-356): (kind, source_ref, pack_rule), else 422."""
+    name = f.original_filename.lower()
+    natural = "gcode" if is_presliced_name(f.original_filename) else "stl" if name.endswith(".stl") else "3mf_plate"
+    kind = kind or natural
+    if kind == "gcode" and natural != "gcode" or kind == "stl" and natural != "stl" or \
+            kind in ("3mf_object", "3mf_plate") and natural != "3mf_plate":
+        raise HTTPException(422, f"{f.original_filename} can't be a {kind} item")
+    if kind == "3mf_object" and not ref:
+        raise HTTPException(422, "A 3MF object item needs source_ref: the object id")
+    if kind in ("3mf_plate", "gcode"):
+        ref = ref or "1"
+        plates = {p.get("plate_number") for p in (f.plates or []) if p.get("plate_number") is not None}
+        if not ref.isdigit() or (plates and int(ref) not in plates):
+            raise HTTPException(422, f"{f.original_filename} has no plate {ref}" + (f" (plates {sorted(plates)})" if plates else ""))
+    if kind == "stl":
+        ref = None
+    allowed = _RULES[kind]
+    rule = rule or allowed[0]
+    if rule not in allowed:
+        raise HTTPException(422, f"A {kind} item can't use the {rule!r} rule (allowed: {', '.join(allowed)})")
+    return kind, ref, rule
+
+
 class HeldAction(BaseModel):
     action: Literal["reprint", "drop"]
 
@@ -1383,26 +1436,44 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
     by_ask: dict[FilamentTuple, list[ProjectItem]] = {}
     for item in pg_items:
         by_ask.setdefault(row_tuple(item), []).append(item)
-    # Resolve STL keys per ask (+ what each pack is made from, for pack reuse)
+    # Resolve model keys per ask (+ what each pack is made from, for pack reuse). BIZ-356: Locked plates and gcode are fixed
+    # jobs; a plain split STL merges with other copies of its file; every other item is its own input (object / plate + rule).
     for ask, ask_items in by_ask.items():
-        wanted: dict[str, tuple[str, int, str]] = {}   # one entry per library file; repeats sum their quantity
-        recipe: list[tuple[str, int]] = []
+        wanted: dict[str, tuple] = {}
+        recipe: list[tuple] = []
+        packed: list = []
         for item in ask_items:
             f = await session.get(UploadedFile, item.file_id)
             if f is None:
                 raise HTTPException(422, f"File {item.file_id} not found in library")
-            if not f.original_filename.lower().endswith(".stl"):
-                raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
+            kind, rule = getattr(item, "kind", None) or "stl", getattr(item, "pack_rule", None) or "split"
             if not await _stored(library, f.relative_path):
-                raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            prior = wanted[f.relative_path][1] if f.relative_path in wanted else 0
-            wanted[f.relative_path] = (f.relative_path, prior + item.quantity, str(f.id))
-            # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
+                raise HTTPException(422, f"{f.original_filename!r} is missing from disk")
             await refresh_content_hash(f, library)
-            recipe.append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
-        packs.append({"group_id": pgroup.id, "ask": ask, "items": ask_items, "wanted": list(wanted.values()),
-                      "recipe": recipe, "target": target, "resolved": resolved,
-                      "pack_mode": {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}})
+            if kind in ("3mf_object", "3mf_plate") and getattr(item, "source_hash", None) and f.content_hash != item.source_hash:
+                raise HTTPException(422, f"{f.original_filename!r} changed since its {kind.split('_')[1]} was picked: pick it again")
+            if kind == "gcode" or (kind == "3mf_plate" and rule == "locked"):
+                packs.append({"group_id": pgroup.id, "ask": ask, "items": [item], "wanted": [], "recipe": [], "target": target,
+                              "resolved": resolved, "pack_mode": {},
+                              "fixed": {"file": f, "plate": int(item.source_ref or 1), "copies": item.quantity}})
+                continue
+            if kind == "stl" and not f.original_filename.lower().endswith(".stl"):
+                raise HTTPException(400, f"File {f.original_filename!r} is not an STL — pick a plate or an object of it")
+            content = f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}"
+            packed.append(item)
+            if kind == "stl" and rule == "split":
+                prior = wanted[f.relative_path][1] if f.relative_path in wanted else 0
+                wanted[f.relative_path] = (f.relative_path, prior + item.quantity, str(f.id))
+                recipe.append((content, item.quantity))
+            else:
+                select = {"object_id": item.source_ref if kind == "3mf_object" else None,
+                          "plate": int(item.source_ref) if kind == "3mf_plate" else None, "rule": rule}
+                wanted[f"item-{item.id}"] = (f.relative_path, item.quantity, f"item-{item.id}", select)
+                recipe.append((content, item.quantity, kind, item.source_ref, rule))
+        if packed:
+            packs.append({"group_id": pgroup.id, "ask": ask, "items": packed, "wanted": list(wanted.values()),
+                          "recipe": recipe, "target": target, "resolved": resolved,
+                          "pack_mode": {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}})
     return packs, out, [p for p, _ in resolved.printers]
 
 
@@ -1421,66 +1492,75 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
 
     for pack in packs:
         ask, stl_wanted, group_items, target = pack["ask"], pack["wanted"], pack["items"], pack["target"]
-        # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
-        # slices keyed on that file still apply (BIZ-193).
-        recipe_hash = slice_cache.sha256_of({"items": pack["recipe"], "pack": pack["pack_mode"]})
-        reused = await _reusable_pack(session, recipe_hash) if allow_cached else None
-        now = _now_iso()
-
-        if reused is not None:
-            new_file = reused
-            plate_nums = [p.get("plate_number") for p in (reused.plates or []) if p.get("plate_number") is not None]
-            slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
-                                  pack_content_hash=reused.content_hash)
+        fixed = pack.get("fixed")     # BIZ-356: a Locked plate or gcode item prints its own file as is, one job per copy
+        if fixed is not None:
+            reused = new_file = fixed["file"]          # never packed, moved or deleted
+            plate_nums = [fixed["plate"]] * fixed["copies"]
+            now = _now_iso()
         else:
-            if not checked_ready:
-                await _require_ready(constructor)
-                checked_ready = True
-            try:
-                # Geometry-only, whatever presets the project carries: slicing profiles are applied at dispatch time.
-                packed_bytes = await _construct_in_thread(library, constructor, stl_wanted, target)
-            except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
-                raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
-            except ProviderError as exc:
-                raise _construct_http_error(exc) from exc
+            # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
+            # slices keyed on that file still apply (BIZ-193).
+            recipe_hash = slice_cache.sha256_of({"items": pack["recipe"], "pack": pack["pack_mode"]})
+            reused = await _reusable_pack(session, recipe_hash) if allow_cached else None
+            now = _now_iso()
 
-            label = _filament_label(ask)
-            out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
-            # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-            tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
-            published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
-            # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
-            # library's dedup/move detection relies on it too.
-            pack_hash = hashlib.sha256(packed_bytes).hexdigest()
+            if reused is not None:
+                new_file = reused
+                plate_nums = [p.get("plate_number") for p in (reused.plates or []) if p.get("plate_number") is not None]
+                slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
+                                      pack_content_hash=reused.content_hash)
+            else:
+                if not checked_ready:
+                    await _require_ready(constructor)
+                    checked_ready = True
+                try:
+                    # Geometry-only, whatever presets the project carries: slicing profiles are applied at dispatch time.
+                    packed_bytes = await _construct_in_thread(library, constructor, stl_wanted, target)
+                except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
+                    raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
+                except ProviderError as exc:
+                    raise _construct_http_error(exc) from exc
 
-            plate_nums = await asyncio.to_thread(_stored_plate_nums, pack_store, tmp_key)
+                label = _filament_label(ask)
+                out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
+                # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
+                tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
+                published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
+                # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
+                # library's dedup/move detection relies on it too.
+                pack_hash = hashlib.sha256(packed_bytes).hexdigest()
 
-            new_file = UploadedFile(
-                original_filename=out_filename,
-                plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
-                uploaded_at=now,
-                relative_path=tmp_key,
-                folder=f"/{PACK_FOLDER}",
-                size_bytes=published.size,
-                content_hash=pack_hash,
-                mtime=published.mtime,
-                missing=False,
-                pack_recipe_hash=recipe_hash,
-            )
-            session.add(new_file)
-            await session.commit()
-            await session.refresh(new_file)
-            slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
-                                  pack_content_hash=pack_hash)
+                plate_nums = await asyncio.to_thread(_stored_plate_nums, pack_store, tmp_key)
+
+                new_file = UploadedFile(
+                    original_filename=out_filename,
+                    plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
+                    uploaded_at=now,
+                    relative_path=tmp_key,
+                    folder=f"/{PACK_FOLDER}",
+                    size_bytes=published.size,
+                    content_hash=pack_hash,
+                    mtime=published.mtime,
+                    missing=False,
+                    pack_recipe_hash=recipe_hash,
+                )
+                session.add(new_file)
+                await session.commit()
+                await session.refresh(new_file)
+                slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
+                                      pack_content_hash=pack_hash)
 
         effective_plates = plate_nums or [1]
-        # Real per-plate counts from the pack's manifest (BIZ-359); the round-robin guess only for a pack that reports none.
-        manifest = await asyncio.to_thread(_stored_manifest, pack_store, new_file.relative_path, constructor)
-        plate_item_qtys = _plate_item_quantities(manifest, stl_wanted, group_items, effective_plates)
-        if plate_item_qtys is None:
-            if manifest is not None:
-                logger.warning("project %s: pack manifest disagrees with the request; using round-robin plate counts", proj.id)
-            plate_item_qtys = _round_robin_quantities(group_items, len(effective_plates))
+        if fixed is not None:
+            plate_item_qtys = [{str(group_items[0].id): 1} for _ in effective_plates]
+        else:
+            # Real per-plate counts from the pack's manifest (BIZ-359); the round-robin guess only for a pack that reports none.
+            manifest = await asyncio.to_thread(_stored_manifest, pack_store, new_file.relative_path, constructor)
+            plate_item_qtys = _plate_item_quantities(manifest, stl_wanted, group_items, effective_plates)
+            if plate_item_qtys is None:
+                if manifest is not None:
+                    logger.warning("project %s: pack manifest disagrees with the request; using round-robin plate counts", proj.id)
+                plate_item_qtys = _round_robin_quantities(group_items, len(effective_plates))
 
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
@@ -1517,20 +1597,21 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
             await session.commit()
 
-        cached_plates = (await session.execute(
-            select(func.count(func.distinct(SlicedVersion.plate_number)))
-            .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
-            .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
-        )).scalar() or 0
-        files_out.append({
-            "id": new_file.id,
-            "original_filename": new_file.original_filename,
-            "folder": new_file.folder,
-            "plate_count": len(plate_nums),
-            # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
-            "pack_reused": reused is not None,
-            "cached_plates": cached_plates,
-        })
+        if fixed is None:
+            cached_plates = (await session.execute(
+                select(func.count(func.distinct(SlicedVersion.plate_number)))
+                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+                .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
+            )).scalar() or 0
+            files_out.append({
+                "id": new_file.id,
+                "original_filename": new_file.original_filename,
+                "folder": new_file.folder,
+                "plate_count": len(plate_nums),
+                # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
+                "pack_reused": reused is not None,
+                "cached_plates": cached_plates,
+            })
 
         # Create printer configs for each of the group's eligible printers × job, each with its target's process profile
         # ("" = the printer's own default, BIZ-358). The machine preset is deliberately NOT set here — queue_engine reads it
