@@ -499,6 +499,7 @@ class ProjectGroup(Base):
     """An ordered print group of a project (BIZ-360): which printers take its jobs (`targets`), the bed envelope it packs for, and
     the colour rule. Exactly one per project is the Default Group (renamable, never deleted; new items land in it)."""
     __tablename__ = "project_groups"
+    __table_args__ = (Index("ux_project_groups_one_default", "project_id", unique=True, sqlite_where=text("is_default = 1")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)

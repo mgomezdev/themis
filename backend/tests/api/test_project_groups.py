@@ -92,7 +92,7 @@ async def test_generate_runs_group_by_group_with_each_targets_process_and_envelo
     await client.patch(f"/api/v1/projects/{pid}/groups/{default['id']}", json={
         "targets": [{"target_key": str(small), "process_profile": ""}, {"target_key": "any", "process_profile": "0.28mm Draft"}]})
     await client.put(f"/api/v1/projects/{pid}/groups/order", json={"group_ids": [fine["id"], default["id"]]})
-    draft_item = await _item(client, upload_3mf, pid, "draft.stl")
+    await _item(client, upload_3mf, pid, "draft.stl")
     fine_item = await _item(client, upload_3mf, pid, "fine.stl")
     await client.put(f"/api/v1/projects/{pid}/items/{fine_item['id']}", json={"group_id": fine["id"]})
 
@@ -114,7 +114,6 @@ async def test_generate_runs_group_by_group_with_each_targets_process_and_envelo
         {"id": fine["id"], "pack_bed_x": 300.0, "pack_bed_y": 300.0},
         {"id": default["id"], "pack_bed_x": 180.0, "pack_bed_y": 180.0},          # auto = smallest covered bed
     ]
-    assert {draft_item["id"], fine_item["id"]}
 
 
 async def test_an_empty_group_adds_nothing(client, upload_3mf, tmp_path):
@@ -135,3 +134,70 @@ async def test_legacy_request_eligibility_applies_to_a_default_group_without_tar
     async with session_factory() as s:
         (cfg,) = (await s.execute(select(JobPrinterConfig))).scalars().all()
     assert (cfg.printer_id, cfg.print_profile) == (p, "0.20mm Standard")
+
+
+async def test_the_default_group_exists_as_soon_as_the_project_does(client, session_factory):
+    from app.models import ProjectGroup
+    pid = await _project(client)
+    async with session_factory() as s:
+        rows = (await s.execute(select(ProjectGroup).where(ProjectGroup.project_id == pid))).scalars().all()
+    assert [(g.name, g.is_default) for g in rows] == [("Default Group", True)]
+
+
+async def test_a_group_no_printer_can_take_is_reported(client, upload_3mf, create_printer, tmp_path):
+    pid = await _project(client)
+    (default,) = await _groups(client, pid)
+    small = await create_printer(name="Small", bed_x_mm=180.0, bed_y_mm=180.0)
+    await client.patch(f"/api/v1/projects/{pid}/groups/{default['id']}", json={
+        "envelope_x": 300, "envelope_y": 300, "targets": [{"target_key": str(small), "process_profile": ""}]})
+    await _item(client, upload_3mf, pid, "a.stl")
+    r = await _generate(client, pid, tmp_path)
+    assert r.status_code == 200
+    assert "no printer can take these jobs" in r.json()["groups"][0]["warning"]
+
+
+async def test_legacy_any_printer_and_model_fields_apply_to_the_default_group(
+        client, upload_3mf, create_printer, model_uuid_of, session_factory, tmp_path):
+    p = await create_printer(name="P")
+    model = await model_uuid_of(p)
+    for body, expected in (({"eligible_any_printer": True}, [None]), ({"eligible_model_uuids": [model]}, [model])):
+        pid = await _project(client, f"L{expected}")
+        await _item(client, upload_3mf, pid, f"{expected}.stl")
+        r = await _generate(client, pid, tmp_path, process_preset="0.20mm", **body)
+        job_id = r.json()["jobs"][0]["id"]
+        async with session_factory() as s:
+            rows = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
+        assert [(t.model_uuid, t.print_profile) for t in rows] == [(expected[0], "0.20mm")]
+
+
+async def test_invalid_order_and_half_envelope_are_refused(client):
+    pid = await _project(client)
+    (g,) = await _groups(client, pid)
+    assert (await client.put(f"/api/v1/projects/{pid}/groups/order", json={"group_ids": []})).status_code == 422
+    assert (await client.patch(f"/api/v1/projects/{pid}/groups/{g['id']}", json={"envelope_x": 200})).status_code == 422
+    assert (await client.patch(f"/api/v1/projects/{pid}/groups/{g['id']}",
+                               json={"targets": [{"target_key": "²"}]})).status_code == 422
+
+
+async def test_an_item_with_a_dangling_group_is_adopted_by_the_default_group(client, upload_3mf, session_factory, tmp_path):
+    from app.models import ProjectItem
+    pid = await _project(client)
+    (g,) = await _groups(client, pid)
+    item = await _item(client, upload_3mf, pid, "a.stl")
+    async with session_factory() as s:
+        (await s.get(ProjectItem, item["id"])).group_id = 9999
+        await s.commit()
+    r = await _generate(client, pid, tmp_path)
+    assert r.status_code == 200 and len(r.json()["jobs"]) == 1
+    assert [i["group_id"] for i in (await client.get(f"/api/v1/projects/{pid}/items")).json()] == [g["id"]]
+
+
+async def test_deleting_a_project_removes_its_groups_and_targets(client, session_factory):
+    from app.models import ProjectGroup, ProjectGroupTarget
+    pid = await _project(client)
+    g = (await client.post(f"/api/v1/projects/{pid}/groups", json={"name": "X"})).json()
+    await client.patch(f"/api/v1/projects/{pid}/groups/{g['id']}", json={"targets": [{"target_key": "any"}]})
+    assert (await client.delete(f"/api/v1/projects/{pid}")).status_code in (200, 204)
+    async with session_factory() as s:
+        assert (await s.execute(select(ProjectGroup))).scalars().all() == []
+        assert (await s.execute(select(ProjectGroupTarget))).scalars().all() == []

@@ -21,6 +21,8 @@ async def up(conn) -> None:
             mix_colours BOOLEAN NOT NULL DEFAULT 0
         )"""))
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_project_groups_project_id ON project_groups (project_id)"))
+    await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_project_groups_one_default ON project_groups (project_id) "
+                            "WHERE is_default = 1"))
     await conn.execute(text("""
         CREATE TABLE IF NOT EXISTS project_group_targets (
             id INTEGER PRIMARY KEY,

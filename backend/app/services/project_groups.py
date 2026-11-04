@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Printer, PrinterModelRecord, ProjectGroup, ProjectGroupTarget, ProjectItem
@@ -23,9 +23,11 @@ async def ensure_default_group(session: AsyncSession, project_id: int) -> Projec
         group = ProjectGroup(project_id=project_id, name=DEFAULT_GROUP_NAME, sort_order=0, is_default=True)
         session.add(group)
         await session.flush()
+    own = select(ProjectGroup.id).where(ProjectGroup.project_id == project_id)
     for item in (await session.execute(select(ProjectItem).where(
-            ProjectItem.project_id == project_id, ProjectItem.group_id.is_(None)))).scalars():
-        item.group_id = group.id
+            ProjectItem.project_id == project_id,
+            or_(ProjectItem.group_id.is_(None), ProjectItem.group_id.not_in(own))))).scalars():
+        item.group_id = group.id          # ungrouped, or pointing at a group that no longer exists (group_id has no FK)
     return group
 
 
@@ -51,7 +53,7 @@ async def check_target_key(session: AsyncSession, key: str) -> str | None:
         return None
     if key.startswith(MODEL_PREFIX):
         return None if await session.get(PrinterModelRecord, key[len(MODEL_PREFIX):]) else f"unknown printer model in {key!r}"
-    if key.isdigit():
+    if key.isascii() and key.isdigit():
         return None if await session.get(Printer, int(key)) else f"printer {key} does not exist"
     return f"{key!r} is not a printer id, 'model:<uuid>' or 'any'"
 

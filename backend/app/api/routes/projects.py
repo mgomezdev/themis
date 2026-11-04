@@ -486,6 +486,7 @@ async def _create_project(body: ProjectCreate, session: AsyncSession, progress: 
         if existing is None:
             raise
         return await _project_dict(existing, session), False
+    await project_groups.ensure_default_group(session, proj.id)      # every project has its Default Group (BIZ-360)
     if proj.amount_paid and proj.amount_paid > 0:
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
@@ -1385,7 +1386,12 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         bed_models = {p.model_uuid for p in resolved.covered}
         target = TargetPrinter((pack_bed_x, pack_bed_y, 250.0), next(iter(bed_models)) if len(bed_models) == 1 else None)
         all_explicit.update({p.id: p for p, _ in resolved.printers})
-        groups_out.append({"id": pgroup.id, "pack_bed_x": pack_bed_x, "pack_bed_y": pack_bed_y})
+        out = {"id": pgroup.id, "pack_bed_x": pack_bed_x, "pack_bed_y": pack_bed_y}
+        if not resolved.printers and not resolved.models:
+            # Its jobs will sit unclaimed (the unmatched sweep blocks them); say so instead of a silent 200.
+            out["warning"] = (f"{pgroup.name}: no printer can take these jobs" + (
+                " (the envelope leaves out every selected printer)" if targets else " (choose eligible printers)"))
+        groups_out.append(out)
 
         # Group items by filament requirement (the ask tuple)
         by_ask: dict[FilamentTuple, list[ProjectItem]] = {}

@@ -30,7 +30,7 @@ export function PrintGroupsCard({ projectId, items, onChanged }: {
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
-    try { await fn(); load(); onChanged?.(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    try { await fn(); load(); onChanged?.(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); load(); }   // re-sync after a refusal
   }
   const patch = (g: ProjectGroup, body: ProjectGroupPatch) => run(() => patchProjectGroup(projectId, g.id, body));
   const move = (index: number, by: number) => {
@@ -50,7 +50,8 @@ export function PrintGroupsCard({ projectId, items, onChanged }: {
       <div className="col gap-3">
         {groups.map((g, i) => (
           <GroupRow key={g.id} group={g} index={i} count={groups.length} groups={groups} printers={printers}
-                    items={items.filter(it => it.group_id === g.id)}
+                    items={items.filter(it => it.group_id === g.id
+                                              || (g.is_default && !groups.some(x => x.id === it.group_id)))}   // ungrouped → Default
                     onPatch={body => patch(g, body)}
                     onMove={by => move(i, by)}
                     onDelete={() => run(() => deleteProjectGroup(projectId, g.id))}
@@ -80,6 +81,10 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
             [group.name, group.envelope_x, group.envelope_y]);
   const keys = group.targets.map(t => t.target_key);
   const auto = group.envelope_x == null;
+  // What "auto" packs for now: the smallest bed among the printers the targets cover (the custom envelope starts from it).
+  const covered = keys.flatMap(k => printersOfKey(k, printers));
+  const autoBed = covered.length ? { x: Math.min(...covered.map(p => p.bed_x_mm)), y: Math.min(...covered.map(p => p.bed_y_mm)) }
+                                 : { x: 256, y: 256 };
 
   const label = (key: string) => (key === ANY_KEY ? 'Any printer' : isModelKey(key) ? `Any ${modelLabelOf(key, printers)}`
     : printers.find(p => String(p.id) === key)?.name ?? `Printer ${key}`);
@@ -122,8 +127,8 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
         <label className="row gap-1 small" style={{ alignItems: 'center' }}>
           <input type="checkbox" checked={auto}
                  onChange={e => onPatch(e.target.checked ? { envelope_x: null, envelope_y: null }
-                                                         : { envelope_x: 256, envelope_y: 256 })} />
-          the smallest selected bed
+                                                         : { envelope_x: autoBed.x, envelope_y: autoBed.y })} />
+          the smallest selected bed{auto && covered.length > 0 && ` (${autoBed.x} × ${autoBed.y} mm)`}
         </label>
         {!auto && (
           <>
