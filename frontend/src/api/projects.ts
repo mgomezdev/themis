@@ -129,6 +129,8 @@ export interface GenerateOut {
   eligible_printer_ids: number[];
   pack_bed_x: number;
   pack_bed_y: number;
+  /** Per print group (BIZ-360): its pack bed (none for a pool), and why its jobs may sit unclaimed. */
+  groups?: { id: number; pack_bed_x?: number | null; pack_bed_y?: number | null; pool?: boolean; warning?: string }[];
 }
 
 export interface ProjectCreate {
@@ -152,7 +154,7 @@ export interface ProjectItemCreate extends Partial<FilamentAsk> {
   file_id: number;
   quantity: number;
   sort_order?: number;
-  group_id?: number;              // update only: move to another print group of the project (BIZ-360)
+  group_id?: number;              // a print group of the project (BIZ-360 move; BIZ-363 create, default: the Default Group)
   /** BIZ-356: what of the file the item is (create only; omitted = inferred from the file) and its packing rule. */
   kind?: 'stl' | '3mf_object' | '3mf_plate' | 'gcode';
   source_ref?: string | null;
@@ -229,6 +231,22 @@ export const patchProject = (id: number, body: Partial<ProjectCreate>) =>
   request<Project>(`/api/v1/projects/${id}`, json('PATCH', body));
 export const deleteProject = (id: number) =>
   request<{ deleted: number }>(`/api/v1/projects/${id}`, { method: 'DELETE' });
+/** One Builder Review check (BIZ-363): `error` blocks queueing; `tab` is the Builder tab that fixes it. */
+export interface ReviewCheck {
+  level: 'error' | 'note' | 'ok';
+  tab: 'details' | 'items' | 'groups';
+  message: string;
+  group_id: number | null;
+  item_id: number | null;
+}
+
+export interface ProjectReview {
+  checks: ReviewCheck[];
+  open: number;                   // errors still open: "Queue project" waits for 0
+}
+
+export const getProjectReview = (projectId: number) => request<ProjectReview>(`/api/v1/projects/${projectId}/review`);
+
 export const addProjectItem = (projectId: number, body: ProjectItemCreate) =>
   request<ProjectItem>(`/api/v1/projects/${projectId}/items`, json('POST', body));
 export const updateProjectItem = (

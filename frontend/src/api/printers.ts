@@ -116,6 +116,7 @@ export interface ApiPrinter {
   no_snapshots_while_idle: boolean;
   bed_x_mm: number;
   bed_y_mm: number;
+  bed_z_mm: number | null;               // BIZ-363: build height; null = the machine profile's (Review fit check)
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
   preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
   default_process_profile: string | null;   // what a "Printer default" job config slices with; null = none set
@@ -156,6 +157,7 @@ export interface UpdatePrinterBody {
   no_snapshots_while_idle?: boolean;
   bed_x_mm?: number;
   bed_y_mm?: number;
+  bed_z_mm?: number | null;                     // null clears (use the machine profile's height)
   machine_rate_per_hour?: number | null;
   preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
   default_process_profile?: string | null;     // null clears; must be compatible with the printer's machine profile

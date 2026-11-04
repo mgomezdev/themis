@@ -20,7 +20,7 @@ const PRINTER: ApiPrinter = {
   machine_rate_per_hour: null,
   preferred_slicer_plugin_id: null,
   default_process_profile: null,
-  single_colour_only: false, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null,
+  single_colour_only: false, bed_z_mm: null, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null,
   quiet_start: null,
   quiet_end: null,
 };
@@ -134,5 +134,25 @@ describe('EditForm slicing defaults (BIZ-358)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await waitFor(() => expect(patchBody()).toBeTruthy());
     expect(patchBody().default_process_profile).toBeNull();
+  });
+});
+
+describe('EditForm build height (BIZ-363)', () => {
+  it('saves a build height, and blank (or not a positive number) clears it to the profile height', async () => {
+    render(<EditForm printer={{ ...PRINTER, bed_z_mm: 250 }} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const z = screen.getByLabelText('Build height (mm)') as HTMLInputElement;
+    expect(z.value).toBe('250');
+    fireEvent.change(z, { target: { value: '320' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().bed_z_mm).toBe(320);
+  });
+
+  it.each([[''], ['0'], ['-5']])('sends null for %j', async (value) => {
+    render(<EditForm printer={{ ...PRINTER, bed_z_mm: 250 }} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Build height (mm)'), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().bed_z_mm).toBeNull();
   });
 });

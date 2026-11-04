@@ -13,10 +13,13 @@ import { PrinterTargetPicker, toggleKey, useEnabledPrinters } from './PrinterTar
  * profile per target ("Printer default" = each printer's own, BIZ-358), the bed envelope it packs for, and its items.
  * Every change is saved straight away; `onChanged` lets the page refresh what depends on it.
  */
-export function PrintGroupsCard({ projectId, items, onChanged }: {
+export function PrintGroupsCard({ projectId, items, onChanged, groupId, refreshKey }: {
   projectId: number;
   items: ProjectItem[];
   onChanged?: () => void;
+  /** BIZ-363 Builder Groups tab: edit only this group (its items and the group list are managed by the banner). */
+  groupId?: number;
+  refreshKey?: unknown;
 }) {
   const printers = useEnabledPrinters();
   const [groups, setGroups] = useState<ProjectGroup[]>([]);
@@ -26,7 +29,7 @@ export function PrintGroupsCard({ projectId, items, onChanged }: {
   const load = useCallback(() => {
     listProjectGroups(projectId).then(gs => setGroups(Array.isArray(gs) ? gs : [])).catch(e => setError(String(e)));
   }, [projectId]);
-  useEffect(load, [load]);
+  useEffect(load, [load, refreshKey]);
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
@@ -39,6 +42,21 @@ export function PrintGroupsCard({ projectId, items, onChanged }: {
     ids.splice(index + by, 0, id);
     return run(() => orderProjectGroups(projectId, ids));
   };
+
+  if (groupId !== undefined) {
+    const i = groups.findIndex(g => g.id === groupId);
+    if (i < 0) return null;
+    const g = groups[i];
+    return (
+      <div data-testid="print-groups">
+        {error && <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 8 }}>{error}</div>}
+        <GroupRow group={g} index={i} count={groups.length} groups={groups} printers={printers} items={[]} scoped
+                  onPatch={body => patch(g, body)} onMove={by => move(i, by)}
+                  onDelete={() => run(() => deleteProjectGroup(projectId, g.id))}
+                  onMoveItem={() => {}} />
+      </div>
+    );
+  }
 
   return (
     <div className="card" style={{ padding: 20 }} data-testid="print-groups">
@@ -70,8 +88,9 @@ export function PrintGroupsCard({ projectId, items, onChanged }: {
   );
 }
 
-function GroupRow({ group, index, count, groups, printers, items, onPatch, onMove, onDelete, onMoveItem }: {
+function GroupRow({ group, index, count, groups, printers, items, onPatch, onMove, onDelete, onMoveItem, scoped }: {
   group: ProjectGroup; index: number; count: number; groups: ProjectGroup[]; printers: ApiPrinter[]; items: ProjectItem[];
+  scoped?: boolean;     // the Builder's Groups tab: the banner shows the items and sets the order
   onPatch: (body: ProjectGroupPatch) => void; onMove: (by: number) => void; onDelete: () => void;
   onMoveItem: (itemId: number, groupId: number) => void;
 }) {
@@ -112,9 +131,11 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
                onBlur={() => { if (name.trim() && name !== group.name) onPatch({ name: name.trim() }); }}
                style={{ maxWidth: 260, fontWeight: 600 }} />
         {group.is_default && <span className="pill idle">Default</span>}
-        <span className="tiny muted" style={{ flex: 1 }}>{items.length} item{items.length === 1 ? '' : 's'}</span>
-        <button className="btn ghost sm" aria-label={`Move ${group.name} up`} disabled={index === 0} onClick={() => onMove(-1)}>↑</button>
-        <button className="btn ghost sm" aria-label={`Move ${group.name} down`} disabled={index === count - 1} onClick={() => onMove(1)}>↓</button>
+        <span className="tiny muted" style={{ flex: 1 }}>{scoped ? '' : `${items.length} item${items.length === 1 ? '' : 's'}`}</span>
+        {!scoped && <>
+          <button className="btn ghost sm" aria-label={`Move ${group.name} up`} disabled={index === 0} onClick={() => onMove(-1)}>↑</button>
+          <button className="btn ghost sm" aria-label={`Move ${group.name} down`} disabled={index === count - 1} onClick={() => onMove(1)}>↓</button>
+        </>}
         {!group.is_default && <button className="btn ghost sm" onClick={onDelete}>Delete</button>}
       </div>
 

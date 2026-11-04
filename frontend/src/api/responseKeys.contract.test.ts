@@ -14,7 +14,7 @@ import type { CustomerPayment, ProjectPayment } from './payments';
 import type { AlarmSummary, PrinterAlarm } from './alarms';
 import type { ApiPrinter, PartWaiver, PlateResults, SlotConflicts } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
-import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
+import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, ProjectJob, ProjectLink, ProjectPart, ProjectReview, ReviewCheck } from './projects';
 import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch, QueuePool } from './queue';
 import type { ModelSlicerProfile, ProfileCandidate, ProfileSuggestions, ProfileVariantOption } from './slicerProfiles';
 import type { CapabilityInfo } from './capabilities';
@@ -34,7 +34,7 @@ const FLEET = {
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -45,6 +45,9 @@ const JOB = {
   eligible_printers: 1, model_targets: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
   save_slice: 1, save_slice_name: 1, allow_cached_slice: 1, sliced_version_id: 1, slice_cache_info: 1, pool_group_id: 1,
 } satisfies Record<keyof ApiJob, 1>;
+
+const PROJECT_REVIEW = { checks: 1, open: 1 } satisfies Record<keyof ProjectReview, 1>;
+const REVIEW_CHECK = { level: 1, tab: 1, message: 1, group_id: 1, item_id: 1 } satisfies Record<keyof ReviewCheck, 1>;
 
 const QUEUE_POOL = {
   group_id: 1, name: 1, project_id: 1, project_name: 1, queue_position: 1, done: 1, printing: 1, left: 1, warning: 1,
@@ -188,6 +191,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['project item', contract.project_item, keysOf(PROJECT_ITEM)],
     ['project group', contract.project_group, keysOf(PROJECT_GROUP)],
     ['queue pool', contract.queue_pool, keysOf(QUEUE_POOL)],
+    ['project review', contract.project_review, keysOf(PROJECT_REVIEW)],
+    ['review check', contract.review_check, keysOf(REVIEW_CHECK)],
     ['project failure', contract.project_failure, keysOf(PROJECT_FAILURE)],
     ['plate results', contract.plate_results, keysOf(PLATE_RESULTS)],
     ['part waiver', contract.part_waiver, keysOf(PART_WAIVER)],
@@ -225,7 +230,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
 
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
-      'job_details_extra', 'project', 'project_item', 'project_group', 'queue_pool', 'project_failure', 'plate_results', 'part_waiver', 'project_link', 'project_part', 'project_job', 'library_file',
+      'job_details_extra', 'project', 'project_item', 'project_group', 'queue_pool', 'project_review', 'review_check', 'project_failure', 'plate_results', 'part_waiver', 'project_link', 'project_part', 'project_job', 'library_file',
       'project_payment', 'customer_payment',
       'portal_project', 'portal_quote', 'portal_payment',
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',

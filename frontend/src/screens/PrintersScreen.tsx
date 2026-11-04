@@ -140,6 +140,7 @@ export function EditForm({
   const [processProfiles, setProcessProfiles] = useState<string[]>([]);
   const [defaultProcess, setDefaultProcess] = useState<string>(printer.default_process_profile ?? '');
   const [singleColourOnly, setSingleColourOnly] = useState<boolean>(printer.single_colour_only);
+  const [bedZ, setBedZ] = useState<string>(printer.bed_z_mm != null ? String(printer.bed_z_mm) : '');
   const [thresholds, setThresholds] = useState({ waiver_flag_at: printer.waiver_flag_at ?? 0, waiver_stop_at: printer.waiver_stop_at ?? 0 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +180,7 @@ export function EditForm({
         build_plate_type: buildPlate || null,
         default_process_profile: defaultProcess || null,
         single_colour_only: singleColourOnly,
+        bed_z_mm: Number(bedZ) > 0 ? Number(bedZ) : null,     // blank (or not a positive number) = the machine profile's height
         ...thresholds,
       });
       onSave();
@@ -227,6 +229,15 @@ export function EditForm({
             {processProfiles.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           <div className="tiny muted" style={{ marginTop: 4 }}>Used by any job set to “Printer default”.</div>
+        </div>
+
+        <div>
+          <label className="label" htmlFor={`bed-z-${printer.id}`}>Build height (mm)</label>
+          <input id={`bed-z-${printer.id}`} className="input" type="number" min={1} style={{ maxWidth: 140 }}
+                 placeholder="from profile" value={bedZ} onChange={e => setBedZ(e.target.value)} />
+          <div className="tiny muted" style={{ marginTop: 4 }}>
+            Bed {printer.bed_x_mm} × {printer.bed_y_mm} mm. Blank = the machine profile's height; the project Review checks parts against it.
+          </div>
         </div>
 
         <label className="row gap-2" style={{ alignItems: 'center' }}>

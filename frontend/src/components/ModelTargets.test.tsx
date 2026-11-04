@@ -8,7 +8,7 @@ const printer = (id: number, model_uuid: string | null, model_label: string | nu
   awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null, nozzle_variant: null, machine_profile: null,
   machine_profile_reason: null, model_label, enabled: true, queue_on: true, connected: true, loaded_filaments: [{ slot: 0, filament_id: null, name: 'x', type: 'PLA', color: '#fff' }],
   build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256, machine_rate_per_hour: null,
-  preferred_slicer_plugin_id: null, default_process_profile: null, single_colour_only: false, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null, quiet_start: null, quiet_end: null, ...over,
+  preferred_slicer_plugin_id: null, default_process_profile: null, single_colour_only: false, bed_z_mm: null, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null, quiet_start: null, quiet_end: null, ...over,
 });
 const FLEET = [printer(1, 'm-p1s', 'Bambu Lab P1S'), printer(2, 'm-x1c', 'Bambu Lab X1 Carbon'), printer(3, 'm-p1s', 'Bambu Lab P1S'), printer(4, null, null)];
 
