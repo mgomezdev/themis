@@ -1715,6 +1715,200 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/waivers": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Parts this printer is waived for (BIZ-365)",
+        "description": "Each part this printer keeps failing and no longer gets: failures here, last failure, projects it failed in.",
+        "operationId": "list_waivers_api_v1_printers__printer_id__waivers_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Waivers Api V1 Printers  Printer Id  Waivers Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Clear all of a printer's waivers (BIZ-365)",
+        "operationId": "clear_all_waivers_api_v1_printers__printer_id__waivers_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/waivers/{waiver_id}": {
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Clear one waiver (BIZ-365)",
+        "operationId": "clear_waiver_api_v1_printers__printer_id__waivers__waiver_id__delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "waiver_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Waiver Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer or waiver not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/waivers/{waiver_id}/test-print": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Test-print a waived part on this printer (BIZ-365)",
+        "description": "One copy of the part, on this printer only (its default process profile + loaded filament). The printer claims nothing else until it has printed it; its plate-clear dialog then offers to clear the waiver.",
+        "operationId": "test_print_waiver_api_v1_printers__printer_id__waivers__waiver_id__test_print_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "waiver_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Waiver Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Print Waiver Api V1 Printers  Printer Id  Waivers  Waiver Id  Test Print Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer or waiver not found"
+          },
+          "409": {
+            "description": "A test print is already pending"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-results": {
       "get": {
         "tags": [
@@ -13963,6 +14157,11 @@
             "type": "array",
             "title": "Results",
             "default": []
+          },
+          "clear_waiver": {
+            "type": "boolean",
+            "title": "Clear Waiver",
+            "default": false
           }
         },
         "type": "object",
@@ -14578,6 +14777,32 @@
               }
             ],
             "title": "Single Colour Only"
+          },
+          "waiver_flag_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Stop At"
           }
         },
         "type": "object",
@@ -15357,6 +15582,19 @@
             ],
             "title": "Part Retry Limit"
           },
+          "waive_after": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waive After"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -15419,6 +15657,10 @@
             "type": "integer",
             "title": "Part Retry Limit"
           },
+          "waive_after": {
+            "type": "integer",
+            "title": "Waive After"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -15448,6 +15690,7 @@
           "check_interval_minutes",
           "printer_dead_after_minutes",
           "part_retry_limit",
+          "waive_after",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

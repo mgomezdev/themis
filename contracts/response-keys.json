@@ -22,7 +22,10 @@
     "capabilities",
     "current_print",
     "alarm_count",
-    "alarm_severity"
+    "alarm_severity",
+    "waived_parts",
+    "waiver_flag",
+    "waiver_stopped"
   ],
   "fleet_printer_connected_only": [
     "fan_model",
@@ -57,6 +60,9 @@
     "preferred_slicer_plugin_id",
     "default_process_profile",
     "single_colour_only",
+    "waiver_flag_at",
+    "waiver_stop_at",
+    "test_print_job_id",
     "quiet_start",
     "quiet_end"
   ],
@@ -168,7 +174,8 @@
     "source_ref",
     "pack_rule"
   ],
-  "plate_results": ["job_id", "project_id", "parts"],
+  "plate_results": ["job_id", "project_id", "parts", "test_print_waiver_id"],
+  "part_waiver": ["id", "part_key", "file_name", "failures", "last_failure_at", "projects"],
   "project_failure": ["id", "project_item_id", "file_name", "job_id", "printer_id", "printer_name", "quantity_failed", "created_at", "resolution"],
   "project_group": [
     "id",

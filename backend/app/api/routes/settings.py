@@ -35,6 +35,8 @@ class QueueConfigOut(BaseModel):
     printer_dead_after_minutes: int
     # A part is held for a person after failing on this many different printers (BIZ-364).
     part_retry_limit: int
+    # A printer is waived for a part after failing it this many times (BIZ-365).
+    waive_after: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -46,6 +48,7 @@ class QueueConfigIn(BaseModel):
     check_interval_minutes: int | None = None
     printer_dead_after_minutes: int | None = Field(default=None, ge=0, le=MAX_DEAD_AFTER_MINUTES)
     part_retry_limit: int | None = Field(default=None, ge=1, le=20)
+    waive_after: int | None = Field(default=None, ge=1, le=20)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -83,7 +86,7 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2,
+        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2, waive_after=2,
                           snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
@@ -113,6 +116,8 @@ async def update_queue_config(
         row.printer_dead_after_minutes = body.printer_dead_after_minutes
     if body.part_retry_limit is not None:
         row.part_retry_limit = body.part_retry_limit
+    if body.waive_after is not None:
+        row.waive_after = body.waive_after
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:

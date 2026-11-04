@@ -44,6 +44,12 @@ class Printer(Base):
     default_process_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     # BIZ-358: takes jobs in any loaded colour but never a multicolour one (filament_map of 2+ colours).
     single_colour_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # BIZ-365: flag the printer (Fleet warning) / stop it claiming queue work at this many waived parts; 0 = off. While
+    # `test_print_job_id` is set the printer claims only that job.
+    waiver_flag_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    waiver_stop_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    test_print_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    test_print_waiver_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)       # the waiver that test print is for
 
 
 class PrinterModelRecord(Base):
@@ -354,6 +360,8 @@ class QueueConfig(Base):
     printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     # A part is held after failing on this many different printers (BIZ-364).
     part_retry_limit: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # A printer is waived for a part after this many failures of it there (BIZ-365).
+    waive_after: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -504,6 +512,21 @@ class ProjectItem(Base):
     # integer, no FK (like job_printer_configs.model_target_id): SQLite can't DROP a column a foreign key names, and deleting a
     # group moves its items to the Default Group explicitly.
     group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class PartWaiver(Base):
+    """A printer waived for a part after failing it `waive_after` times (BIZ-365). `part_key` names the part itself (file content
+    hash + item kind + plate/object), so the waiver holds in every project. Cleared only by a person."""
+    __tablename__ = "part_waivers"
+    __table_args__ = (UniqueConstraint("printer_id", "part_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), index=True)
+    part_key: Mapped[str] = mapped_column(String(160))
+    file_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)       # for display; the key is what matches
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
 
 
 class ProjectGroup(Base):
