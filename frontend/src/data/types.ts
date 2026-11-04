@@ -42,6 +42,9 @@ export interface Printer {
   noSnapshotsWhileIdle: boolean;
   alarmCount?: number;
   alarmSeverity?: 'info' | 'warning' | 'error' | 'fatal' | null;
+  waivedParts?: number;          // BIZ-365
+  waiverFlag?: boolean;
+  waiverStopped?: boolean;
 }
 
 export interface OrderPart {

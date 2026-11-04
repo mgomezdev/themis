@@ -12,7 +12,7 @@ import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
 import type { AlarmSummary, PrinterAlarm } from './alarms';
-import type { ApiPrinter, PlateResults, SlotConflicts } from './printers';
+import type { ApiPrinter, PartWaiver, PlateResults, SlotConflicts } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch } from './queue';
@@ -28,13 +28,13 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 const FLEET = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, dormant: 1, dormant_reason: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
-  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1,
+  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1, waived_parts: 1, waiver_flag: 1, waiver_stopped: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, quiet_start: 1, quiet_end: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -66,7 +66,9 @@ const PROJECT_FAILURE = {
   id: 1, project_item_id: 1, file_name: 1, job_id: 1, printer_id: 1, printer_name: 1, quantity_failed: 1, created_at: 1, resolution: 1,
 } satisfies Record<keyof ProjectFailure, 1>;
 
-const PLATE_RESULTS = { job_id: 1, project_id: 1, parts: 1 } satisfies Record<keyof PlateResults, 1>;
+const PLATE_RESULTS = { job_id: 1, project_id: 1, parts: 1, test_print_waiver_id: 1 } satisfies Record<keyof PlateResults, 1>;
+
+const PART_WAIVER = { id: 1, part_key: 1, file_name: 1, failures: 1, last_failure_at: 1, projects: 1 } satisfies Record<keyof PartWaiver, 1>;
 
 const PROJECT_GROUP = {
   id: 1, project_id: 1, name: 1, sort_order: 1, is_default: 1, strategy: 1, envelope_x: 1, envelope_y: 1, mix_colours: 1, targets: 1,
@@ -182,6 +184,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['project group', contract.project_group, keysOf(PROJECT_GROUP)],
     ['project failure', contract.project_failure, keysOf(PROJECT_FAILURE)],
     ['plate results', contract.plate_results, keysOf(PLATE_RESULTS)],
+    ['part waiver', contract.part_waiver, keysOf(PART_WAIVER)],
     ['project link', contract.project_link, keysOf(PROJECT_LINK)],
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
     ['project job', contract.project_job, keysOf(PROJECT_JOB)],
@@ -216,7 +219,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
 
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
-      'job_details_extra', 'project', 'project_item', 'project_group', 'project_failure', 'plate_results', 'project_link', 'project_part', 'project_job', 'library_file',
+      'job_details_extra', 'project', 'project_item', 'project_group', 'project_failure', 'plate_results', 'part_waiver', 'project_link', 'project_part', 'project_job', 'library_file',
       'project_payment', 'customer_payment',
       'portal_project', 'portal_quote', 'portal_payment',
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',

@@ -81,6 +81,11 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
     job.outcome = "reviewed"
     job.updated_at = now
     await session.flush()
+    from . import part_waivers           # BIZ-365: a printer that keeps failing a part is waived for it
+    for item_id in {**requeue, **{h["project_item_id"]: h["quantity"] for h in held}}:
+        pi = await session.get(ProjectItem, item_id)
+        if pi is not None:
+            await part_waivers.after_failure(session, printer_id, pi)
     return {"held": held, "requeue": requeue}
 
 

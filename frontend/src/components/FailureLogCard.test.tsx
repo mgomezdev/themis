@@ -41,7 +41,7 @@ describe('FailureLogCard (BIZ-364)', () => {
 });
 
 describe('PrintResultsModal (BIZ-364)', () => {
-  const pending = { job_id: 5, project_id: 7, parts: [
+  const pending = { job_id: 5, project_id: 7, test_print_waiver_id: null, parts: [
     { project_item_id: 50, file_name: 'Bracket.stl', quantity: 4 }, { project_item_id: 51, file_name: 'Lid.stl', quantity: 2 }] };
 
   it('"Whole plate failed" fails every row and "Nothing failed" resets them; only failures are sent', async () => {

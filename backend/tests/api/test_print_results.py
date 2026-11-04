@@ -151,7 +151,8 @@ async def test_plate_results_offers_the_unreported_project_job_then_nothing(
     from tests.api.test_response_contracts import assert_carries
     r = (await client.get(f"/api/v1/printers/{a}/plate-results")).json()
     assert_carries("plate_results", r)
-    assert r == {"job_id": job_id, "project_id": pid, "parts": [{"project_item_id": item, "file_name": "part.stl", "quantity": 3}]}
+    assert r == {"job_id": job_id, "project_id": pid, "parts": [{"project_item_id": item, "file_name": "part.stl", "quantity": 3}],
+                 "test_print_waiver_id": None}
     await _clear(client, tmp_path, a, job_id, {})
     assert (await client.get(f"/api/v1/printers/{a}/plate-results")).json()["job_id"] is None      # reported
 

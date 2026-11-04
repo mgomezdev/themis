@@ -1,3 +1,4 @@
+import { WaivedPartsCard } from '../components/WaivedPartsCard';
 import { useState, useEffect, Fragment } from 'react';
 import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';
@@ -139,6 +140,7 @@ export function EditForm({
   const [processProfiles, setProcessProfiles] = useState<string[]>([]);
   const [defaultProcess, setDefaultProcess] = useState<string>(printer.default_process_profile ?? '');
   const [singleColourOnly, setSingleColourOnly] = useState<boolean>(printer.single_colour_only);
+  const [thresholds, setThresholds] = useState({ waiver_flag_at: printer.waiver_flag_at ?? 0, waiver_stop_at: printer.waiver_stop_at ?? 0 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -177,6 +179,7 @@ export function EditForm({
         build_plate_type: buildPlate || null,
         default_process_profile: defaultProcess || null,
         single_colour_only: singleColourOnly,
+        ...thresholds,
       });
       onSave();
     } catch (e) {
@@ -230,6 +233,9 @@ export function EditForm({
           <input type="checkbox" checked={singleColourOnly} onChange={e => setSingleColourOnly(e.target.checked)} />
           <span>Single colour only <span className="tiny muted">— takes any loaded colour, never multicolour jobs</span></span>
         </label>
+
+        <WaivedPartsCard printerId={printer.id} flagAt={thresholds.waiver_flag_at} stopAt={thresholds.waiver_stop_at}
+                         onThresholds={setThresholds} />
 
         <div>
           <label className="label">Build plate</label>

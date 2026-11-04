@@ -35,7 +35,7 @@ from .providers.slicing import effective_provider_id, get_format_provider, slici
 from .slice_resolution import PrinterView, resolve_slicing
 from .providers.contract import CancelToken
 from .slicer_service import DEFAULT_BED_MM, SliceCancelled, SliceError, SliceRequest, SlicerService, slice_side_mapping
-from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
+from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles, part_waivers
 from . import completion_events, job_details
 from .notify import notify
 from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
@@ -712,6 +712,9 @@ class QueueEngine:
                     continue
             fit = filament_matching.evaluate_for_printer(config, printer, conflicts.get(printer.id, set()))
             missing = missing_process_reason(source_file, config, printer) if source_file is not None else None
+            if fit.eligible and not missing and await part_waivers.keys_of_job(session, job) & await part_waivers.waived_keys(session, printer.id):
+                reasons.append(f"{printer.name} is waived for a part on this plate")
+                continue
             if fit.eligible and not missing:
                 return None
             reasons.extend(fit.reasons + ([missing] if missing else []))
@@ -854,8 +857,21 @@ class QueueEngine:
         )
         loaded = list(printer.loaded_filaments or [])
         conflicts = await filament_matching.conflicts_for(loaded)
+        # BIZ-365: a waived printer skips jobs carrying a part it keeps failing; at its stop threshold, or while a test print
+        # is pending, it claims nothing but that test print.
+        waived = await part_waivers.waived_keys(session, printer_id)
+        if printer.test_print_job_id is not None:
+            await part_waivers.end_stale_test_print(session, printer)
+            await session.commit()
+        only_job = printer.test_print_job_id
+        if only_job is None and part_waivers.stopped(printer, len(waived)):
+            return
         job = config = fit = None
         for cand_job, cand_config in (await session.execute(stmt)).all():
+            if only_job is not None and cand_job.id != only_job:
+                continue
+            if waived and cand_job.id != only_job and await part_waivers.keys_of_job(session, cand_job) & waived:
+                continue
             # If this job can't run on this printer, block it and STOP — do not look
             # further down the queue for this printer (head-of-line blocking).
             if cand_config.slice_failed:
