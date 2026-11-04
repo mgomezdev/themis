@@ -860,6 +860,9 @@ class QueueEngine:
         # BIZ-365: a waived printer skips jobs carrying a part it keeps failing; at its stop threshold, or while a test print
         # is pending, it claims nothing but that test print.
         waived = await part_waivers.waived_keys(session, printer_id)
+        if printer.test_print_job_id is not None:
+            await part_waivers.end_stale_test_print(session, printer)
+            await session.commit()
         only_job = printer.test_print_job_id
         if only_job is None and part_waivers.stopped(printer, len(waived)):
             return

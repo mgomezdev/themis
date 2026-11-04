@@ -869,13 +869,19 @@ async def test_print_waiver(printer_id: int, waiver_id: int, session: AsyncSessi
     source, item = await part_waivers.source_of(session, waiver)
     if source is None or item is None:
         raise HTTPException(409, "The part's project is gone: there is nothing left to test-print it from")
+    from ...models import Project
+    proj = await session.get(Project, source.project_id)
+    if proj is None or proj.stage != "queued":
+        raise HTTPException(409, "The part's project is not in the queue: queue it to test-print this part")
+    used = (await session.execute(_select(JobPrinterConfig.print_profile).where(
+        JobPrinterConfig.job_id == source.id, JobPrinterConfig.printer_id == printer_id))).scalar()
+    if not printer.default_process_profile and not used:
+        raise HTTPException(422, f"{printer.name} has no default process profile to test-print with: set one first")
     (job_id, *_) = await print_results.requeue_parts(session, source, {item.id: 1}) or [None]
     if job_id is None:
         raise HTTPException(422, "The part could not be prepared for a test print")
     # This printer only, with its own default process profile (else the profile it used for the failed job); the ask is the part's.
-    used = (await session.execute(_select(JobPrinterConfig.print_profile).where(
-        JobPrinterConfig.job_id == source.id, JobPrinterConfig.printer_id == printer_id))).scalar()
-    profile = "" if printer.default_process_profile else (used or "")
+    profile = "" if printer.default_process_profile else used
     await session.execute(_delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
     await session.execute(_delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
     from ._filament_ask import tuple_columns, row_tuple
@@ -885,6 +891,22 @@ async def test_print_waiver(printer_id: int, waiver_id: int, session: AsyncSessi
     await session.commit()
     queue_engine.wake()
     return {"job_id": job_id}
+
+
+@router.delete("/{printer_id}/test-print", status_code=204, summary="Cancel a printer's pending test print (BIZ-365)",
+               responses={404: {"description": "Printer not found"}},
+               dependencies=[Depends(require_scope("printers:control"))])
+async def cancel_test_print(printer_id: int, session: AsyncSession = Depends(get_session)) -> Response:
+    """The printer goes back to queue work; a test job that has not started is cancelled."""
+    printer = await _get_or_404(printer_id, session)
+    if printer.test_print_job_id is not None:
+        job = await session.get(Job, printer.test_print_job_id)
+        if job is not None and job.status in ("queued", "blocked"):
+            job.status = "cancelled"
+        printer.test_print_job_id = printer.test_print_waiver_id = None
+        await session.commit()
+        queue_engine.wake()
+    return Response(status_code=204)
 
 
 @router.get(
@@ -957,6 +979,11 @@ async def plate_cleared(
         else:
             recorded = await print_results.record_and_restore(
                 session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
+    if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
+        test_job = await session.get(Job, printer.test_print_job_id)
+        if test_job is not None and test_job.status in ("complete", "failed"):
+            test_job.outcome = test_job.outcome or "reviewed"
+            printer.test_print_job_id = printer.test_print_waiver_id = None
     if job is not None and printer.test_print_job_id == job.id:       # BIZ-365: the test print is done
         if body is not None and body.clear_waiver and printer.test_print_waiver_id is not None:
             from ...services import part_waivers

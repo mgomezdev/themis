@@ -527,6 +527,8 @@ class PartWaiver(Base):
     failures: Mapped[int] = mapped_column(Integer, default=0)
     last_failure_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
+    # Set when a person cleared it: the waiver is inactive, and only failures after this count toward waiving again.
+    cleared_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
 class ProjectGroup(Base):

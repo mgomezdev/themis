@@ -29,6 +29,7 @@ async def up(conn) -> None:
             failures INTEGER NOT NULL DEFAULT 0,
             last_failure_at VARCHAR(32),
             created_at VARCHAR(32) NOT NULL,
+            cleared_at VARCHAR(32),
             UNIQUE (printer_id, part_key)
         )"""))
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_part_waivers_printer_id ON part_waivers (printer_id)"))

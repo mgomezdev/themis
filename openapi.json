@@ -1909,6 +1909,45 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/test-print": {
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Cancel a printer's pending test print (BIZ-365)",
+        "description": "The printer goes back to queue work; a test job that has not started is cancelled.",
+        "operationId": "cancel_test_print_api_v1_printers__printer_id__test_print_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-results": {
       "get": {
         "tags": [

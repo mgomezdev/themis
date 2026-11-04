@@ -173,3 +173,76 @@ async def test_waive_after_is_a_setting(client):
     assert (await client.get("/api/v1/settings/queue")).json()["waive_after"] == 2
     await client.put("/api/v1/settings/queue", json={"waive_after": 3})
     assert (await client.get("/api/v1/settings/queue")).json()["waive_after"] == 3
+
+
+async def test_after_a_clear_failures_count_afresh(client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, wid = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)
+    assert (await client.delete(f"/api/v1/printers/{a}/waivers/{wid}")).status_code == 204
+    _, item, job = await _project_job(client, upload_3mf, [a, b], tmp_path, name="P3")
+    await _fail_on(client, session_factory, tmp_path, job, a, item)               # one failure since the clear
+    assert (await client.get(f"/api/v1/printers/{a}/waivers")).json() == []
+    _, item, job = await _project_job(client, upload_3mf, [a, b], tmp_path, name="P4")
+    await _fail_on(client, session_factory, tmp_path, job, a, item)               # the second: waived again
+    (w,) = (await client.get(f"/api/v1/printers/{a}/waivers")).json()
+    assert w["failures"] == 2
+
+
+async def test_waive_after_changes_the_threshold(client, upload_3mf, create_printer, session_factory, tmp_path):
+    await client.put("/api/v1/settings/queue", json={"waive_after": 1, "part_retry_limit": 5})
+    a = await create_printer(name="A")
+    _, item, job = await _project_job(client, upload_3mf, [a], tmp_path)
+    await _fail_on(client, session_factory, tmp_path, job, a, item)
+    assert len((await client.get(f"/api/v1/printers/{a}/waivers")).json()) == 1
+
+
+async def test_a_job_every_eligible_printer_is_waived_for_is_blocked_until_cleared(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, wid = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)
+    _, _, job = await _project_job(client, upload_3mf, [a], tmp_path, name="Only A")
+    mgr = _make_mock_printer_manager([a])
+    mgr.liveness.return_value = "online"
+    qe = QueueEngine(session_factory, mgr, MagicMock())
+    await qe._sweep_unmatched_jobs()
+    async with session_factory() as s:
+        j = await s.get(Job, job)
+        assert j.status == "blocked" and "waived" in j.block_reason
+    await client.delete(f"/api/v1/printers/{a}/waivers/{wid}")
+    await qe._sweep_unmatched_jobs()
+    async with session_factory() as s:
+        assert (await s.get(Job, job)).status == "queued"
+
+
+async def test_a_pending_test_print_is_all_the_printer_claims_until_it_is_cancelled(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, wid = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)
+    other_pid = (await client.post("/api/v1/projects", json={"name": "Other"})).json()["id"]
+    other_file = await upload_3mf(filename="other.stl", data=b"solid other\nendsolid\n")
+    await client.post(f"/api/v1/projects/{other_pid}/items", json={"file_id": other_file, "quantity": 1})
+    x, y = _patches(tmp_path)
+    with x, y:
+        other_job = (await client.post(f"/api/v1/projects/{other_pid}/generate",
+                                       json={"eligible_printer_ids": [a], "process_preset": "0.2"})).json()["jobs"][0]["id"]
+        test_job = (await client.post(f"/api/v1/printers/{a}/waivers/{wid}/test-print")).json()["job_id"]
+        assert (await client.post(f"/api/v1/printers/{a}/waivers/{wid}/test-print")).status_code == 409   # one at a time
+    async with session_factory() as s:          # the test job can't run right now: the printer must still not take other work
+        (await s.get(Job, test_job)).not_before = "2999-01-01T00:00:00+00:00"
+        await s.commit()
+    await _claim(session_factory, a)
+    async with session_factory() as s:
+        assert (await s.get(Job, other_job)).assigned_printer_id is None
+    assert (await client.delete(f"/api/v1/printers/{a}/test-print")).status_code == 204
+    async with session_factory() as s:
+        assert ((await s.get(Job, test_job)).status, (await s.get(Printer, a)).test_print_job_id) == ("cancelled", None)
+
+
+async def test_a_cancelled_test_print_does_not_strand_the_printer(client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, wid = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)
+    x, y = _patches(tmp_path)
+    with x, y:
+        test_job = (await client.post(f"/api/v1/printers/{a}/waivers/{wid}/test-print")).json()["job_id"]
+    async with session_factory() as s:
+        (await s.get(Job, test_job)).status = "cancelled"
+        await s.commit()
+    await _claim(session_factory, a)
+    async with session_factory() as s:
+        assert (await s.get(Printer, a)).test_print_job_id is None
