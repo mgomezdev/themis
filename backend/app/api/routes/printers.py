@@ -5,7 +5,7 @@ import os
 import socket
 import time as _time
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
@@ -100,6 +100,17 @@ class PrinterUpdate(BaseModel):
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("quiet_start and quiet_end must be set together (or both null)")
         return self
+
+
+class PartResult(BaseModel):
+    project_item_id: int
+    quantity_failed: int = Field(ge=0)
+
+
+class PlateResults(BaseModel):
+    """What printed on the plate being cleared (BIZ-364). Parts not listed all succeeded."""
+    job_id: Optional[int] = None
+    results: list[PartResult] = []
 
 
 class LightBody(BaseModel):
@@ -806,15 +817,27 @@ async def delete_printer(
 )
 async def plate_cleared(
     printer_id: int,
+    body: Optional[PlateResults] = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Mark the printer's bed as cleared so the queue engine can assign the next job."""
+    """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
+    what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
+    they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
     printer = await _get_or_404(printer_id, session)
+    outcome: dict = {}
+    if body is not None and body.job_id is not None:
+        from ...models import Job
+        from ...services import print_results
+        job = await session.get(Job, body.job_id)
+        if job is None or job.assigned_printer_id != printer_id:
+            raise HTTPException(422, f"Job {body.job_id} did not print on {printer.name}")
+        outcome = await print_results.record_and_restore(
+            session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
     printer.awaiting_plate_clear = False
     await session.commit()
     printer_manager.set_awaiting_plate_clear(printer_id, False)
     queue_engine.wake()
-    return {"ok": True}
+    return {"ok": True, **outcome}         # + requeued_job_ids / held when results were reported
 
 
 @router.post(

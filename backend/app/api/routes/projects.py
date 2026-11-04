@@ -12,7 +12,7 @@ import tempfile
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
@@ -25,7 +25,7 @@ from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, job_costs, model_targets, project_events, project_groups, slice_cache
+from ...services import idempotency, job_costs, model_targets, print_results, project_events, project_groups, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
@@ -1337,6 +1337,29 @@ async def generate_project(
     if idempotency_key:
         await _remember(factory, scope, idempotency_key, 200, result)
     return result
+
+
+class HeldAction(BaseModel):
+    action: Literal["reprint", "drop"]
+
+
+@router.get("/{project_id}/failures", summary="The project's failure log (BIZ-364)",
+            description="Every reported failure, oldest first: part, job, printer, when, and what happened to the failed parts "
+                        "(`requeued`, `held`, `reprinted`, `dropped`).",
+            dependencies=[Depends(require_scope("projects:read"))])
+async def project_failures(project_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    await _get_project_or_404(project_id, session)
+    return await print_results.failure_log(session, project_id)
+
+
+@router.post("/{project_id}/items/{item_id}/held", summary="Reprint or drop an item's held parts (BIZ-364)",
+             responses={409: {"description": "Nothing of this item is held"}},
+             dependencies=[Depends(require_scope("projects:write"))])
+async def resolve_held_parts(project_id: int, item_id: int, body: HeldAction, session: AsyncSession = Depends(get_session)) -> dict:
+    await _get_project_or_404(project_id, session)
+    out = await print_results.resolve_held(session, project_id, item_id, body.action)
+    await session.commit()
+    return out
 
 
 async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_items: list, targets: list[tuple[str, str]],
