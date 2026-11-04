@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { useTopbarOverride, type Crumb } from '../components/topbarOverride';
+import { PrintGroupsCard } from '../components/PrintGroupsCard';
 import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, toggleKey, useEnabledPrinters } from '../components/PrinterTargetPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
@@ -374,6 +375,9 @@ export function ProjectDetailScreen() {
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
               Eligible printers
             </div>
+            <div className="tiny muted" style={{ marginBottom: 8 }}>
+              For the Default Group when it has no printers of its own; groups with printers set below use those.
+            </div>
             <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
             <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
             <div style={{ marginTop: 12 }}>
@@ -586,6 +590,9 @@ export function ProjectDetailScreen() {
           </div>
         )}
       </div>
+
+      {/* ── Print groups (BIZ-360) ─────────────────────────────────────── */}
+      <PrintGroupsCard projectId={project.id} items={project.items} onChanged={reload} />
 
       {/* ── Payments ───────────────────────────────────────────────────── */}
       <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />
