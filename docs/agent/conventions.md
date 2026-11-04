@@ -56,6 +56,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   (a meta-test fails on a row naming a missing test); data lifecycle rules are `docs/plugin-lifecycle.md`.
 - **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
   `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
+- **Printer part waivers (BIZ-365)**: a printer that failed a part `queue_config.waive_after` times is waived for it (`part_waivers`, keyed by the part — file content hash + kind + plate/object — so in every project). The claim loop skips (never blocks) a job carrying a waived part; at `waiver_stop_at` waived parts the printer claims nothing, and while `test_print_job_id` is set it claims only that test print. The unmatched sweep blocks a job every eligible printer is waived for. Only a person clears a waiver (Clear / Clear all / a good test print); maintenance never does.
 - **Cancel ↔ stop are bidirectional**: cancelling an active job stops the printer; stopping a printer
   reconciles its running job → `cancelled`. Keep both directions wired when touching either.
 - **Head-of-line queue**: a job that can't run blocks; the engine does **not** skip to a runnable job

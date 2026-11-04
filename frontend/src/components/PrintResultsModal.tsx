@@ -15,6 +15,8 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
   const [failed, setFailed] = useState<Record<number, number>>(
     Object.fromEntries(pending.parts.map(p => [p.project_item_id, 0])));
   const [saving, setSaving] = useState(false);
+  const isTest = pending.test_print_waiver_id != null;        // BIZ-365: a test print of a waived part
+  const [clearIt, setClearIt] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fillAll = (all: boolean) => setFailed(Object.fromEntries(pending.parts.map(p => [p.project_item_id, all ? p.quantity : 0])));
@@ -26,6 +28,7 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
     try {
       await markPlateCleared(printerId, {
         job_id: pending.job_id,
+        ...(isTest ? { clear_waiver: clearIt && pending.parts.every(p => (failed[p.project_item_id] ?? 0) === 0) } : {}),
         results: pending.parts.filter(p => failed[p.project_item_id] > 0)
           .map(p => ({ project_item_id: p.project_item_id, quantity_failed: failed[p.project_item_id] })),
       });
@@ -56,6 +59,12 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
                      onChange={n => setFailed({ ...failed, [p.project_item_id]: Math.min(p.quantity, Math.max(0, Math.trunc(n) || 0)) })} />
           ))}
         </div>
+        {isTest && (
+          <label className="row gap-2 small" style={{ alignItems: 'center', marginTop: 12 }}>
+            <input type="checkbox" checked={clearIt} onChange={e => setClearIt(e.target.checked)} />
+            This was a test print: clear the waiver if nothing failed
+          </label>
+        )}
         {error && <div style={{ color: 'var(--err)', fontSize: 13, marginTop: 10 }}>{error}</div>}
         <div className="row gap-2" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
           <button className="btn ghost sm" onClick={onClose}>Cancel</button>

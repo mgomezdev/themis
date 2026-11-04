@@ -33,6 +33,9 @@ export interface FleetPrinter {
   fan_box: number;
   alarm_count?: number;                 // active, unacknowledged
   alarm_severity?: 'info' | 'warning' | 'error' | 'fatal' | null;
+  waived_parts?: number;                // BIZ-365: parts it no longer gets
+  waiver_flag?: boolean;                // reached its flag threshold: wash the plate / do maintenance
+  waiver_stopped?: boolean;             // reached its stop threshold: takes no queue work
 }
 
 const ACCENT: Record<string, string> = {
@@ -107,6 +110,9 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
     alarmCount: p.alarm_count ?? 0,
     alarmSeverity: p.alarm_severity ?? null,
+    waivedParts: p.waived_parts ?? 0,
+    waiverFlag: p.waiver_flag ?? false,
+    waiverStopped: p.waiver_stopped ?? false,
   };
 }
 

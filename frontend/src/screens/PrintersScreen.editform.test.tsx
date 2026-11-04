@@ -20,7 +20,7 @@ const PRINTER: ApiPrinter = {
   machine_rate_per_hour: null,
   preferred_slicer_plugin_id: null,
   default_process_profile: null,
-  single_colour_only: false,
+  single_colour_only: false, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null,
   quiet_start: null,
   quiet_end: null,
 };

@@ -287,6 +287,8 @@ export interface QueueConfig {
   printer_dead_after_minutes: number;
   /** A part is held for a person after failing on this many different printers (BIZ-364). */
   part_retry_limit: number;
+  /** A printer is waived for a part after failing it this many times (BIZ-365). */
+  waive_after: number;
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

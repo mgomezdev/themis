@@ -653,6 +653,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
             {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -918,6 +919,19 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
 /** Unacknowledged-alarm badge; links to that printer's alarms. */
+/** BIZ-365: a printer that collected enough waived parts to flag (wash the plate / do maintenance) or stop. */
+function WaiverBadge({ printer: p }: { printer: Printer }) {
+  if (!p.waiverFlag && !p.waiverStopped) return null;
+  const n = p.waivedParts ?? 0;
+  return (
+    <span data-testid="waiver-badge" onClick={e => e.stopPropagation()}
+          title={`${n} waived part${n === 1 ? '' : 's'}: ${p.waiverStopped ? 'not taking queue work' : 'consider a plate wash or maintenance'}`}
+          className={`pill ${p.waiverStopped ? 'err' : 'warn'}`} style={{ fontSize: 11 }}>
+      {p.waiverStopped ? 'Stopped' : 'Check'}: {n} waived
+    </span>
+  );
+}
+
 function AlarmBadge({ printer: p }: { printer: Printer }) {
   const inRouter = useInRouterContext();
   if (!p.alarmCount || !p.alarmSeverity) return null;
@@ -947,6 +961,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
           {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
           {!p.queueOn && <QueueOffBadge />}
           <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>

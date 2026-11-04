@@ -569,6 +569,24 @@ describe('FleetScreen — ready-for-work gate and reconnect', () => {
     expect(screen.queryByRole('button', { name: /ready for new work/i })).toBeNull();
   });
 
+  it('flags a printer that collected waived parts, and says when it stopped taking work (BIZ-365)', async () => {
+    let p: FleetPrinter = { ...PRINTER_1, waived_parts: 2, waiver_flag: true, waiver_stopped: false } as FleetPrinter;
+    stubFleetApi(() => p);
+    const { unmount } = render(<FleetScreen />);
+    expect((await screen.findAllByTestId('waiver-badge'))[0].textContent).toBe('Check: 2 waived');
+    unmount();
+    p = { ...p, waiver_stopped: true } as FleetPrinter;
+    render(<FleetScreen />);
+    expect((await screen.findAllByTestId('waiver-badge'))[0].textContent).toBe('Stopped: 2 waived');
+  });
+
+  it('shows no waiver badge below the thresholds', async () => {
+    stubFleetApi(() => ({ ...PRINTER_1, waived_parts: 2, waiver_flag: false, waiver_stopped: false }) as FleetPrinter);
+    render(<FleetScreen />);
+    await screen.findAllByText('Forge');
+    expect(screen.queryByTestId('waiver-badge')).toBeNull();
+  });
+
   it('keeps offering "Ready for new work" after the card is expanded', async () => {
     stubFleetApi(() => AWAITING);
     render(<FleetScreen />);
