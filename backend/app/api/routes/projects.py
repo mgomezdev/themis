@@ -24,8 +24,8 @@ from ._filament_ask import AskFields, ask_columns, ask_out, normalize as _normal
 from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
+from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
+from ...services import idempotency, job_costs, model_targets, project_events, project_groups, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
@@ -145,6 +145,7 @@ class ProjectItemUpdate(BaseModel):
     filament_subtype: Optional[str] = None
     filament_color: Optional[str] = None
     sort_order: Optional[int] = None
+    group_id: Optional[int] = None          # move the item to another print group of the same project (BIZ-360)
 
     @field_validator("quantity")
     @classmethod
@@ -232,6 +233,7 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "quantity_failed": item.quantity_failed,
         **ask_out(item),
         "sort_order": item.sort_order,
+        "group_id": item.group_id,
     }
 
 
@@ -820,6 +822,7 @@ async def add_item(
         quantity=body.quantity,
         **ask_columns(body),
         sort_order=body.sort_order,
+        group_id=(await project_groups.ensure_default_group(session, project_id)).id,   # new items land in the Default Group
     )
     session.add(item)
     proj.updated_at = _now_iso()
@@ -899,6 +902,11 @@ async def update_item(
         item.ask_manufacturer, item.ask_type, item.ask_subtype, item.ask_color = ask.manufacturer, ask.type, ask.subtype, ask.color
     if body.sort_order is not None:
         item.sort_order = body.sort_order
+    if body.group_id is not None:
+        group = await session.get(ProjectGroup, body.group_id)
+        if group is None or group.project_id != project_id:
+            raise HTTPException(422, f"Group {body.group_id} is not a print group of project {project_id}")
+        item.group_id = group.id
     await session.commit()
     await session.refresh(item)
     f = await session.get(UploadedFile, item.file_id)
