@@ -58,12 +58,14 @@ async def test_kinds_are_inferred_and_validated(client, upload_3mf):
 
 
 async def test_a_project_with_all_four_kinds_generates_packs_and_fixed_jobs(
-        client, upload_3mf, create_printer, session_factory, tmp_path):
-    p = await create_printer(name="P")
+        client, upload_3mf, create_printer, model_uuid_of, session_factory, tmp_path):
+    p = await create_printer(name="P", printer_type="elegoo_centauri")          # prints raw gcode
     pid = await _project(client)
     stl = await upload_3mf(filename="a.stl", data=b"solid a\nendsolid\n")
     proj = await upload_3mf(filename="kit.3mf", data=_two_plate_3mf())
     gcode = await upload_3mf(filename="part.gcode", data=b"; estimated printing time (normal mode) = 1m 0s\nG28\n")
+    r = await client.put(f"/api/v1/files/{gcode}/eligibility", json={"model_uuids": [await model_uuid_of(p)]})
+    assert r.status_code == 200, r.text
     await _add(client, pid, stl, quantity=2)
     await _add(client, pid, proj, kind="3mf_object", source_ref="8", quantity=2)
     await _add(client, pid, proj, kind="3mf_plate", source_ref="1", pack_rule="together")
@@ -86,7 +88,14 @@ async def test_a_project_with_all_four_kinds_generates_packs_and_fixed_jobs(
              if j.uploaded_file_id in (proj, gcode)]
     assert fixed == [("kit.3mf", 2, {str(locked["id"]): 1}), ("kit.3mf", 2, {str(locked["id"]): 1}),
                      ("part.gcode", 1, {str(gc["id"]): 1})]
-    assert any(files[j.uploaded_file_id].startswith("project-") for j in jobs)            # the mixed pack
+    packed = [j for j in jobs if j.uploaded_file_id not in (proj, gcode)]
+    assert packed and all(files[j.uploaded_file_id].startswith("project-") for j in packed)          # the mixed pack
+    # The source files of fixed jobs are printed in place: never moved, renamed or offered as packs.
+    async with session_factory() as s:
+        for fid, folder in ((proj, "/Job Uploads"), (gcode, "/Job Uploads")):
+            f = await s.get(UploadedFile, fid)
+            assert (f.folder, f.pack_recipe_hash) == (folder, None)
+    assert {f["id"] for f in r.json()["files"]}.isdisjoint({proj, gcode})
 
 
 async def test_a_3mf_item_whose_file_changed_must_be_re_picked(client, upload_3mf, create_printer, session_factory, tmp_path):
@@ -107,7 +116,8 @@ def test_a_bundle_is_counted_in_copies_not_objects():
     wanted = [("kit.3mf", 2, "item-1", {"plate": 1, "rule": "together"})]
     m = PlateManifest(plates={1: {0: 3}, 2: {0: 3}}, requested={0: 6})              # 3 objects per copy
     assert _plate_item_quantities(m, wanted, items, [1, 2]) == [{"1": 1}, {"1": 1}]
-    assert _plate_item_quantities(PlateManifest(plates={1: {0: 5}, 2: {0: 1}}, requested={0: 6}), wanted, items, [1, 2]) is not None
+    split = _plate_item_quantities(PlateManifest(plates={1: {0: 5}, 2: {0: 1}}, requested={0: 6}), wanted, items, [1, 2])
+    assert split == [{"1": 1}, {"1": 1}]                     # copies credited cumulatively: they still sum to the quantity
 
 
 async def test_a_failed_locked_plate_requeues_as_a_new_fixed_job(client, upload_3mf, create_printer, session_factory, tmp_path):
@@ -131,3 +141,50 @@ async def test_a_failed_locked_plate_requeues_as_a_new_fixed_job(client, upload_
     async with session_factory() as s:
         new = await s.get(Job, new_id)
     assert (new.uploaded_file_id, new.plate_number, json.loads(new.project_item_quantities)) == (proj, 2, {str(locked["id"]): 1})
+
+
+async def test_picking_a_3mf_item_stores_its_content_hash(client, upload_3mf, session_factory):
+    pid = await _project(client)
+    proj = await upload_3mf(filename="kit.3mf", data=_two_plate_3mf())
+    item = (await _add(client, pid, proj, kind="3mf_object", source_ref="8")).json()
+    async with session_factory() as s:
+        f = await s.get(UploadedFile, proj)
+        assert (await s.get(ProjectItem, item["id"])).source_hash == f.content_hash and f.content_hash
+
+
+async def test_bad_plate_refs_are_refused(client, upload_3mf):
+    pid = await _project(client)
+    proj = await upload_3mf(filename="kit.3mf", data=_two_plate_3mf())
+    for ref in ("0", "\u00b2", "x"):
+        assert (await _add(client, pid, proj, kind="3mf_plate", source_ref=ref)).status_code == 422
+
+
+async def test_a_gcode_item_goes_only_to_printers_that_take_it_as_sliced(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    from app.models import JobPrinterConfig
+    pid = await _project(client)
+    bambu = await create_printer(name="Bambu")                       # only ingests sliced archives, never raw gcode
+    gcode = await upload_3mf(filename="part.gcode", data=b"; estimated printing time (normal mode) = 1m 0s\nG28\n")
+    await _add(client, pid, gcode)
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        r = await client.post(f"/api/v1/projects/{pid}/generate", json={"eligible_printer_ids": [bambu]})
+    assert r.status_code in (409, 422), r.text
+    assert "as sliced" in r.json()["detail"]
+    async with session_factory() as s:
+        assert (await s.execute(select(JobPrinterConfig))).scalars().all() == []
+
+
+async def test_the_objects_route(client, upload_3mf, tmp_path):
+    proj = await upload_3mf(filename="kit.3mf", data=_two_plate_3mf())
+    gcode = await upload_3mf(filename="part.gcode", data=b"; estimated printing time (normal mode) = 1m 0s\nG28\n")
+    packer = FakeProjectConstructor()
+    from app.services.providers.contract import ModelObject
+    packer.list_objects = lambda path: [ModelObject("8", "Gear", 2)]
+    with patch("app.services.providers.construction.get_project_constructor", return_value=packer), \
+         patch("app.config.get_library_dir", return_value=tmp_path / "library"):
+        assert (await client.get(f"/api/v1/files/{proj}/objects")).json() == [{"id": "8", "name": "Gear", "instances": 2}]
+        assert (await client.get(f"/api/v1/files/{gcode}/objects")).status_code == 422
+        assert (await client.get("/api/v1/files/9999/objects")).status_code == 404
+    with patch("app.services.providers.construction.get_project_constructor", return_value=None):
+        assert (await client.get(f"/api/v1/files/{proj}/objects")).status_code == 503

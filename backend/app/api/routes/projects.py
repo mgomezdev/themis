@@ -833,6 +833,8 @@ async def add_item(
     if f is None:
         raise HTTPException(404, f"File {body.file_id} not found")
     kind, ref, rule = _item_kind(f, body.kind, body.source_ref, body.pack_rule)
+    if kind in ("3mf_object", "3mf_plate"):
+        await refresh_content_hash(f, get_library_store())       # what "the file changed since it was picked" compares to
     item = ProjectItem(
         project_id=project_id,
         file_id=body.file_id,
@@ -1221,11 +1223,14 @@ def _plate_item_quantities(manifest, wanted: list[tuple[str, int, str]], group_i
         by_file.setdefault(str(item.file_id), []).append(item)
     left = {item.id: item.quantity for item in group_items}
     by_ref = {f"item-{item.id}": [item] for item in group_items}
-    out: list[dict[str, int]] = []
+    seen = [0] * len(wanted)          # instances of each input on the plates so far: copies are credited cumulatively, so a
+    out: list[dict[str, int]] = []    # split bundle spread over plates still sums to its quantity
     for plate in plate_nums:
         q = {str(item.id): 0 for item in group_items}
         for idx, n in sorted(manifest.plates[plate].items()):
-            n //= per_copy[idx]
+            before = seen[idx]
+            seen[idx] += n
+            n = seen[idx] // per_copy[idx] - before // per_copy[idx]
             ref = wanted[idx][2]
             for item in by_ref.get(ref) or by_file.get(ref, []):
                 take = min(n, left[item.id])
@@ -1380,9 +1385,9 @@ def _item_kind(f: UploadedFile, kind: str | None, ref: str | None, rule: str | N
     if kind == "3mf_object" and not ref:
         raise HTTPException(422, "A 3MF object item needs source_ref: the object id")
     if kind in ("3mf_plate", "gcode"):
-        ref = ref or "1"
+        ref = "1" if name.endswith(".gcode") else (ref or "1")          # a raw .gcode is one plate
         plates = {p.get("plate_number") for p in (f.plates or []) if p.get("plate_number") is not None}
-        if not ref.isdigit() or (plates and int(ref) not in plates):
+        if not (ref.isascii() and ref.isdigit() and int(ref) >= 1) or (plates and int(ref) not in plates):
             raise HTTPException(422, f"{f.original_filename} has no plate {ref}" + (f" (plates {sorted(plates)})" if plates else ""))
     if kind == "stl":
         ref = None
@@ -1414,6 +1419,32 @@ async def resolve_held_parts(project_id: int, item_id: int, body: HeldAction, se
     out = await print_results.resolve_held(session, project_id, item_id, body.action)
     await session.commit()
     return out
+
+
+async def _gcode_targets(session: AsyncSession, f: UploadedFile, resolved):
+    """A gcode item's eligibility within its group: only printers that take the file as is (format + machine eligibility,
+    BIZ-188/263), as job creation enforces; model targets are re-checked per printer when they materialize. 422 (409 when only
+    unknown eligibility stands in the way) when no printer of the group could print it."""
+    from ...services import gcode_eligibility
+    keep, unknown = [], False
+    for p, profile in resolved.printers:
+        if not model_targets.accepts_file(p.printer_type, f.original_filename):
+            continue
+        outcome = await gcode_eligibility.evaluate(session, f, p)
+        if outcome.allowed:
+            keep.append((p, profile))
+        else:
+            unknown = unknown or outcome.code == "unknown_eligibility"
+    models = []
+    for uuid, profile in resolved.models:
+        printers = await model_targets.printers_of_target(session, uuid)
+        if not printers or any(model_targets.accepts_file(p.printer_type, f.original_filename) for p in printers):
+            models.append((uuid, profile))
+    if (resolved.printers or resolved.models) and not keep and not models:
+        raise HTTPException(409 if unknown else 422,
+                            f"No printer of this group can print {f.original_filename} as sliced"
+                            + (": set the printer models it is for (its eligibility is unknown)" if unknown else ""))
+    return project_groups.ResolvedTargets(keep, models, resolved.covered)
 
 
 async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_items: list, targets: list[tuple[str, str]],
@@ -1453,8 +1484,9 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
             if kind in ("3mf_object", "3mf_plate") and getattr(item, "source_hash", None) and f.content_hash != item.source_hash:
                 raise HTTPException(422, f"{f.original_filename!r} changed since its {kind.split('_')[1]} was picked: pick it again")
             if kind == "gcode" or (kind == "3mf_plate" and rule == "locked"):
+                own = await _gcode_targets(session, f, resolved) if kind == "gcode" else resolved
                 packs.append({"group_id": pgroup.id, "ask": ask, "items": [item], "wanted": [], "recipe": [], "target": target,
-                              "resolved": resolved, "pack_mode": {},
+                              "resolved": own, "pack_mode": {},
                               "fixed": {"file": f, "plate": int(item.source_ref or 1), "copies": item.quantity}})
                 continue
             if kind == "stl" and not f.original_filename.lower().endswith(".stl"):

@@ -40,6 +40,7 @@ export function ItemSourcePicker({ fileId, fileKind, plateCount, kind, sourceRef
 
   useEffect(() => {
     if (!wantObjects) return;
+    setObjectsError(null);
     let alive = true;
     getModelObjects(fileId).then(o => { if (alive) setObjects(o); })
       .catch(e => { if (alive) setObjectsError(e instanceof Error ? e.message : String(e)); });

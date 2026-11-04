@@ -801,9 +801,11 @@ async def get_model_objects(file_id: int, session: AsyncSession = Depends(get_se
     if constructor is None:
         raise HTTPException(503, "No project builder is configured (Settings -> Plugins)")
     try:
-        objects = await asyncio.to_thread(with_local_path, get_library_store(), record.relative_path, constructor.list_objects, [])
+        objects = await asyncio.to_thread(with_local_path, get_library_store(), record.relative_path, constructor.list_objects, None)
     except ProviderError as e:
         raise HTTPException(503 if e.code in (ErrorCode.UNREACHABLE, ErrorCode.NOT_READY) else 422, str(e)) from e
+    if objects is None:
+        raise HTTPException(404, f"{record.original_filename} is missing from disk")
     return [{"id": o.id, "name": o.name, "instances": o.instances} for o in objects]
 
 

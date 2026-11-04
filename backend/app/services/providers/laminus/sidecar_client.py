@@ -343,6 +343,8 @@ class LaminusSidecarClient:
                 r = self._client.post("/api/v1/projects/inspect", files=[("file", (path.name, fh, "application/octet-stream"))])
             except httpx.HTTPError as e:
                 raise SidecarUnreachable(f"inspect request failed: {e}") from e
+        if r.status_code == 503:
+            raise SidecarNotReady(f"inspect returned 503: {_detail(r)}")
         if r.status_code != 200:
             raise SidecarError(f"inspect returned {r.status_code}: {_detail(r)}")
         return list(r.json().get("objects", []))

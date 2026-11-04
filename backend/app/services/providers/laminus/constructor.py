@@ -93,5 +93,7 @@ class LaminusProjectConstructor(ProjectConstructor):
         try:
             raw = LaminusSidecarClient(self._url, timeout=self._request_timeout_s).inspect_objects(model_3mf)
         except SidecarError as e:
-            raise ProviderError(ErrorCode.UNREACHABLE if isinstance(e, SidecarUnreachable) else ErrorCode.FAILED, str(e)) from e
+            code = (ErrorCode.UNREACHABLE if isinstance(e, SidecarUnreachable) else
+                    ErrorCode.NOT_READY if isinstance(e, SidecarNotReady) else ErrorCode.FAILED)
+            raise ProviderError(code, str(e)) from e
         return [ModelObject(str(o["id"]), str(o.get("name") or f"object {o['id']}"), int(o.get("instances") or 1)) for o in raw]
