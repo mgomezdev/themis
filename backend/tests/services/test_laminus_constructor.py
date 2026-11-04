@@ -136,3 +136,42 @@ def test_the_plugin_instance_builds_the_constructor_and_none_while_unconfigured(
     built = conn.project_constructor()
     assert isinstance(built, LaminusProjectConstructor) and built.identity.version == PLUGIN_VERSION
     assert built._request_timeout_s == 77.0
+
+
+# ---- plate manifest (BIZ-359): which request input each instance on each plate came from ---------------------------------
+
+def _pack_with(tmp_path, manifest) -> "Path":
+    import io, json, zipfile
+    p = tmp_path / "pack.3mf"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Metadata/plate_1.png", b"x")
+        if manifest is not None:
+            zf.writestr("Metadata/laminus_manifest.json", manifest if isinstance(manifest, str) else json.dumps(manifest))
+    p.write_bytes(buf.getvalue())
+    return p
+
+
+def test_plate_manifest_counts_instances_per_plate_and_input(tmp_path):
+    m = {"version": 1, "items": [{"item": 0, "source": "a.stl", "requested": 3}, {"item": 1, "source": "b.stl", "requested": 1}],
+         "plates": [{"plate": 1, "instances": [{"item": 0, "part": "a.stl"}, {"item": 0, "part": "a.stl"}, {"item": 1, "part": "b.stl"}]},
+                    {"plate": 2, "instances": [{"item": 0, "part": "a.stl"}]}]}
+    got = constructor().plate_manifest(_pack_with(tmp_path, m))
+    assert got == c.PlateManifest(plates={1: {0: 2, 1: 1}, 2: {0: 1}})
+
+
+@pytest.mark.parametrize("manifest", [None, "not json", {"version": 2, "plates": []}, {"version": 1},
+                                      {"version": 1, "plates": [{"plate": "x"}]}, {"version": 1, "plates": [{"plate": 1, "instances": [{}]}]}])
+def test_plate_manifest_is_none_when_absent_unreadable_or_unknown(tmp_path, manifest):
+    assert constructor().plate_manifest(_pack_with(tmp_path, manifest)) is None
+
+
+def test_plate_manifest_is_none_for_a_non_zip(tmp_path):
+    p = tmp_path / "x.3mf"
+    p.write_bytes(b"nope")
+    assert constructor().plate_manifest(p) is None
+
+
+def test_the_contract_default_reports_no_manifest(tmp_path):
+    from tests.fake_providers import FakeProjectConstructor
+    assert FakeProjectConstructor().plate_manifest(_pack_with(tmp_path, None)) is None
