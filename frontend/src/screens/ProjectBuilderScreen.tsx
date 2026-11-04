@@ -1,22 +1,26 @@
-import { ItemSourcePicker, initialSource, type ItemKind, type PackRule } from '../components/ItemSourcePicker';
-import { useState, useEffect, useRef } from 'react';
+import { ItemSourcePicker, RULES, initialSource, type ItemKind, type PackRule } from '../components/ItemSourcePicker';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
-import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, toggleKey, useEnabledPrinters } from '../components/PrinterTargetPicker';
-import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { PrintGroupsCard } from '../components/PrintGroupsCard';
+import { GroupBanner, type BannerSelection } from '../components/builder/GroupBanner';
+import { ItemSections, type BulkAction } from '../components/builder/ItemSections';
+import { BuilderTabs, ReviewPanel, type BuilderTab } from '../components/builder/ReviewPanel';
 import { CustomerPicker } from '../components/CustomerPicker';
+import { promoteProject } from '../api/customers';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   getProject, createProject, patchProject,
-  addProjectItem, updateProjectItem,
+  addProjectItem, updateProjectItem, deleteProjectItem,
+  listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview,
   addProjectLink, updateProjectLink, deleteProjectLink,
   addProjectPart, updateProjectPart, deleteProjectPart,
   generateProject,
-  type ProjectItem,
+  type ProjectGroup, type ProjectItem, type ProjectReview,
 } from '../api/projects';
 
 // ---------------------------------------------------------------------------
@@ -103,6 +107,7 @@ interface LocalItem extends FilamentAsk {
   kind: ItemKind;                 // BIZ-356: STL, a 3MF plate or object, or gcode
   source_ref: string | null;
   pack_rule: PackRule;
+  group_id: number | null;        // BIZ-363: its print group (null = the Default Group)
 }
 
 const askOf = (it: FilamentAsk): FilamentAsk => ({
@@ -133,7 +138,7 @@ let _lid = 0;
 const newLocalId = () => String(++_lid);
 
 type RemovedSnapshot =
-  | { kind: 'item'; label: string; index: number; item: LocalItem }
+  | { kind: 'item'; label: string; removed: { index: number; item: LocalItem }[] }
   | { kind: 'link'; label: string; index: number; link: LocalLink }
   | { kind: 'part'; label: string; index: number; part: LocalPart };
 
@@ -173,6 +178,9 @@ export function ProjectBuilderScreen() {
   const catalogEnabled = !!inventory.plugin;
   const materials = useMaterials(catalogEnabled);
 
+  // Section tabs (BIZ-363): one component, one state, so nothing is lost moving between them.
+  const [tab, setTab] = useState<BuilderTab>(projectId ? 'items' : 'details');
+
   // Project header fields
   const [name, setName] = useState('');
   const [customer, setCustomer] = useState('');
@@ -188,6 +196,12 @@ export function ProjectBuilderScreen() {
   // Part items
   const [items, setItems] = useState<LocalItem[]>([]);
   const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
+  const [deletedItemIds, setDeletedItemIds] = useState<number[]>([]);
+  // Print groups (BIZ-360) and the banner selection
+  const [groups, setGroups] = useState<ProjectGroup[]>([]);
+  const [bannerSel, setBannerSel] = useState<BannerSelection>('all');
+  const [groupsTick, setGroupsTick] = useState(0);
+  const [bulkAsk, setBulkAsk] = useState<{ ids: string[]; value: FilamentAsk } | null>(null);
   // Links
   const [links, setLinks] = useState<LocalLink[]>([]);
   const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
@@ -195,13 +209,14 @@ export function ProjectBuilderScreen() {
   const [parts, setParts] = useState<LocalPart[]>([]);
   const [deletedPartIds, setDeletedPartIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
-  const [showPrinterPicker, setShowPrinterPicker] = useState(false);
-  const [eligibleKeys, setEligibleKeys] = useState<string[]>([]);       // PrinterTargetPicker selection keys (BIZ-357)
-  const targetPrinters = useEnabledPrinters();
-  const [processPreset, setProcessPreset] = useState<string | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ jobCount: number; warnings: string[] } | null>(null);
+  // Review (BIZ-363)
+  const [review, setReview] = useState<ProjectReview | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Undo toast for accidental removals (items, links, non-printed parts)
   const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
@@ -216,9 +231,11 @@ export function ProjectBuilderScreen() {
     if (lastRemoved.kind === 'item') {
       setItems(prev => {
         const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.item);
+        for (const { index, item } of [...lastRemoved.removed].sort((a, b) => a.index - b.index)) next.splice(index, 0, item);
         return next;
       });
+      const back = new Set(lastRemoved.removed.map(r => r.item.serverId).filter(Boolean));
+      setDeletedItemIds(prev => prev.filter(id => !back.has(id)));
     } else if (lastRemoved.kind === 'link') {
       setLinks(prev => {
         const next = [...prev];
@@ -250,16 +267,19 @@ export function ProjectBuilderScreen() {
     its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
     pr: string = price,
     cid: number | null = customerId,
+    del: number[] = deletedItemIds,
   ) {
     return JSON.stringify({
       name: n, customer: ot === 'customer' ? c : '', customerId: ot === 'customer' ? cid : null, orderType: ot,
       onHold: oh, dueDate: dd, notes: no, price: pr,
       items: its.map(i => ({
-        fid: i.file_id, qty: i.quantity,
+        fid: i.file_id, qty: i.quantity, rule: i.pack_rule, gid: i.group_id,
         fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
       })),
-      links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
-      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
+      del,
+      // Server ids are left out: a save fills them in, and that is not an edit.
+      links: lks.map(l => ({ url: l.url, label: l.label })),
+      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost })),
     });
   }
 
@@ -302,6 +322,7 @@ export function ProjectBuilderScreen() {
         file_name: it.file_name,
         quantity: it.quantity,
         kind: it.kind ?? 'stl', source_ref: it.source_ref ?? null, pack_rule: it.pack_rule ?? 'split',
+        group_id: it.group_id ?? null,
         filament_manufacturer: it.filament_manufacturer,
         filament_type: it.filament_type,
         filament_subtype: it.filament_subtype,
@@ -327,15 +348,42 @@ export function ProjectBuilderScreen() {
       setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
+      setDeletedItemIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, cName, ot, oh, dd, no, its, lks, prts, pr, cid));
+      setCleanSnap(computeSnap(n, cName, ot, oh, dd, no, its, lks, prts, pr, cid, []));
     }).catch(console.error);
   }, [projectId]);
 
+  // Print groups of a saved project, in queue order (the Default Group is created lazily by the list).
+  useEffect(() => {
+    if (!projectId) { setGroups([]); return; }
+    let alive = true;
+    listProjectGroups(projectId).then(gs => {
+      if (!alive) return;
+      const list = Array.isArray(gs) ? gs : [];
+      setGroups(list);
+      // A deleted group's items are the Default Group's now (the server moved them): never save a dead group id.
+      const ids = new Set(list.map(g => g.id));
+      setItems(prev => (prev.some(it => it.group_id != null && !ids.has(it.group_id))
+        ? prev.map(it => (it.group_id != null && !ids.has(it.group_id) ? { ...it, group_id: null } : it)) : prev));
+      setBannerSel(sel => (sel === 'all' || ids.has(sel) ? sel : 'all'));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [projectId, groupsTick]);
+  const defaultGroupId = groups.find(g => g.is_default)?.id ?? null;
+  // The Groups tab has no "All": it always edits one group.
+  useEffect(() => {
+    if (tab === 'groups' && (bannerSel === 'all' || !groups.some(g => g.id === bannerSel)) && groups.length) {
+      setBannerSel(defaultGroupId ?? groups[0].id);
+    }
+  }, [tab, bannerSel, groups, defaultGroupId]);
+
   function addFile(f: LibraryFile) {
+    // New rows join the badge being shown (BIZ-363), else the Default Group.
+    const gid = typeof bannerSel === 'number' ? bannerSel : null;
     setItems(prev => {
       // A repeat pick of an STL adds a copy; a 3MF / gcode pick is its own row (another plate or object of it).
-      const existing = prev.find(it => it.file_id === f.id && it.kind === 'stl');
+      const existing = prev.find(it => it.file_id === f.id && it.kind === 'stl' && (it.group_id ?? defaultGroupId) === (gid ?? defaultGroupId));
       if (existing) {
         return prev.map(it =>
           it.localId === existing.localId ? { ...it, quantity: it.quantity + 1 } : it,
@@ -350,6 +398,7 @@ export function ProjectBuilderScreen() {
           quantity: 1,
           ...NO_ASK,
           sort_order: prev.length,
+          group_id: gid,
           ...initialSource(f.kind),
         },
       ];
@@ -360,13 +409,15 @@ export function ProjectBuilderScreen() {
     setItems(prev => prev.map(it => it.localId === localId ? { ...it, ...patch } : it));
   }
 
-  function removeItem(localId: string) {
-    const index = items.findIndex(it => it.localId === localId);
-    if (index === -1) return;
-    setLastRemoved({ kind: 'item', label: items[index].file_name, index, item: items[index] });
-    setItems(prev => prev.filter(it => it.localId !== localId));
+  function removeItems(localIds: string[]) {
+    const removed = items.map((item, index) => ({ item, index })).filter(r => localIds.includes(r.item.localId));
+    if (!removed.length) return;
+    setLastRemoved({ kind: 'item', label: removed.length === 1 ? removed[0].item.file_name : `${removed.length} items`, removed });
+    setItems(prev => prev.filter(it => !localIds.includes(it.localId)));
+    setDeletedItemIds(prev => [...prev, ...removed.map(r => r.item.serverId).filter((x): x is number => !!x)]);
     scheduleUndoClear();
   }
+  const removeItem = (localId: string) => removeItems([localId]);
 
   function removeLink(localId: string) {
     const index = links.findIndex(l => l.localId === localId);
@@ -396,6 +447,33 @@ export function ProjectBuilderScreen() {
     setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
   }
 
+  async function newGroup(moveIds: string[] = []) {
+    if (!projectId) return;
+    const taken = new Set(groups.map(g => g.name));
+    let n = groups.length;
+    while (taken.has(`Group ${n}`)) n++;
+    try {
+      const g = await createProjectGroup(projectId, `Group ${n}`);
+      if (moveIds.length) setItems(prev => prev.map(it => (moveIds.includes(it.localId) ? { ...it, group_id: g.id } : it)));
+      setBannerSel(g.id);
+      setGroupsTick(t => t + 1);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function onBulk(ids: string[], action: BulkAction) {
+    const pick = (fn: (it: LocalItem) => LocalItem) => setItems(prev => prev.map(it => (ids.includes(it.localId) ? fn(it) : it)));
+    if (action.kind === 'group') pick(it => ({ ...it, group_id: action.groupId }));
+    else if (action.kind === 'rule') pick(it => (RULES[it.kind].includes(action.rule) ? { ...it, pack_rule: action.rule } : it));
+    else if (action.kind === 'qty') pick(it => ({ ...it, quantity: action.quantity }));
+    else if (action.kind === 'remove') removeItems(ids);
+    else {
+      const first = items.find(it => ids.includes(it.localId));
+      setBulkAsk({ ids, value: first ? askOf(first) : { ...NO_ASK } });
+    }
+  }
+
   async function saveProject(): Promise<number> {
     const projectFields = {
       name,
@@ -410,6 +488,10 @@ export function ProjectBuilderScreen() {
     };
     if (projectId) {
       await patchProject(projectId, projectFields);
+      for (const id of deletedItemIds) {
+        await deleteProjectItem(projectId, id);
+        setDeletedItemIds(prev => prev.filter(x => x !== id));
+      }
       const existing = items.filter(i => i.serverId);
       const newOnes = items.filter(i => !i.serverId);
       for (const it of existing) {
@@ -418,30 +500,40 @@ export function ProjectBuilderScreen() {
           ...askOf(it),
           sort_order: it.sort_order,
           pack_rule: it.pack_rule,
+          ...(it.group_id != null ? { group_id: it.group_id } : {}),
         });
       }
       for (let i = 0; i < newOnes.length; i++) {
         const it = newOnes[i];
-        await addProjectItem(projectId, {
+        const added = await addProjectItem(projectId, {
           file_id: it.file_id,
           quantity: it.quantity,
           ...askOf(it),
           sort_order: it.sort_order,
           kind: it.kind, source_ref: it.source_ref, pack_rule: it.pack_rule,
+          ...(it.group_id != null ? { group_id: it.group_id } : {}),
         });
+        // Later saves update this row instead of adding it again.
+        if (added && typeof added.id === 'number') updateItem(it.localId, { serverId: added.id });
       }
       for (const id of deletedLinkIds) {
         await deleteProjectLink(projectId, id);
+        setDeletedLinkIds(prev => prev.filter(x => x !== id));
       }
       for (const lk of links) {
         if (lk.serverId) {
           await updateProjectLink(projectId, lk.serverId, { url: lk.url, label: lk.label || null });
         } else {
-          await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
+          // 1. Later saves (the Builder stays open) update this link instead of adding it again.
+          const added = await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
+          if (added && typeof added.id === 'number') {
+            setLinks(prev => prev.map(l => (l.localId === lk.localId ? { ...l, serverId: added.id } : l)));
+          }
         }
       }
       for (const id of deletedPartIds) {
         await deleteProjectPart(projectId, id);
+        setDeletedPartIds(prev => prev.filter(x => x !== id));
       }
       for (const pt of parts) {
         if (pt.serverId) {
@@ -449,10 +541,13 @@ export function ProjectBuilderScreen() {
             name: pt.name, quantity: pt.quantity, allocated: pt.allocated, unit_cost: unitCostValue(pt),
           });
         } else {
-          await addProjectPart(projectId, {
+          const added = await addProjectPart(projectId, {
             name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
             ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
           });
+          if (added && typeof added.id === 'number') {
+            setParts(prev => prev.map(p => (p.localId === pt.localId ? { ...p, serverId: added.id } : p)));
+          }
         }
       }
       return projectId;
@@ -481,39 +576,55 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  async function handleSave() {
-    if (!name.trim()) return;
+  /** Save draft: stays in the Builder (a new project moves to its /edit route, so later saves update it). */
+  async function handleSave(): Promise<number | null> {
+    if (!name.trim()) return null;
     setSaving(true);
+    setSaveError('');
     try {
       const pid = await saveProject();
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
-      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts));
+      setDeletedItemIds([]);
+      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts, price, customerId, []));
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2000);
-      if (!projectId) navigate(`/projects/${pid}`, { replace: true });
+      if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
+      return pid;
     } catch (e) {
-      console.error(e);
+      setSaveError(e instanceof Error ? e.message : String(e));
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleGenerate(keys: string[]) {
+  const [reviewedSnap, setReviewedSnap] = useState<string | null>(null);
+  const loadReview = useCallback(async (pid: number, snap: string) => {
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      setReview(await getProjectReview(pid));
+      setReviewedSnap(snap);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : String(e));   // shown instead of the checks; Queue stays disabled
+    } finally { setReviewLoading(false); }
+  }, []);
+
+  /** Queue project: save, then generate every group with its own printers (BIZ-360); the Review gate keeps this for 0 errors. */
+  async function handleQueue() {
     if (!name.trim() || items.length === 0) return;
     setSaving(true);
     setGenerateError('');
     setGenerateResult(null);
-    setShowPrinterPicker(false);
     try {
       const pid = await saveProject();
-      // Stay in the builder (its /edit route keeps this component mounted) so the generate result or
-      // error is shown here and a retry reuses the saved project instead of creating a second one.
-      if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
+      setDeletedItemIds([]);
+      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts, price, customerId, []));
       setGenerating(true);
-      const t = splitTargets(keys);
-      const result = await generateProject(pid, t.printerIds, processPreset, {}, { modelUuids: t.modelUuids, anyPrinter: t.anyPrinter });
-      setGenerateResult({ jobCount: result.jobs.length });
+      const result = await generateProject(pid);
+      setGenerateResult({ jobCount: result.jobs.length, warnings: (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w) });
+      loadReview(pid, currentSnap);
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -525,57 +636,74 @@ export function ProjectBuilderScreen() {
   const currentSnap = computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts);
   const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
   const canSave = name.trim().length > 0 && !saving && !generating;
-  const showSave = isDirty && canSave;
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, height: '100%' }}>
-      {/* Left: STL file tree */}
-      <div className="card" style={{ padding: 10, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 0 }}>
-        <div style={{ padding: '4px 6px 8px', fontSize: 11, fontWeight: 600,
-                      color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          STL Files
-        </div>
-        <input
-          className="input"
-          placeholder="Search files…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ marginBottom: 6, fontSize: 12 }}
-        />
-        {!searchLower && (
-          <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
+  // Entering Review saves what changed (the checks read the saved project), then runs the checks.
+  const reviewFor = useRef('');
+  useEffect(() => {
+    if (tab !== 'review' || !projectId || saving) return;
+    const key = `${projectId}:${currentSnap}:${groupsTick}`;
+    if (reviewFor.current === key) return;
+    reviewFor.current = key;
+    const snap = currentSnap;
+    (async () => {
+      if (isDirty && canSave && (await handleSave()) === null) {
+        setReview(null);                 // the checks would describe what isn't saved
+        setReviewedSnap(null);
+        return;
+      }
+      loadReview(projectId, snap);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, projectId, currentSnap, groupsTick]);
+
+  const ORDER: BuilderTab[] = ['details', 'items', 'groups', 'review'];
+  const at = ORDER.indexOf(tab);
+  const counts = new Map<number | 'all', { items: number; parts: number }>([['all', { items: items.length, parts: 0 }]]);
+  for (const it of items) {
+    const g = it.group_id ?? defaultGroupId;
+    if (g == null) continue;
+    const c = counts.get(g) ?? { items: 0, parts: 0 };
+    counts.set(g, { items: c.items + 1, parts: c.parts + it.quantity });
+  }
+  const banner = (showAll: boolean, editing: boolean) => (
+    <GroupBanner groups={groups} counts={counts} selected={bannerSel} onSelect={setBannerSel} showAll={showAll}
+                 onDropItems={editing ? undefined : (ids, target) => {
+                   if (target === 'new') newGroup(ids);
+                   else setItems(prev => prev.map(it => (ids.includes(it.localId) ? { ...it, group_id: target } : it)));
+                 }}
+                 onNewGroup={() => newGroup()}
+                 onReorder={editing && projectId ? async ids => {
+                   try { setGroups(await orderProjectGroups(projectId, ids)); } catch { setGroupsTick(t => t + 1); }
+                 } : undefined}
+                 newGroupDisabled={projectId ? undefined : 'Save the draft first to add groups'} />
+  );
+  const needsSave = (what: string) => (
+    <div className="card" style={{ padding: 20, textAlign: 'center' }}>
+      <div className="small muted" style={{ marginBottom: 10 }}>Save the draft to {what}.</div>
+      <button className="btn primary sm" onClick={handleSave} disabled={!canSave}>Save draft</button>
+    </div>
+  );
+
+  async function promote() {
+    if (!projectId) return;
+    try {
+      await promoteProject(projectId, 'planning');
+      setIsDraft(false);
+      setGroupsTick(t => t + 1);               // re-run the checks
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const detailsTab = (
+    <div className="col gap-3">
+        {isDraft && projectId && (
+          <div className="row gap-3" role="status" style={{ alignItems: 'center', padding: '10px 14px', borderRadius: 6,
+                                                            border: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+            <span className="small" style={{ flex: 1 }}>This is a draft (a customer request). Promote it to planning to queue it.</span>
+            <button className="btn sm" onClick={promote}>Promote to planning</button>
+          </div>
         )}
-        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6 }}>
-          {folderFiles.length === 0 && (
-            <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
-              {searchLower ? 'No matching STL files' : 'No STL files here'}
-            </div>
-          )}
-          {folderFiles.map(f => (
-            <button
-              key={f.id}
-              onClick={() => addFile(f)}
-              title={`Add ${f.original_filename}`}
-              style={{
-                width: '100%', padding: '5px 10px',
-                background: 'transparent', border: 'none',
-                color: 'var(--text-2)', cursor: 'pointer',
-                textAlign: 'left', fontSize: 12,
-                display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4,
-              }}
-            >
-              <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{Icons.files}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {f.original_filename}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Right: project form + items */}
-      <div className="card" style={{ padding: 20, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
         {/* Project metadata fields */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -784,15 +912,74 @@ export function ProjectBuilderScreen() {
             </div>
           ))}
         </div>
+    </div>
+  );
 
-        {/* Part items table */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-              Parts ({items.length})
-            </span>
+  const itemsTab = (
+    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16, alignItems: 'start' }}>
+      {/* Left: model file tree */}
+      <div className="card" style={{ padding: 10, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 0, maxHeight: '70vh' }}>
+        <div style={{ padding: '4px 6px 8px', fontSize: 11, fontWeight: 600,
+                      color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          STL Files
+        </div>
+        <input
+          className="input"
+          placeholder="Search files…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ marginBottom: 6, fontSize: 12 }}
+        />
+        {!searchLower && (
+          <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
+        )}
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6 }}>
+          {folderFiles.length === 0 && (
+            <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
+              {searchLower ? 'No matching STL files' : 'No STL files here'}
+            </div>
+          )}
+          {folderFiles.map(f => (
+            <button
+              key={f.id}
+              onClick={() => addFile(f)}
+              title={`Add ${f.original_filename}`}
+              style={{
+                width: '100%', padding: '5px 10px',
+                background: 'transparent', border: 'none',
+                color: 'var(--text-2)', cursor: 'pointer',
+                textAlign: 'left', fontSize: 12,
+                display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4,
+              }}
+            >
+              <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{Icons.files}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {f.original_filename}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="col gap-3" style={{ minWidth: 0 }}>
+        {banner(true, false)}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Parts ({items.length})</span>
+        {bulkAsk && (
+          <div className="card" style={{ padding: 12 }} data-testid="bulk-filament">
+            <div className="label">Filament for {bulkAsk.ids.length} selected</div>
+            <FilamentAskEditor id="bulk-ask" value={bulkAsk.value} onChange={v => setBulkAsk({ ...bulkAsk, value: v })}
+                               materials={materials} catalogEnabled={catalogEnabled} />
+            <div className="row gap-2" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
+              <button className="btn sm" onClick={() => setBulkAsk(null)}>Cancel</button>
+              <button className="btn primary sm" onClick={() => {
+                setItems(prev => prev.map(it => (bulkAsk.ids.includes(it.localId) ? { ...it, ...askOf(bulkAsk.value) } : it)));
+                setBulkAsk(null);
+              }}>Apply</button>
+            </div>
           </div>
-          {items.length === 0 ? (
+        )}
+        <ItemSections items={items} groups={groups} filter={bannerSel} onBulk={onBulk}
+          emptyHint={(
             <div style={{
               border: '1px dashed var(--border)', borderRadius: 6,
               padding: '24px 16px', textAlign: 'center',
@@ -800,178 +987,150 @@ export function ProjectBuilderScreen() {
             }}>
               Click an STL file on the left to add parts
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {/* Column headers */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 64px 340px auto',
-                gap: 8, padding: '0 4px',
-                fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
-                textTransform: 'uppercase', letterSpacing: '0.05em',
-              }}>
-                <span>File</span>
-                <span>Qty</span>
-                <span>Filament</span>
-                <span />
-              </div>
-              {items.map((it) => (
-                <div key={it.localId} style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 64px 340px auto',
-                  gap: 8, alignItems: 'start',
-                }}>
-                  {/* File name + progress */}
-                  <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, paddingTop: 4 }}>
-                    <span style={{
-                      fontSize: 13, color: 'var(--text-1)',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }} title={it.file_name}>
-                      {it.file_name}
-                    </span>
-                    <ItemSourcePicker fileId={it.file_id} fileKind={fileById.get(it.file_id)?.kind ?? (it.kind === 'stl' ? 'stl' : '3mf')}
-                                      plateCount={fileById.get(it.file_id)?.plate_count ?? 1}
-                                      kind={it.kind} sourceRef={it.source_ref} packRule={it.pack_rule} fixedSource={!!it.serverId}
-                                      onChange={v => updateItem(it.localId, v)} />
-                    {it.serverId && (() => {
-                      const si = serverItems.get(it.serverId!);
-                      if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;
-                      return (
-                        <span style={{ fontSize: 11, color: si.quantity_failed > 0 ? 'var(--err)' : 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                          {si.quantity_completed}/{si.quantity_completed + si.quantity_failed} ok
-                          {si.quantity_failed > 0 && ` · ${si.quantity_failed} failed`}
-                        </span>
-                      );
-                    })()}
-                  </span>
-
-                  {/* Quantity */}
-                  <input
-                    type="number"
-                    className="input"
-                    min={1} max={99}
-                    value={it.quantity}
-                    onChange={e => updateItem(it.localId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
-                    style={{ textAlign: 'center' }}
-                  />
-
-                  {/* Filament requirement */}
-                  <FilamentAskEditor
-                    id={`item-ask-${it.localId}`}
-                    value={askOf(it)}
-                    onChange={req => setItemFilament(it.localId, req)}
-                    materials={materials}
-                    catalogEnabled={catalogEnabled}
-                  />
-
-                  {/* Apply to all + Remove */}
-                  <span style={{ display: 'flex', gap: 4 }}>
-                    {items.length > 1 && (
-                      <button
-                        className="btn ghost icon sm"
-                        onClick={() => applyFilamentToAll(askOf(it))}
-                        title="Apply this filament to every part"
-                      >
-                        {Icons.copy}
-                      </button>
-                    )}
-                    <button
-                      className="btn ghost icon sm"
-                      onClick={() => removeItem(it.localId)}
-                      title="Remove"
-                    >
-                      {Icons.x}
-                    </button>
-                  </span>
-                </div>
-              ))}
-            </div>
           )}
+          renderRow={row => {
+            const it = items.find(x => x.localId === row.localId)!;
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 340px auto', gap: 8, alignItems: 'start' }}>
+                <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, paddingTop: 4 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={it.file_name}>
+                    {it.file_name}
+                  </span>
+                  <ItemSourcePicker fileId={it.file_id} fileKind={fileById.get(it.file_id)?.kind ?? (it.kind === 'stl' ? 'stl' : '3mf')}
+                                    plateCount={fileById.get(it.file_id)?.plate_count ?? 1}
+                                    kind={it.kind} sourceRef={it.source_ref} packRule={it.pack_rule} fixedSource={!!it.serverId}
+                                    onChange={v => updateItem(it.localId, v)} />
+                  {it.serverId && (() => {
+                    const si = serverItems.get(it.serverId!);
+                    if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;
+                    return (
+                      <span style={{ fontSize: 11, color: si.quantity_failed > 0 ? 'var(--err)' : 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                        {si.quantity_completed}/{si.quantity_completed + si.quantity_failed} ok
+                        {si.quantity_failed > 0 && ` · ${si.quantity_failed} failed`}
+                      </span>
+                    );
+                  })()}
+                </span>
+                <input
+                  type="number"
+                  className="input"
+                  aria-label={`Quantity of ${it.file_name}`}
+                  min={1} max={99}
+                  value={it.quantity}
+                  onChange={e => updateItem(it.localId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                  style={{ textAlign: 'center' }}
+                />
+                <FilamentAskEditor
+                  id={`item-ask-${it.localId}`}
+                  value={askOf(it)}
+                  onChange={req => setItemFilament(it.localId, req)}
+                  materials={materials}
+                  catalogEnabled={catalogEnabled}
+                />
+                <span style={{ display: 'flex', gap: 4 }}>
+                  {items.length > 1 && (
+                    <button className="btn ghost icon sm" onClick={() => applyFilamentToAll(askOf(it))}
+                            title="Apply this filament to every part">
+                      {Icons.copy}
+                    </button>
+                  )}
+                  <button className="btn ghost icon sm" onClick={() => removeItem(it.localId)} title="Remove">
+                    {Icons.x}
+                  </button>
+                </span>
+              </div>
+            );
+          }} />
+      </div>
+    </div>
+  );
+
+  const groupsTab = !projectId ? needsSave('set up its print groups') : (
+    <div className="col gap-3">
+      {banner(false, true)}
+      {typeof bannerSel === 'number' && (
+        <PrintGroupsCard projectId={projectId} items={[]} groupId={bannerSel} refreshKey={groupsTick}
+                         onChanged={() => setGroupsTick(t => t + 1)} />
+      )}
+      {isDirty && <div className="tiny muted">Unsaved item changes (groups of new or moved items) are saved with Save draft.</div>}
+    </div>
+  );
+
+  const reviewTab = !projectId ? needsSave('check and queue it') : (
+    <div className="col gap-3">
+      <ReviewPanel review={review} loading={reviewLoading || saving} error={reviewError}
+                   onGo={(t, ch) => { if (ch.group_id != null) setBannerSel(ch.group_id); setTab(t); }} />
+      {generateResult && (
+        <div style={{
+          border: '1px solid var(--ok)', borderRadius: 8,
+          padding: '12px 16px', background: 'oklch(55% 0.15 142 / 0.06)',
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
+          <span style={{ fontSize: 14, flex: 1 }}>
+            {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} added to queue
+            {generateResult.warnings.map(w => <span key={w} className="tiny" style={{ display: 'block', color: 'var(--warn)' }}>{w}</span>)}
+          </span>
+          <button className="btn sm" onClick={() => navigate('/queue')}>Queue</button>
+          <button className="btn sm" onClick={() => navigate(`/projects/${projectId}`)}>Details</button>
         </div>
+      )}
+      {generateError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: 6, padding: '10px 14px',
+        }}>
+          <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
+          <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
+          <button className="btn sm" onClick={handleQueue} disabled={generating || saving}>Retry</button>
+        </div>
+      )}
+    </div>
+  );
 
-        {/* Printer picker (shown when Create… is clicked) */}
-        {showPrinterPicker && !generating && !saving && (
-          <div style={{
-            border: '1px solid var(--border)', borderRadius: 8,
-            padding: '14px 16px', background: 'var(--bg-2)',
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
-                          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-              Eligible printers
-            </div>
-            <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
-            <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
-            <div style={{ marginTop: 12 }}>
-              <ProcessPresetPicker printerIds={coveredPrinterIds(eligibleKeys, targetPrinters)} value={processPreset} onChange={setProcessPreset} />
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-              <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
-              <button
-                className={eligibleKeys.length === 0 ? 'btn sm' : 'btn primary sm'}
-                onClick={() => handleGenerate(eligibleKeys)}
-                disabled={!canSave || items.length === 0}
-                title={eligibleKeys.length === 0
-                  ? 'No printers selected — jobs will be created but not dispatched'
-                  : undefined}
-              >
-                {eligibleKeys.length === 0 ? 'Create without dispatch' : 'Create'}
-              </button>
-            </div>
-          </div>
-        )}
+  const open = review?.open ?? null;
+  const queueBlocked = !projectId || isDraft || !review || reviewLoading || !!reviewError || reviewedSnap !== currentSnap
+    || (open ?? 1) > 0 || items.length === 0;
+  return (
+    <div className="col gap-3" style={{ height: '100%' }}>
+      <div className="row between" style={{ alignItems: 'baseline' }}>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>{name || 'New project'}</div>
+        <div className="row gap-2">
+          {isDraft && <span className="pill idle">Draft</span>}
+          <button className="btn ghost sm" onClick={handleSave} disabled={!canSave || !isDirty}>
+            {saving && !generating ? 'Saving…' : 'Save draft'}
+          </button>
+        </div>
+      </div>
+      <BuilderTabs tab={tab} onTab={setTab} counts={{ items: items.length, groups: groups.length, toFix: open }} />
+      {saveError && <div role="alert" style={{ color: 'var(--err)', fontSize: 13 }}>Save failed: {saveError}</div>}
 
-        {/* Generation success */}
-        {generateResult && (
-          <div style={{
-            border: '1px solid var(--ok)', borderRadius: 8,
-            padding: '12px 16px', background: 'oklch(55% 0.15 142 / 0.06)',
-            display: 'flex', alignItems: 'center', gap: 12,
-          }}>
-            <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
-            <span style={{ fontSize: 14, flex: 1 }}>
-              {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} added to queue
-            </span>
-            <button className="btn sm" onClick={() => navigate('/queue')}>Queue</button>
-            {projectId && (
-              <button className="btn sm" onClick={() => navigate(`/projects/${projectId}`)}>
-                Details
-              </button>
-            )}
-          </div>
-        )}
+      <div className="card" style={{ padding: 20, overflow: 'auto', flex: 1 }}>
+        {tab === 'details' && detailsTab}
+        {tab === 'items' && itemsTab}
+        {tab === 'groups' && groupsTab}
+        {tab === 'review' && reviewTab}
+      </div>
 
-        {/* Error banner */}
-        {generateError && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-            borderRadius: 6, padding: '10px 14px',
-          }}>
-            <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
-            <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
-            <button className="btn sm" onClick={() => handleGenerate(eligibleKeys)} disabled={generating || saving}>Retry</button>
-          </div>
-        )}
-
-        {/* Footer actions */}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 'auto', paddingTop: 4 }}>
+      {/* Back / Next */}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="row gap-2">
           <button className="btn sm" onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')} disabled={saving || generating}>
             Cancel
           </button>
-          {showSave && (
-            <button className="btn sm" onClick={handleSave} disabled={saving}>
-              {saving && !generating ? 'Saving…' : (projectId ? 'Save changes' : 'Save')}
+          {at > 0 && <button className="btn ghost sm" onClick={() => setTab(ORDER[at - 1])}>← Back</button>}
+        </div>
+        <span className="tiny muted">{tab === 'review' && open ? `Fix ${open} issue${open === 1 ? '' : 's'} to queue` : ''}</span>
+        {tab !== 'review'
+          ? <button className="btn primary sm" onClick={() => setTab(ORDER[at + 1])}>Next →</button>
+          : (
+            <button className="btn primary sm" onClick={handleQueue} disabled={queueBlocked || !canSave}
+                    title={isDraft ? 'Promote to planning before creating jobs' : undefined}>
+              {generating ? 'Queueing…' : 'Queue project'}
             </button>
           )}
-          <button
-            className="btn primary sm"
-            onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
-            disabled={!canSave || items.length === 0 || isDraft}
-            title={isDraft ? 'Promote to planning before creating jobs' : undefined}
-          >
-            {generating ? 'Creating…' : 'Create…'}
-          </button>
-        </div>
       </div>
 
       {/* Saved toast */}

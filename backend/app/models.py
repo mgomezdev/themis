@@ -31,6 +31,8 @@ class Printer(Base):
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
     bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
     bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    # BIZ-363: build height for the Review fit check; NULL = the machine profile's printable height, else unknown.
+    bed_z_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Server-local 'HH:MM' window in which this printer won't start new jobs (wraps midnight); both or neither.
     quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
@@ -514,6 +516,17 @@ class ProjectItem(Base):
     # integer, no FK (like job_printer_configs.model_target_id): SQLite can't DROP a column a foreign key names, and deleting a
     # group moves its items to the Default Group explicitly.
     group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class PartSize(Base):
+    """A part's measured size (BIZ-363 Review fit check), keyed like a waiver: file content hash · kind · source ref, so a changed
+    file is measured again. One instance of an object, a plate as authored, an STL's extents."""
+    __tablename__ = "part_sizes"
+    part_key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    size_x_mm: Mapped[float] = mapped_column(Float)
+    size_y_mm: Mapped[float] = mapped_column(Float)
+    size_z_mm: Mapped[float] = mapped_column(Float)
+    measured_at: Mapped[str] = mapped_column(String(40))
 
 
 class PartWaiver(Base):

@@ -92,6 +92,15 @@ async def resolve(session: AsyncSession, targets: list[tuple[str, str]], envelop
     return ResolvedTargets(printers, models, list(covered.values()))
 
 
+def covers(key: str, printer: Printer) -> bool:
+    """Does target `key` (`any`, `model:<uuid>`, `<printer id>`) take in `printer`?"""
+    if key == ANY_KEY:
+        return True
+    if key.startswith(MODEL_PREFIX):
+        return printer.model_uuid == key[len(MODEL_PREFIX):]
+    return key == str(printer.id)
+
+
 def bed_contains(printer: Printer, envelope: tuple[float, float]) -> bool:
     return float(printer.bed_x_mm) >= envelope[0] and float(printer.bed_y_mm) >= envelope[1]
 

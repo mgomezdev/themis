@@ -118,6 +118,38 @@ class LaminusProjectConstructor(ProjectConstructor):
         out.write_bytes(packed)
         return Artifact(out, ArtifactKind.PROJECT_3MF, self.identity), {i: n for i, n in enumerate(consumed) if n}
 
+    def measure(self, path: Path, selection: list[dict]) -> list:
+        """/projects/measure: object and plate entries in one call; whole-file entries (`{}`) in a call with no selection (the
+        sidecar refuses `{}` entries and any selection on an STL)."""
+        picked: list[tuple[int, dict]] = []
+        for i, s in enumerate(selection):
+            if s.get("object_id") is not None:
+                oid = s["object_id"]
+                picked.append((i, {"id": int(oid) if str(oid).isdigit() else oid}))
+            elif s.get("plate") is not None:
+                picked.append((i, {"plate": int(s["plate"])}))
+        whole = [i for i in range(len(selection)) if i not in {j for j, _ in picked}]
+        client = LaminusSidecarClient(self._url, timeout=self._request_timeout_s)
+        sizes: list = [None] * len(selection)
+        try:
+            if picked:
+                got = client.measure(path, [e for _, e in picked])
+                for (i, _), v in zip(picked, got):
+                    sizes[i] = v
+            if whole:
+                (v,) = (client.measure(path, None) or [None])[:1]
+                for i in whole:
+                    sizes[i] = v
+        except SidecarTimeout as e:
+            raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
+        except SidecarUnreachable as e:
+            raise ProviderError(ErrorCode.UNREACHABLE, str(e)) from e
+        except SidecarNotReady as e:
+            raise ProviderError(ErrorCode.NOT_READY, str(e)) from e
+        except SidecarError as e:
+            raise ProviderError(ErrorCode.FAILED, str(e)) from e
+        return [tuple(float(x) for x in v) if isinstance(v, (list, tuple)) and len(v) == 3 else None for v in sizes]
+
     def list_objects(self, model_3mf: Path) -> list[ModelObject]:
         try:
             raw = LaminusSidecarClient(self._url, timeout=self._request_timeout_s).inspect_objects(model_3mf)

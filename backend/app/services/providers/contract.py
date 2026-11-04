@@ -304,6 +304,11 @@ class ProjectConstructor(_Provider):
         many instances of each input it took ({input index: instances}). Raises `NothingFits` when nothing fits that bed."""
         raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot pack a next plate")
 
+    def measure(self, path: Path, selection: "list[dict]") -> "list[tuple[float, float, float] | None]":
+        """BIZ-363: the size (x, y, z mm) of each selected part of `path`: `{}` the whole file / an STL, `{"object_id": id}` one
+        placed instance of an object, `{"plate": n}` a plate as authored. None for a part it can't measure. Default: unsupported."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot measure parts")
+
     def list_objects(self, model_3mf: Path) -> "list[ModelObject]":
         """The objects of a 3MF, for picking project items (BIZ-356). Raises ProviderError when the provider can't read it."""
         raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot list 3MF objects")

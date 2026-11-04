@@ -61,6 +61,7 @@ class PrinterCreate(BaseModel):
     no_snapshots_while_idle: bool = False
     bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
     bed_y_mm: float | None = Field(default=None, gt=0)
+    bed_z_mm: float | None = Field(default=None, gt=0, le=5000)   # BIZ-363: build height (null = the machine profile's)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
     default_process_profile: str | None = None      # BIZ-358: what a "Printer default" job config slices with
     single_colour_only: bool = False
@@ -81,6 +82,7 @@ class PrinterUpdate(BaseModel):
     no_snapshots_while_idle: bool | None = None
     bed_x_mm: float | None = Field(default=None, gt=0)
     bed_y_mm: float | None = Field(default=None, gt=0)
+    bed_z_mm: float | None = Field(default=None, gt=0, le=5000)   # explicit null clears (use the machine profile's height)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None
@@ -208,6 +210,7 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "bed_x_mm": p.bed_x_mm,
         "bed_y_mm": p.bed_y_mm,
+        "bed_z_mm": p.bed_z_mm,
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
@@ -377,6 +380,7 @@ async def create_printer(
         no_snapshots_while_idle=body.no_snapshots_while_idle,
         bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
         bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
+        bed_z_mm=body.bed_z_mm,
         machine_rate_per_hour=body.machine_rate_per_hour,
         single_colour_only=body.single_colour_only,
     )
@@ -712,6 +716,8 @@ async def update_printer(
         printer.bed_x_mm = body.bed_x_mm
     if body.bed_y_mm is not None:
         printer.bed_y_mm = body.bed_y_mm
+    if "bed_z_mm" in body.model_fields_set:
+        printer.bed_z_mm = body.bed_z_mm
     if "quiet_start" in body.model_fields_set or "quiet_end" in body.model_fields_set:
         printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
     if "machine_rate_per_hour" in body.model_fields_set:

@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v033_slice_cache, v036_inventory_refs, v037_inventory_deduction, v052_model_slicer_profiles, v053_filament_tuple, v057_printer_slicing_defaults, v059_project_groups, v060_print_results, v061_project_item_kinds, v062_part_waivers, v063_pools
+from app.migrations import v033_slice_cache, v036_inventory_refs, v037_inventory_deduction, v052_model_slicer_profiles, v053_filament_tuple, v057_printer_slicing_defaults, v059_project_groups, v060_print_results, v061_project_item_kinds, v062_part_waivers, v063_pools, v064_part_sizes
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
 # Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).
@@ -88,6 +88,7 @@ async def _build(path: Path) -> None:
             # v001 builds the *current* models (tables added by later phases too): drop what post-v032 migrations own.
             await v033_slice_cache.down(conn)
             await conn.execute(text("DELETE FROM schema_migrations WHERE version = 33"))
+            await v064_part_sizes.down(conn)                           # the historical fixture must not carry v064 columns
             await v063_pools.down(conn)                                # the historical fixture must not carry v063 columns
             await v062_part_waivers.down(conn)                         # the historical fixture must not carry v062 tables/columns
             await v061_project_item_kinds.down(conn)                   # the historical fixture must not carry v061 columns

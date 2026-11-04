@@ -39,6 +39,7 @@ notification_config (singleton id=1: ntfy/discord/email — see its own section 
 projects            ← project_items.project_id, project_links.project_id, project_parts.project_id,
                        jobs.project_id
 project_items       ← job_item_failures.project_item_id; group_id (plain int → project_groups.id, no FK; v059); v061 kind (stl | 3mf_object | 3mf_plate | gcode), source_ref (object id / plate), pack_rule (split | together | solo | locked), source_hash (BIZ-356)
+part_sizes          (part_key PK = content hash:kind:source_ref; size_x/y/z_mm; v064, BIZ-363 Review fit check) + printers.bed_z_mm (null = machine profile height)
 part_waivers        (printer_id CASCADE; unique (printer_id, part_key); part_key = file content hash:kind:source_ref — the part, across projects; v062, BIZ-365) + printers.waiver_flag_at / waiver_stop_at (0 = off) / test_print_job_id / test_print_waiver_id, queue_config.waive_after
 project_groups      (project_id CASCADE; one is_default per project; v059) ← project_group_targets (group_id CASCADE; unique (group_id, target_key)); v063 max_parts (pool plate cap), queue_position (pool place in the queue, set at generate) + jobs.pool_group_id (plain int, no FK: the pool a plate was packed from; BIZ-362 — pool remaining = qty − parts on its non-cancelled jobs + failures resolved requeued/reprinted)
 project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)

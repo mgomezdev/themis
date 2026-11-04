@@ -266,3 +266,13 @@ async def test_queue_pools_carry_the_pool_keys(client, upload_3mf, create_printe
         assert (await client.post(f"/api/v1/projects/{pid}/generate", json={})).status_code == 200
     (pool,) = (await client.get("/api/v1/queue/pools")).json()
     assert_carries("queue_pool", pool)
+
+
+async def test_project_review_carries_the_review_keys(client, upload_3mf):
+    """BIZ-363: GET /projects/{id}/review and each of its checks."""
+    pid = (await client.post("/api/v1/projects", json={"name": "Kit"})).json()["id"]
+    fid = await upload_3mf(filename="part.stl", data=b"solid part\nendsolid\n")
+    await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid})
+    body = (await client.get(f"/api/v1/projects/{pid}/review")).json()
+    assert_carries("project_review", body)
+    assert_carries("review_check", body["checks"][0])

@@ -72,10 +72,7 @@ def _ask(item):
 
 async def eligible_on(session: AsyncSession, group: ProjectGroup, printer: Printer) -> bool:
     """Is `printer` one of the group's targets?"""
-    targets = [t.target_key for t in await project_groups.targets_of(session, group.id)]
-    return any(k == project_groups.ANY_KEY or k == str(printer.id)
-               or (k.startswith(project_groups.MODEL_PREFIX) and printer.model_uuid == k[len(project_groups.MODEL_PREFIX):])
-               for k in targets)
+    return any(project_groups.covers(t.target_key, printer) for t in await project_groups.targets_of(session, group.id))
 
 
 async def process_for(session: AsyncSession, group: ProjectGroup, printer: Printer) -> str:
