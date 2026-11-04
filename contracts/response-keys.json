@@ -163,7 +163,10 @@
     "filament_color",
     "sort_order",
     "group_id",
-    "quantity_held"
+    "quantity_held",
+    "kind",
+    "source_ref",
+    "pack_rule"
   ],
   "plate_results": ["job_id", "project_id", "parts"],
   "project_failure": ["id", "project_item_id", "file_name", "job_id", "printer_id", "printer_name", "quantity_failed", "created_at", "resolution"],

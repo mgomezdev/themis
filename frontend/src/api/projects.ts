@@ -32,6 +32,9 @@ export interface ProjectItem {
   sort_order: number;
   group_id: number | null;        // its print group (BIZ-360)
   quantity_held: number;          // failed parts held for a person after too many printers (BIZ-364)
+  kind: 'stl' | '3mf_object' | '3mf_plate' | 'gcode';   // BIZ-356
+  source_ref: string | null;      // object id, or plate number
+  pack_rule: 'split' | 'together' | 'solo' | 'locked';
 }
 
 export interface ProjectLink {
@@ -150,6 +153,10 @@ export interface ProjectItemCreate extends Partial<FilamentAsk> {
   quantity: number;
   sort_order?: number;
   group_id?: number;              // update only: move to another print group of the project (BIZ-360)
+  /** BIZ-356: what of the file the item is (create only; omitted = inferred from the file) and its packing rule. */
+  kind?: 'stl' | '3mf_object' | '3mf_plate' | 'gcode';
+  source_ref?: string | null;
+  pack_rule?: 'split' | 'together' | 'solo' | 'locked';
 }
 
 /** One eligibility entry of a print group: a PrinterTargetPicker key and its process profile ("" = Printer default). */

@@ -314,6 +314,62 @@ class LaminusSidecarClient:
         """POST /api/v1/pack by bed size -> multi-plate arranged 3MF bytes. STL uploads only (the sidecar rejects others)."""
         return self._pack(items, {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)})
 
+    def pack_mixed(self, items: list[ConstructInput], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
+        """POST /api/v1/pack/mixed by bed size (BIZ-356): STLs, 3MF objects and 3MF plate bundles with split/together/solo rules
+        -> one multi-plate 3MF with the plate manifest. Each source file is uploaded once; the selection is in `items` order."""
+        uploads: dict[str, tuple[str, ConstructInput]] = {}      # one upload per source file, named uniquely
+        selection = []
+        for it in items:
+            key = str(it.path)
+            if key not in uploads:
+                uploads[key] = (_UNSAFE_UPLOAD_CHARS.sub("_", f"{len(uploads)}_{it.path.name}"), it)
+            entry: dict = {"file": uploads[key][0], "qty": it.quantity}
+            if it.object_id is not None:
+                entry["id"] = int(it.object_id) if str(it.object_id).isdigit() else it.object_id
+            if it.plate is not None:
+                entry["plate"] = it.plate
+            if it.rule != "split":
+                entry["rule"] = it.rule
+            selection.append(entry)
+        data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z), "selection": json.dumps(selection)}
+        return self._post_files("/api/v1/pack/mixed", [(n, it.path) for n, it in uploads.values()], data, "pack/mixed")
+
+    def inspect_objects(self, model_3mf) -> list[dict]:
+        """POST /api/v1/projects/inspect -> the 3MF's objects (id, name, instances, ...)."""
+        from pathlib import Path as _P
+        path = _P(model_3mf)
+        with open(path, "rb") as fh:
+            try:
+                r = self._client.post("/api/v1/projects/inspect", files=[("file", (path.name, fh, "application/octet-stream"))])
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"inspect request failed: {e}") from e
+        if r.status_code == 503:
+            raise SidecarNotReady(f"inspect returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"inspect returned {r.status_code}: {_detail(r)}")
+        return list(r.json().get("objects", []))
+
+    def _post_files(self, url: str, named_paths: list, data: dict[str, str], what: str) -> bytes:
+        handles = [open(p, "rb") for _, p in named_paths]
+        try:
+            files = [("files", (n, fh, "application/octet-stream")) for (n, _), fh in zip(named_paths, handles)]
+            try:
+                r = self._client.post(url, files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"{what} timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"{what} request failed: {e}") from e
+        finally:
+            for fh in handles:
+                fh.close()
+        if r.status_code == 408:
+            raise SidecarTimeout(f"{what} timed out on the sidecar")
+        if r.status_code == 503:
+            raise SidecarNotReady(f"{what} returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"{what} returned {r.status_code}: {_detail(r)}")
+        return r.content
+
     def _pack(self, items: list[ConstructInput], data: dict[str, str]) -> bytes:
         """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
         filename and needs them unique, so the item's `ref` prefixes the name (same-named models stay distinct)."""

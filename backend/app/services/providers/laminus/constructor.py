@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, ConstructRequest, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode,
-    InputKind, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
+    InputKind, ModelObject, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
 )
 from .sidecar_client import (
     DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady, SidecarTimeout, SidecarUnreachable,
@@ -51,11 +51,12 @@ class LaminusProjectConstructor(ProjectConstructor):
             raise ProviderError(ErrorCode.UNSUPPORTED_TARGET, f"bed {request.target.bed_mm} has no positive size")
         if not request.inputs:
             raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, "nothing to pack")
-        others = [i.path.name for i in request.inputs if i.path.suffix.lower() != ".stl"]
-        if others:
-            raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"only STL models can be packed: {', '.join(others)}")
+        # Plain split STLs keep /pack; anything else (3MF objects/plates, together/solo rules) needs /pack/mixed (BIZ-356).
+        mixed = any(i.path.suffix.lower() != ".stl" or i.rule != "split" or i.object_id or i.plate for i in request.inputs)
         try:
-            packed = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s)).pack_stls(list(request.inputs), *request.target.bed_mm)
+            client = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s))
+            packed = (client.pack_mixed(list(request.inputs), *request.target.bed_mm) if mixed
+                      else client.pack_stls(list(request.inputs), *request.target.bed_mm))
         except SidecarTimeout as e:
             raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
         except SidecarUnreachable as e:
@@ -83,6 +84,16 @@ class LaminusProjectConstructor(ProjectConstructor):
                 counts = plates.setdefault(int(plate["plate"]), {})
                 for inst in plate.get("instances", []):
                     counts[int(inst["item"])] = counts.get(int(inst["item"]), 0) + 1
-            return PlateManifest(plates=plates)
+            requested = {int(i["item"]): int(i["requested"]) for i in raw.get("items", []) if "requested" in i}
+            return PlateManifest(plates=plates, requested=requested)
         except (OSError, KeyError, ValueError, TypeError, AttributeError, zipfile.BadZipFile):
             return None
+
+    def list_objects(self, model_3mf: Path) -> list[ModelObject]:
+        try:
+            raw = LaminusSidecarClient(self._url, timeout=self._request_timeout_s).inspect_objects(model_3mf)
+        except SidecarError as e:
+            code = (ErrorCode.UNREACHABLE if isinstance(e, SidecarUnreachable) else
+                    ErrorCode.NOT_READY if isinstance(e, SidecarNotReady) else ErrorCode.FAILED)
+            raise ProviderError(code, str(e)) from e
+        return [ModelObject(str(o["id"]), str(o.get("name") or f"object {o['id']}"), int(o.get("instances") or 1)) for o in raw]

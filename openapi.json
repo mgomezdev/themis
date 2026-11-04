@@ -4311,6 +4311,53 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/objects": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "List a 3MF's objects (BIZ-356)",
+        "description": "The objects of a .3mf, for picking project items: `[{id, name, instances}]`. Read by the 3mf.construct provider.",
+        "operationId": "get_model_objects_api_v1_files__file_id__objects_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Model Objects Api V1 Files  File Id  Objects Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Not a 3MF, or the provider can't read it"
+          },
+          "503": {
+            "description": "No project builder is configured or it is unreachable"
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/embedded-settings": {
       "get": {
         "tags": [
@@ -14734,6 +14781,52 @@
             "type": "integer",
             "title": "Sort Order",
             "default": 0
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "stl",
+                  "3mf_object",
+                  "3mf_plate",
+                  "gcode"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "pack_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "split",
+                  "together",
+                  "solo",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Rule"
           }
         },
         "type": "object",
@@ -14820,6 +14913,23 @@
               }
             ],
             "title": "Group Id"
+          },
+          "pack_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "split",
+                  "together",
+                  "solo",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Rule"
           }
         },
         "type": "object",

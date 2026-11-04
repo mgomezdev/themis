@@ -210,7 +210,7 @@ polls `should_stop` while it waits (the producer's cancel).
 queue's resolution. (The offline `FormatProvider` is still registered by name with `register_format_provider`.)
 
 **Project construction:** a plugin that provides `3mf.construct` (exclusive) whose instance exposes `project_constructor(url)` returning a
-`ProjectConstructor` (`identity`, `status`, `construct`, and optionally `plate_manifest(path) -> PlateManifest | None`: per plate, instance counts by `ConstructRequest.inputs` index; the default reports none, BIZ-359); project generation then uses the selected one.
+`ProjectConstructor` (`identity`, `status`, `construct`, and optionally `list_objects(path) -> [ModelObject]` (BIZ-356) and `plate_manifest(path) -> PlateManifest | None`; `ConstructInput` carries `object_id` / `plate` / `rule` (split | together | solo) for 3MF objects and plate bundles — Laminus sends those to `/pack/mixed`, plain split STLs to `/pack`; per plate, instance counts by `ConstructRequest.inputs` index; the default reports none, BIZ-359); project generation then uses the selected one.
 
 **Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, `provides={"inventory.filament": Provide(...)}`, `settings_model`,
 `secret_fields`, `factory`, `capabilities`, `ui`), a provider class implementing the ABC, nothing else (bundled plugins are discovered: any sub-package of `app/plugins/` that exports `MANIFEST`), the
