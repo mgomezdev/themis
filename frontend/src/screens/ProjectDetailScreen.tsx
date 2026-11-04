@@ -5,6 +5,7 @@ import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { useTopbarOverride, type Crumb } from '../components/topbarOverride';
 import { PrintGroupsCard } from '../components/PrintGroupsCard';
+import { FailureLogCard } from '../components/FailureLogCard';
 import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, toggleKey, useEnabledPrinters } from '../components/PrinterTargetPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
@@ -593,6 +594,9 @@ export function ProjectDetailScreen() {
 
       {/* ── Print groups (BIZ-360) ─────────────────────────────────────── */}
       <PrintGroupsCard projectId={project.id} items={project.items} onChanged={reload} />
+
+      {/* ── Failures (BIZ-364) ─────────────────────────────────────────── */}
+      <FailureLogCard projectId={project.id} items={project.items} onChanged={reload} />
 
       {/* ── Payments ───────────────────────────────────────────────────── */}
       <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />

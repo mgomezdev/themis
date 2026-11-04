@@ -43,7 +43,7 @@ project_groups      (project_id CASCADE; one is_default per project; v059) ← p
 project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)
 project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,
                        created_at — non-3D-printed hardware for the assembly, e.g. magnets/screws)
-job_item_failures
+job_item_failures   (+ v060: printer_id plain int, created_at, resolution printed|requeued|held|reprinted|dropped = the project failure log, BIZ-364; project_items.quantity_held; queue_config.part_retry_limit default 2)
 maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_maintenance_state.maintenance_item_id
 maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
 printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))

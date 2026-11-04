@@ -70,6 +70,8 @@ async def test_clearing_with_a_partial_failure_records_it_and_requeues_exactly_t
     assert sorted((c.printer_id, c.print_profile) for c in cfgs) == [(a, "0.20mm"), (b, "0.20mm")]   # same printers + profile
 
     log = (await client.get(f"/api/v1/projects/{pid}/failures")).json()
+    from tests.api.test_response_contracts import assert_carries
+    assert_carries("project_failure", log[0])
     assert [(e["project_item_id"], e["printer_id"], e["quantity_failed"], e["resolution"]) for e in log] == [(item, a, 1, "requeued")]
     assert log[0]["file_name"] == "part.stl" and log[0]["printer_name"] == "A" and log[0]["created_at"]
 
@@ -139,3 +141,39 @@ async def test_results_for_a_job_of_another_printer_are_refused(client, upload_3
     pid, item, job_id, a, b = await _setup(client, upload_3mf, create_printer, tmp_path)
     await _printed(session_factory, job_id, a)
     assert (await _clear(client, tmp_path, b, job_id, {item: 1})).status_code == 422
+
+
+async def test_plate_results_offers_the_unreported_project_job_then_nothing(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    pid, item, job_id, a, _ = await _setup(client, upload_3mf, create_printer, tmp_path)
+    assert (await client.get(f"/api/v1/printers/{a}/plate-results")).json()["job_id"] is None      # still queued
+    await _printed(session_factory, job_id, a)
+    from tests.api.test_response_contracts import assert_carries
+    r = (await client.get(f"/api/v1/printers/{a}/plate-results")).json()
+    assert_carries("plate_results", r)
+    assert r == {"job_id": job_id, "project_id": pid, "parts": [{"project_item_id": item, "file_name": "part.stl", "quantity": 3}]}
+    await _clear(client, tmp_path, a, job_id, {})
+    assert (await client.get(f"/api/v1/printers/{a}/plate-results")).json()["job_id"] is None      # reported
+
+
+async def test_reporting_results_needs_jobs_write_and_a_finished_project_job(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    from app.models import ApiKey
+    from app.services.api_key_service import generate_key, hash_key
+    pid, item, job_id, a, _ = await _setup(client, upload_3mf, create_printer, tmp_path)
+    assert (await _clear(client, tmp_path, a, job_id, {item: 1})).status_code == 422          # still queued: not on this printer
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.assigned_printer_id, job.status = a, "printing"
+        await s.commit()
+    assert (await _clear(client, tmp_path, a, job_id, {item: 1})).status_code == 409          # not finished yet
+    await _printed(session_factory, job_id, a)
+    raw, prefix = generate_key()
+    async with session_factory() as s:
+        s.add(ApiKey(name="ctl", key_prefix=prefix, key_hash=hash_key(raw), scopes=["printers:control"], enabled=True,
+                     created_at="2026-01-01T00:00:00"))
+        await s.commit()
+    body = {"job_id": job_id, "results": [{"project_item_id": item, "quantity_failed": 1}]}
+    r = await client.post(f"/api/v1/printers/{a}/plate-cleared", json=body, headers={"X-Api-Key": raw})
+    assert r.status_code == 403
+    assert (await client.post(f"/api/v1/printers/{a}/plate-cleared", headers={"X-Api-Key": raw})).status_code == 200   # plain clear

@@ -234,6 +234,7 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         **ask_out(item),
         "sort_order": item.sort_order,
         "group_id": item.group_id,
+        "quantity_held": item.quantity_held or 0,
     }
 
 

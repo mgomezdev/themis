@@ -360,7 +360,7 @@ function TagsPage() {
 function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, dead: 30, snapshot: 2, name: '', estimates: false, useLatest: true });
+  const saved = useRef({ check: 5, dead: 30, retry: 2, snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -396,6 +396,19 @@ function PrintDefaultsPage() {
     setDeadAfter(v);
     await persist('the printer offline limit', { printer_dead_after_minutes: v },
       () => setDeadAfter(saved.current.dead), () => { saved.current.dead = v; }, setSavingDeadAfter);
+  }
+
+  // Hold a part after it fails on this many different printers (BIZ-364)
+  const [retryLimit, setRetryLimit] = useState<number>(2);
+  const [savingRetry, setSavingRetry] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => { const v = c.part_retry_limit ?? 2; saved.current.retry = v; setRetryLimit(v); }).catch(console.error);
+  }, []);
+  async function commitRetryLimit(n: number) {
+    const v = Math.min(20, Math.max(1, Math.round(n) || 1));
+    setRetryLimit(v);
+    await persist('the part retry limit', { part_retry_limit: v },
+      () => setRetryLimit(saved.current.retry), () => { saved.current.retry = v; }, setSavingRetry);
   }
 
   // Snapshot interval
@@ -580,6 +593,19 @@ function PrintDefaultsPage() {
                  onBlur={e => commitDeadAfter(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">min{savingDeadAfter ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Hold a failed part after"
+                hint="When a part fails on this many different printers it is held on its project for you to Reprint or Drop, instead of going back into the queue again.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <input className="input" type="number" min={1} max={20} step={1}
+                 aria-label="Hold a failed part after"
+                 value={retryLimit}
+                 onChange={e => setRetryLimit(Number(e.target.value))}
+                 onBlur={e => commitRetryLimit(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">printers{savingRetry ? ' · saving…' : ''}</span>
         </div>
       </FieldRow>
 

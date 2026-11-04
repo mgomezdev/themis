@@ -1715,6 +1715,54 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/plate-results": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "The project job whose print results are still to report on this plate (BIZ-364)",
+        "description": "The latest finished project job on this printer with no reported results yet, and its parts (name \u00d7 quantity on the\nplate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear.",
+        "operationId": "plate_results_api_v1_printers__printer_id__plate_results_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Plate Results Api V1 Printers  Printer Id  Plate Results Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [
