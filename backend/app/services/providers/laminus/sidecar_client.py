@@ -383,6 +383,25 @@ class LaminusSidecarClient:
         consumed = json.loads(r.headers.get("X-Consumed") or "[]")
         return r.content, [int(n) for n in consumed]
 
+    def measure(self, path, selection: list[dict] | None) -> list:
+        """POST /api/v1/projects/measure (BIZ-363) -> one `size_mm` [x, y, z] (or null) per selection entry; `selection` None
+        measures the whole file (an STL, or a single-plate 3MF) and returns one entry."""
+        from pathlib import Path as _P
+        path = _P(path)
+        with open(path, "rb") as fh:
+            try:
+                r = self._client.post("/api/v1/projects/measure", files=[("file", (path.name, fh, "application/octet-stream"))],
+                                      data={} if selection is None else {"selection": json.dumps(selection)})
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"measure timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"measure request failed: {e}") from e
+        if r.status_code == 503:
+            raise SidecarNotReady(f"measure returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"measure returned {r.status_code}: {_detail(r)}")
+        return [it.get("size_mm") for it in r.json().get("items", [])]
+
     def inspect_objects(self, model_3mf) -> list[dict]:
         """POST /api/v1/projects/inspect -> the 3MF's objects (id, name, instances, ...)."""
         from pathlib import Path as _P

@@ -8266,6 +8266,51 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/review": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Project Builder review checks (BIZ-363)",
+        "description": "What would stop the project queueing well, each naming the Builder tab that fixes it (`details`, `items`, `groups`): `error` blocks queueing, `note` informs, `ok` confirms. `open` counts the errors. Checks: draft stage, groups without eligible printers, \"Printer default\" on a printer with no default process profile, parts that fit no eligible bed (X/Y either way round, and Z when known), loaded colours, gcode eligibility.",
+        "operationId": "project_review_api_v1_projects__project_id__review_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Project Review Api V1 Projects  Project Id  Review Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/failures": {
       "get": {
         "tags": [
@@ -14600,6 +14645,19 @@
             ],
             "title": "Bed Y Mm"
           },
+          "bed_z_mm": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 5000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Z Mm"
+          },
           "machine_rate_per_hour": {
             "anyOf": [
               {
@@ -14803,6 +14861,19 @@
               }
             ],
             "title": "Bed Y Mm"
+          },
+          "bed_z_mm": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 5000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Z Mm"
           },
           "machine_rate_per_hour": {
             "anyOf": [
@@ -15146,6 +15217,17 @@
               }
             ],
             "title": "Pack Rule"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
           }
         },
         "type": "object",

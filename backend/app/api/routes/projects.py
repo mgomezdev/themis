@@ -140,6 +140,7 @@ class ProjectItemCreate(AskFields):
     kind: Optional[ItemKind] = None
     source_ref: Optional[str] = Field(default=None, max_length=64)
     pack_rule: Optional[PackRule] = None
+    group_id: Optional[int] = None          # BIZ-363: a print group of this project (default: the Default Group)
 
     @field_validator("quantity")
     @classmethod
@@ -843,7 +844,7 @@ async def add_item(
         sort_order=body.sort_order,
         kind=kind, source_ref=ref, pack_rule=rule,
         source_hash=f.content_hash if kind in ("3mf_object", "3mf_plate") else None,
-        group_id=(await project_groups.ensure_default_group(session, project_id)).id,   # new items land in the Default Group
+        group_id=await _item_group(session, project_id, body.group_id),   # new items land in the Default Group
     )
     session.add(item)
     proj.updated_at = _now_iso()
@@ -1170,6 +1171,16 @@ async def delete_part(
 # and queues one job per plate.
 # ---------------------------------------------------------------------------
 
+async def _item_group(session: AsyncSession, project_id: int, group_id: int | None) -> int:
+    """The group a new item joins: `group_id` when it is a print group of this project (422 otherwise), else the Default Group."""
+    if group_id is None:
+        return (await project_groups.ensure_default_group(session, project_id)).id
+    group = await session.get(ProjectGroup, group_id)
+    if group is None or group.project_id != project_id:
+        raise HTTPException(422, f"Group {group_id} is not a print group of project {project_id}")
+    return group.id
+
+
 async def _max_queue_position(session: AsyncSession) -> float:
     """The last place in the queue: jobs and pools (BIZ-362: a pool is a queue entry too), so nothing ties with a pool."""
     jobs = (await session.execute(select(func.max(Job.queue_position)))).scalar_one_or_none() or 0.0
@@ -1402,6 +1413,18 @@ def _item_kind(f: UploadedFile, kind: str | None, ref: str | None, rule: str | N
 
 class HeldAction(BaseModel):
     action: Literal["reprint", "drop"]
+
+
+@router.get("/{project_id}/review", summary="Project Builder review checks (BIZ-363)",
+            description="What would stop the project queueing well, each naming the Builder tab that fixes it (`details`, `items`, "
+                        "`groups`): `error` blocks queueing, `note` informs, `ok` confirms. `open` counts the errors. Checks: draft "
+                        "stage, groups without eligible printers, \"Printer default\" on a printer with no default process profile, "
+                        "parts that fit no eligible bed (X/Y either way round, and Z when known), loaded colours, gcode eligibility.",
+            dependencies=[Depends(require_scope("projects:read"))])
+async def project_review(project_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    from ...services import project_review as pr
+    proj = await _get_project_or_404(project_id, session)
+    return pr.as_response(await pr.review(session, proj, get_project_constructor()))
 
 
 @router.get("/{project_id}/failures", summary="The project's failure log (BIZ-364)",

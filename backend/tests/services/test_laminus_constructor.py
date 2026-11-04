@@ -256,3 +256,45 @@ def test_next_plate_without_a_machine_uuid_is_unsupported_and_sends_nothing(side
 def test_the_contract_default_cannot_pack_a_next_plate(tmp_path):
     from tests.fake_providers import FakeProjectConstructor
     assert _construct_error(lambda: FakeProjectConstructor().next_plate(_req(tmp_path), tmp_path)) is c.ErrorCode.UNSUPPORTED_INPUT
+
+
+def test_measure_posts_the_selection_and_reads_one_size_per_entry(sidecar, tmp_path):  # noqa: F811
+    """BIZ-363: /projects/measure gets {id} / {plate} / {} entries in order; a missing or malformed size is None."""
+    import json as _json
+    proj = tmp_path / "p.3mf"
+    proj.write_bytes(b"PK")
+    def handler(r):
+        if b'name="selection"' not in r.content:
+            return httpx.Response(200, json={"items": [{"size_mm": [5, 6, 7]}]})        # the whole file
+        return httpx.Response(200, json={"items": [{"size_mm": [10, 20.5, 30]}, {"size_mm": [1, 2]}]})
+    sidecar.handler = handler
+    sizes = constructor().measure(proj, [{"object_id": "8"}, {}, {"plate": 2}, {}])
+    assert sizes == [(10.0, 20.5, 30.0), (5.0, 6.0, 7.0), None, (5.0, 6.0, 7.0)]
+    calls = [r for r in sidecar.requests if r.url.path == "/api/v1/projects/measure"]
+    assert len(calls) == 2                                                        # the selection once, the whole file once
+    body = next(r for r in calls if b'name="selection"' in r.content).content.decode("latin-1")
+    sel = _json.loads(body.split('name="selection"')[1].split("\r\n\r\n", 1)[1].split("\r\n--", 1)[0])
+    assert sel == [{"id": 8}, {"plate": 2}]
+    sidecar.requests.clear()
+    assert constructor().measure(_stl(tmp_path), [{}]) == [(5.0, 6.0, 7.0)]
+    assert [b'name="selection"' in r.content for r in sidecar.requests] == [False]
+
+
+def test_measure_failures_map_to_neutral_codes(sidecar, tmp_path):  # noqa: F811
+    stl = _stl(tmp_path)
+    sidecar.handler = lambda r: httpx.Response(500, json={"error": {"code": "error", "message": "boom"}})
+    assert _construct_error(lambda: constructor().measure(stl, [{}])) is c.ErrorCode.FAILED
+    sidecar.handler = lambda r: httpx.Response(503, json={})
+    assert _construct_error(lambda: constructor().measure(stl, [{}])) is c.ErrorCode.NOT_READY
+
+
+def test_the_contract_default_cannot_measure(tmp_path):
+    from tests.fake_providers import FakeProjectConstructor
+    assert _construct_error(lambda: FakeProjectConstructor().measure(_stl(tmp_path), [{}])) is c.ErrorCode.UNSUPPORTED_INPUT
+
+
+def test_the_catalog_carries_a_machine_printable_height():
+    from app.services.providers.laminus.adapter import catalog_from_legacy
+    cat = catalog_from_legacy({"machine": [{"uuid": "m", "name": "A", "bed_size_z": 256}, {"uuid": "n", "name": "B"},
+                                           {"uuid": "o", "name": "C", "bed_size_z": None}, {"uuid": "p", "name": "D", "bed_size_z": 0}]})
+    assert [p.height_mm for p in cat.machines] == [256.0, None, None, None]

@@ -31,6 +31,7 @@ class Preset:
     name: str
     compatible_printers: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    height_mm: float | None = None        # machine presets: printable height (bed Z), when the provider reports it (BIZ-363)
 
 
 @dataclass
