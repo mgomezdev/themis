@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { useTopbarOverride, type Crumb } from '../components/topbarOverride';
-import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
+import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, toggleKey, useEnabledPrinters } from '../components/PrinterTargetPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
 import {
@@ -44,7 +44,8 @@ export function ProjectDetailScreen() {
   const [allowCached, setAllowCached] = useState(true);
   const [saveSlice, setSaveSlice] = useState(false);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
-  const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
+  const [eligibleKeys, setEligibleKeys] = useState<string[]>([]);       // PrinterTargetPicker selection keys (BIZ-357)
+  const targetPrinters = useEnabledPrinters();
   const [processPreset, setProcessPreset] = useState<string | null>(null);
   const [share, setShare] = useState<ProjectShare | null>(null);
   const [showShare, setShowShare] = useState(false);
@@ -158,7 +159,9 @@ export function ProjectDetailScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, { allowCached, saveSlice });
+      const t = splitTargets(eligibleKeys);
+      const result = await generateProject(projectId, t.printerIds, processPreset, { allowCached, saveSlice },
+                                           { modelUuids: t.modelUuids, anyPrinter: t.anyPrinter });
       setGenerateResult({ jobCount: result.jobs.length, files: result.files ?? [] });
       reload();
     } catch (e) {
@@ -371,9 +374,10 @@ export function ProjectDetailScreen() {
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
               Eligible printers
             </div>
-            <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
+            <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
+            <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
             <div style={{ marginTop: 12 }}>
-              <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+              <ProcessPresetPicker printerIds={coveredPrinterIds(eligibleKeys, targetPrinters)} value={processPreset} onChange={setProcessPreset} />
             </div>
             <div className="col gap-2" style={{ marginTop: 12 }}>
               <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
@@ -388,13 +392,13 @@ export function ProjectDetailScreen() {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button
-                className={eligiblePrinterIds.length === 0 ? 'btn sm' : 'btn primary sm'}
+                className={eligibleKeys.length === 0 ? 'btn sm' : 'btn primary sm'}
                 onClick={handleGenerate}
-                title={eligiblePrinterIds.length === 0
+                title={eligibleKeys.length === 0
                   ? 'No printers selected — jobs will be created but not dispatched'
                   : undefined}
               >
-                {eligiblePrinterIds.length === 0 ? 'Generate without dispatch' : 'Generate'}
+                {eligibleKeys.length === 0 ? 'Generate without dispatch' : 'Generate'}
               </button>
             </div>
           </div>

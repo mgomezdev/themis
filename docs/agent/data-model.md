@@ -270,7 +270,7 @@ hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack
   uncacheable sources), so a job flagged "save" after slicing can still be saved.
 
 ### job_model_targets  (v031 — "any printer of this model"; keyed by model since v052)
-`id, job_id FK (CASCADE), model_uuid FK printer_models` (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
+`id, job_id FK (CASCADE), model_uuid? FK printer_models` (NULL = "Any printer", v058 / BIZ-357: covers every printer, including ones with no registry model and ones added later; `model_targets.targets_printer`) (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
 `print_profile, filament_profile?, ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (the ask tuple, as on `job_printer_configs`),
 `filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
 Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
@@ -281,7 +281,7 @@ only for `queued`/`blocked` jobs. An explicit per-printer config wins over a tar
 `slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
 (v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
 on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
-`POST /projects/{id}/generate` (`eligible_model_uuids`). Job responses add `model_label` ("<manufacturer> <model>").
+`POST /projects/{id}/generate` (`eligible_model_uuids`; `eligible_any_printer` adds one Any-printer target per job). Job responses add `model_label` ("<manufacturer> <model>").
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
