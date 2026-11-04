@@ -7,7 +7,7 @@ import type { ProjectGroup, ProjectItem } from '../api/projects';
 
 const group = (id: number, name: string, over: Partial<ProjectGroup> = {}): ProjectGroup => ({
   id, project_id: 7, name, sort_order: id, is_default: id === 1, strategy: 'fixed', envelope_x: null, envelope_y: null,
-  mix_colours: false, targets: [], ...over,
+  mix_colours: false, targets: [], max_parts: null, pool: null, pool_warning: null, ...over,
 });
 const ITEM = { id: 50, project_id: 7, file_id: 1, file_name: 'Bracket.stl', quantity: 4, quantity_completed: 0, quantity_failed: 0,
   filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0, group_id: 1 } as ProjectItem;
@@ -101,5 +101,37 @@ describe('PrintGroupsCard (BIZ-360)', () => {
     fireEvent.blur(name);
     expect(await screen.findByText(/422/)).toBeTruthy();
     await waitFor(() => expect(reads).toBe(2));
+  });
+});
+
+describe('PrintGroupsCard pools (BIZ-362)', () => {
+  it('switches a group to pack when a printer picks it up, then caps the parts per plate', async () => {
+    const api = open([group(1, 'Default Group'), group(2, 'Pool')]);
+    const { rerender } = render(<PrintGroupsCard projectId={7} items={[]} />);
+    const sel = await screen.findByLabelText('Packing for Pool');
+    expect(screen.getAllByText(/the smallest selected bed/)).toHaveLength(2);
+    fireEvent.change(sel, { target: { value: 'pool' } });
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2')[0]?.body).toEqual({ strategy: 'pool' }));
+    rerender(<PrintGroupsCard projectId={7} items={[]} />);
+  });
+
+  it('shows the pool counts and warning, has no envelope, and saves a whole-number cap (blank = any)', async () => {
+    const api = open([group(1, 'Default Group'), group(2, 'Pool', {
+      strategy: 'pool', max_parts: 4, pool: { done: 3, printing: 2, left: 5 }, pool_warning: 'Pool: no eligible printer can take the remaining parts' })]);
+    render(<PrintGroupsCard projectId={7} items={[]} />);
+    expect((await screen.findByTestId('pool-2')).textContent).toBe('3 done · 2 printing · 5 left');
+    expect(screen.getByRole('alert').textContent).toContain('no eligible printer');
+    expect(screen.getAllByText(/the smallest selected bed/)).toHaveLength(1);        // only the fixed Default group
+    const cap = screen.getByLabelText('Most parts per plate');
+    expect((cap as HTMLInputElement).value).toBe('4');
+    fireEvent.change(cap, { target: { value: '6.7' } });
+    fireEvent.blur(cap);
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2')[0]?.body).toEqual({ max_parts: 6 }));
+    fireEvent.change(cap, { target: { value: '' } });
+    fireEvent.blur(cap);
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2')[1]?.body).toEqual({ max_parts: null }));
+    fireEvent.change(cap, { target: { value: '0' } });
+    fireEvent.blur(cap);
+    expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(2);         // 0 is refused, not saved
   });
 });

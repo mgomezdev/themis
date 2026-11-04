@@ -38,6 +38,10 @@ class SidecarNotReady(SidecarError):
     """The sidecar answered /api/v1/health with a non-200 (still starting or building its catalog)."""
 
 
+class SidecarNothingFits(SidecarError):
+    """POST /api/v1/pack/next answered 422 `nothing_fits` (BIZ-362)."""
+
+
 class SidecarTimeout(SidecarError):
     """The request (or the sidecar's own work) ran out of time."""
 
@@ -333,6 +337,51 @@ class LaminusSidecarClient:
             selection.append(entry)
         data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z), "selection": json.dumps(selection)}
         return self._post_files("/api/v1/pack/mixed", [(n, it.path) for n, it in uploads.values()], data, "pack/mixed")
+
+    def pack_next(self, items: list[ConstructInput], machine_uuid: str, max_parts: int | None = None) -> tuple[bytes, list[int]]:
+        """POST /api/v1/pack/next (BIZ-362): the fullest single plate for one machine -> (3MF bytes, consumed per selection entry).
+        422 `nothing_fits` raises SidecarNothingFits."""
+        uploads: dict[str, tuple[str, ConstructInput]] = {}
+        selection = []
+        for it in items:
+            key = str(it.path)
+            if key not in uploads:
+                uploads[key] = (_UNSAFE_UPLOAD_CHARS.sub("_", f"{len(uploads)}_{it.path.name}"), it)
+            entry: dict = {"file": uploads[key][0], "qty": it.quantity}
+            if it.object_id is not None:
+                entry["id"] = int(it.object_id) if str(it.object_id).isdigit() else it.object_id
+            if it.plate is not None:
+                entry["plate"] = it.plate
+            if it.rule != "split":
+                entry["rule"] = it.rule
+            selection.append(entry)
+        data = {"machine_uuid": machine_uuid, "selection": json.dumps(selection),
+                **({"max_parts": str(max_parts)} if max_parts else {})}
+        handles = [open(it.path, "rb") for _, it in uploads.values()]
+        try:
+            files = [("files", (n, fh, "application/octet-stream")) for (n, _), fh in zip(uploads.values(), handles)]
+            try:
+                r = self._client.post("/api/v1/pack/next", files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"pack/next timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"pack/next request failed: {e}") from e
+        finally:
+            for fh in handles:
+                fh.close()
+        if r.status_code == 422:
+            try:
+                code = r.json().get("error", {}).get("code")
+            except ValueError:
+                code = None
+            if code == "nothing_fits":
+                raise SidecarNothingFits(_detail(r))
+        if r.status_code == 503:
+            raise SidecarNotReady(f"pack/next returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"pack/next returned {r.status_code}: {_detail(r)}")
+        consumed = json.loads(r.headers.get("X-Consumed") or "[]")
+        return r.content, [int(n) for n in consumed]
 
     def inspect_objects(self, model_3mf) -> list[dict]:
         """POST /api/v1/projects/inspect -> the 3MF's objects (id, name, instances, ...)."""

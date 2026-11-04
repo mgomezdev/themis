@@ -102,6 +102,13 @@ class ProviderError(Exception):
         return f"{self.code.value}: {self.message}" if self.message else self.code.value
 
 
+class NothingFits(ProviderError):
+    """`next_plate`: no remaining part fits the target bed (a pool skip, never a failure)."""
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(ErrorCode.UNSUPPORTED_TARGET, message)
+
+
 class CancelToken:
     """Cooperative cancellation. Core sets it (job cancelled / printer stopped); providers poll `cancelled` between
     network round-trips, abort the remote work best-effort, delete partial output and raise
@@ -290,6 +297,12 @@ class ProjectConstructor(_Provider):
     def construct(self, request: ConstructRequest, output_dir: Path, *, timeout: float = DEFAULT_PRODUCE_TIMEOUT_S,
                   cancel: CancelToken | None = None) -> Artifact:
         """Writes one `PROJECT_3MF` into `output_dir`. Raises ProviderError."""
+
+    def next_plate(self, request: ConstructRequest, output_dir: Path, *, max_parts: int | None = None,
+                   timeout: float = DEFAULT_PRODUCE_TIMEOUT_S, cancel: CancelToken | None = None) -> "tuple[Artifact, dict[int, int]]":
+        """BIZ-362 pools: the single fullest plate `request.target` can print from `request.inputs` (the remaining parts), and how
+        many instances of each input it took ({input index: instances}). Raises `NothingFits` when nothing fits that bed."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot pack a next plate")
 
     def list_objects(self, model_3mf: Path) -> "list[ModelObject]":
         """The objects of a 3MF, for picking project items (BIZ-356). Raises ProviderError when the provider can't read it."""

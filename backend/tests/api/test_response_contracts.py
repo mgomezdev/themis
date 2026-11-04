@@ -250,3 +250,19 @@ async def test_filament_match_and_slot_conflicts_carry_their_keys(client, create
     assert_carries("filament_match", cfg["filament_match"])
     assert cfg["filament_match"]["reasons"], "an ineligible printer lists why (the frontend renders them)"
     assert_carries("slot_conflicts", (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json())
+
+
+async def test_queue_pools_carry_the_pool_keys(client, upload_3mf, create_printer):
+    """BIZ-362: GET /queue/pools rows."""
+    a = await create_printer(name="A")
+    pid = (await client.post("/api/v1/projects", json={"name": "Pool"})).json()["id"]
+    (g,) = (await client.get(f"/api/v1/projects/{pid}/groups")).json()
+    await client.patch(f"/api/v1/projects/{pid}/groups/{g['id']}", json={"strategy": "pool", "targets": [{"target_key": str(a)}]})
+    fid = await upload_3mf(filename="part.stl", data=b"solid part\nendsolid\n")
+    await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid, "quantity": 2})
+    from unittest.mock import patch
+    from tests.fake_providers import FakeProjectConstructor
+    with patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        assert (await client.post(f"/api/v1/projects/{pid}/generate", json={})).status_code == 200
+    (pool,) = (await client.get("/api/v1/queue/pools")).json()
+    assert_carries("queue_pool", pool)

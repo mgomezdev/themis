@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, ConstructRequest, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode,
-    InputKind, ModelObject, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
+    InputKind, ModelObject, NothingFits, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
 )
 from .sidecar_client import (
     DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady, SidecarTimeout, SidecarUnreachable,
@@ -88,6 +88,35 @@ class LaminusProjectConstructor(ProjectConstructor):
             return PlateManifest(plates=plates, requested=requested)
         except (OSError, KeyError, ValueError, TypeError, AttributeError, zipfile.BadZipFile):
             return None
+
+    def next_plate(self, request: ConstructRequest, output_dir: Path, *, max_parts: int | None = None,
+                   timeout: float = DEFAULT_PRODUCE_TIMEOUT_S, cancel: CancelToken | None = None):
+        """/pack/next for the target's machine profile (resolved to its catalog uuid)."""
+        from ...catalog_service import cached_catalog
+        from .sidecar_client import SidecarNothingFits
+        machine = request.target.machine_profile
+        catalog = cached_catalog()
+        uuid = catalog.ref_for("machine", machine) if catalog is not None and machine else None
+        if not uuid:
+            raise ProviderError(ErrorCode.UNSUPPORTED_TARGET, f"no machine profile uuid for {machine!r}")
+        try:
+            packed, consumed = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s)).pack_next(
+                list(request.inputs), uuid, max_parts)
+        except SidecarNothingFits as e:
+            raise NothingFits(str(e)) from e
+        except SidecarTimeout as e:
+            raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
+        except SidecarUnreachable as e:
+            raise ProviderError(ErrorCode.UNREACHABLE, str(e)) from e
+        except SidecarNotReady as e:
+            raise ProviderError(ErrorCode.NOT_READY, str(e)) from e
+        except SidecarError as e:
+            raise ProviderError(ErrorCode.FAILED, str(e)) from e
+        if cancel is not None and cancel.cancelled:
+            raise ProviderError(ErrorCode.CANCELLED)
+        out = Path(output_dir) / "next-plate.3mf"
+        out.write_bytes(packed)
+        return Artifact(out, ArtifactKind.PROJECT_3MF, self.identity), {i: n for i, n in enumerate(consumed) if n}
 
     def list_objects(self, model_3mf: Path) -> list[ModelObject]:
         try:

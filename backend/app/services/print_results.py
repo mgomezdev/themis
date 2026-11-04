@@ -127,8 +127,8 @@ async def requeue_parts(session: AsyncSession, source_job: Job, parts: dict[int,
     from ..api.routes.projects import _plan_group_packs, _queue_packs, get_project_constructor, resolve_construct, Reason
 
     proj = await session.get(Project, source_job.project_id)
-    if proj is None:
-        return []
+    if proj is None or source_job.pool_group_id is not None:
+        return []                    # BIZ-362: a pool plate's failed parts go back into the pool (`pools.remaining` counts them)
     constructor = get_project_constructor()
     if resolve_construct(constructor, None).reason is Reason.NO_PROVIDER:
         raise HTTPException(422, "No project builder is configured to repack the failed parts (Settings -> Plugins)")

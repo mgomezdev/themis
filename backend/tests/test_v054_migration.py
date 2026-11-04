@@ -76,7 +76,9 @@ async def test_the_rewrite_keeps_every_row_and_every_child_row_and_stops_id_reus
         await run_migrations(conn)
     async with v053_db.begin() as conn:
         assert "AUTOINCREMENT" in (await _ddl(conn)).upper()
-        assert [dict(r) for r in (await conn.execute(text("SELECT * FROM jobs ORDER BY id"))).mappings().all()] == before
+        after = [dict(r) for r in (await conn.execute(text("SELECT * FROM jobs ORDER BY id"))).mappings().all()]
+        assert [{k: r[k] for k in before[0]} for r in after] == before
+        assert all(r[k] is None for r in after for k in set(after[0]) - set(before[0]))   # later migrations' new columns (v063)
         for t, _ in children:                                                   # not one child row was cascaded away or nulled
             assert (await conn.execute(text(f'SELECT COUNT(*) FROM "{t}"'))).scalar_one() == counts[t], t
         assert (await conn.execute(text("PRAGMA foreign_key_check"))).fetchall() == []

@@ -8671,6 +8671,33 @@
         }
       }
     },
+    "/api/v1/queue/pools": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Active print pools",
+        "description": "Pooled print groups of queued projects (BIZ-362), in queue order: each is one queue entry that idle printers pack their\nnext plate from. `warning` says why one is stuck (no eligible printer can take its remaining parts).",
+        "operationId": "get_queue_pools_api_v1_queue_pools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Get Queue Pools Api V1 Queue Pools Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/queue/reorder": {
       "patch": {
         "tags": [
@@ -12661,6 +12688,34 @@
               }
             ],
             "title": "Targets"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "fixed",
+                  "pool"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "max_parts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 500.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Parts"
           }
         },
         "type": "object",

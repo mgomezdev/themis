@@ -197,3 +197,62 @@ def test_plate_manifest_is_none_for_a_non_zip(tmp_path):
 def test_the_contract_default_reports_no_manifest(tmp_path):
     from tests.fake_providers import FakeProjectConstructor
     assert FakeProjectConstructor().plate_manifest(_pack_with(tmp_path, None)) is None
+
+
+class _Catalog:
+    def ref_for(self, kind, name):
+        return {"machine": {"Bambu P1S 0.4": "m-uuid"}}.get(kind, {}).get(name)
+
+
+def _next_req(tmp_path, machine="Bambu P1S 0.4"):
+    proj = tmp_path / "p.3mf"
+    proj.write_bytes(b"PK")
+    return c.ConstructRequest((c.ConstructInput(_stl(tmp_path), 4, "item-1"), c.ConstructInput(proj, 2, "item-2", plate=3, rule="together")),
+                              c.TargetPrinter(BED, machine_profile=machine))
+
+
+def _next_handler(sc, response):
+    def handler(request):
+        sc.requests.append(request)
+        return response(request)
+    return handler
+
+
+def test_next_plate_posts_the_machine_uuid_selection_and_cap_and_reads_consumed(sidecar, tmp_path, monkeypatch):  # noqa: F811
+    """BIZ-362: /pack/next gets the machine's catalog uuid, the selection in input order and max_parts; X-Consumed maps back
+    to input indexes (entries that took nothing are left out)."""
+    import json as _json
+    monkeypatch.setattr("app.services.catalog_service.cached_catalog", lambda: _Catalog())
+    sidecar.handler = lambda r: httpx.Response(200, content=b"NEXT", headers={"X-Consumed": "[0, 2]"})
+    art, consumed = constructor().next_plate(_next_req(tmp_path), tmp_path, max_parts=5)
+    assert art.path.read_bytes() == b"NEXT" and art.kind is c.ArtifactKind.PROJECT_3MF
+    assert consumed == {1: 2}
+    (call,) = [r for r in sidecar.requests if r.url.path == "/api/v1/pack/next"]
+    body = call.content.decode("latin-1")
+    field = lambda n: body.split(f'name="{n}"')[1].split("\r\n\r\n", 1)[1].split("\r\n--", 1)[0]  # noqa: E731
+    assert field("machine_uuid") == "m-uuid" and field("max_parts") == "5"
+    assert _json.loads(field("selection")) == [{"file": "0_a.stl", "qty": 4},
+                                                {"file": "1_p.3mf", "qty": 2, "plate": 3, "rule": "together"}]
+
+
+def test_next_plate_nothing_fits_is_its_own_error(sidecar, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr("app.services.catalog_service.cached_catalog", lambda: _Catalog())
+    sidecar.handler = lambda r: httpx.Response(422, json={"error": {"code": "nothing_fits", "message": "too big"}})
+    with pytest.raises(c.NothingFits):
+        constructor().next_plate(_next_req(tmp_path), tmp_path)
+    sidecar.handler = lambda r: httpx.Response(422, json={"error": {"code": "validation_error", "message": "bad"}})
+    with pytest.raises(c.ProviderError) as e:
+        constructor().next_plate(_next_req(tmp_path), tmp_path)
+    assert not isinstance(e.value, c.NothingFits) and e.value.code is c.ErrorCode.FAILED
+
+
+def test_next_plate_without_a_machine_uuid_is_unsupported_and_sends_nothing(sidecar, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr("app.services.catalog_service.cached_catalog", lambda: _Catalog())
+    assert _construct_error(lambda: constructor().next_plate(_next_req(tmp_path, machine="Unknown"), tmp_path)) \
+        is c.ErrorCode.UNSUPPORTED_TARGET
+    assert sidecar.requests == []
+
+
+def test_the_contract_default_cannot_pack_a_next_plate(tmp_path):
+    from tests.fake_providers import FakeProjectConstructor
+    assert _construct_error(lambda: FakeProjectConstructor().next_plate(_req(tmp_path), tmp_path)) is c.ErrorCode.UNSUPPORTED_INPUT

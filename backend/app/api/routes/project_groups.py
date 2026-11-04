@@ -1,7 +1,7 @@
 """Print groups of a project (BIZ-360): list, create, configure (name, envelope, colour rule, eligibility targets), reorder, delete."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -31,6 +31,8 @@ class GroupPatch(BaseModel):
     envelope_y: Optional[float] = Field(default=None, gt=0)
     mix_colours: Optional[bool] = None
     targets: Optional[list[GroupTargetIn]] = None               # full replace, in order
+    strategy: Optional[Literal["fixed", "pool"]] = None         # BIZ-362: pack now for one bed, or when a printer picks it up
+    max_parts: Optional[int] = Field(default=None, ge=1, le=500)   # pool: parts per claimed plate cap (null = as many as fit)
 
 
 class GroupOrder(BaseModel):
@@ -42,7 +44,21 @@ def _dict(g: ProjectGroup, targets: list[ProjectGroupTarget]) -> dict:
         "id": g.id, "project_id": g.project_id, "name": g.name, "sort_order": g.sort_order, "is_default": bool(g.is_default),
         "strategy": g.strategy, "envelope_x": g.envelope_x, "envelope_y": g.envelope_y, "mix_colours": bool(g.mix_colours),
         "targets": [{"target_key": t.target_key, "process_profile": t.process_profile} for t in targets],
+        "max_parts": g.max_parts,
     }
+
+
+async def _full(session: AsyncSession, g: ProjectGroup) -> dict:
+    """The group plus, for a pool, its done / printing / left counts and why it is stuck (BIZ-362)."""
+    out = _dict(g, await pg.targets_of(session, g.id))
+    if g.strategy == "pool":
+        from ...services import pools
+        out["pool"] = await pools.stats(session, g)
+        out["pool_warning"] = await pools.warning(session, g) if g.queue_position is not None else None
+    else:
+        out["pool"] = None
+        out["pool_warning"] = None
+    return out
 
 
 async def _project(session: AsyncSession, project_id: int) -> Project:
@@ -65,7 +81,7 @@ async def list_groups(project_id: int, session: AsyncSession = Depends(get_sessi
     await _project(session, project_id)
     groups = await pg.groups_of(session, project_id)
     await session.commit()                                   # a lazily created Default Group is kept
-    return [_dict(g, await pg.targets_of(session, g.id)) for g in groups]
+    return [await _full(session, g) for g in groups]
 
 
 @router.post("/{project_id}/groups", status_code=201, summary="Add a print group (last in queue order)",
@@ -76,7 +92,7 @@ async def create_group(project_id: int, body: GroupCreate, session: AsyncSession
     g = ProjectGroup(project_id=project_id, name=body.name, sort_order=await pg.next_sort_order(session, project_id))
     session.add(g)
     await session.commit()
-    return _dict(g, [])
+    return await _full(session, g)
 
 
 @router.patch("/{project_id}/groups/{group_id}", summary="Configure a print group",
@@ -96,6 +112,10 @@ async def patch_group(project_id: int, group_id: int, body: GroupPatch, session:
         g.envelope_x, g.envelope_y = x, y
     if body.mix_colours is not None:
         g.mix_colours = body.mix_colours
+    if body.strategy is not None:
+        g.strategy = body.strategy
+    if "max_parts" in sent:
+        g.max_parts = body.max_parts
     if body.targets is not None:
         keys = [t.target_key for t in body.targets]
         if len(set(keys)) != len(keys):
@@ -110,7 +130,7 @@ async def patch_group(project_id: int, group_id: int, body: GroupPatch, session:
         for i, t in enumerate(body.targets):
             session.add(ProjectGroupTarget(group_id=g.id, target_key=t.target_key, process_profile=t.process_profile, sort_order=i))
     await session.commit()
-    return _dict(g, await pg.targets_of(session, g.id))
+    return await _full(session, g)
 
 
 @router.put("/{project_id}/groups/order", summary="Set the queue order of a project's print groups",
@@ -123,7 +143,7 @@ async def order_groups(project_id: int, body: GroupOrder, session: AsyncSession 
     for i, gid in enumerate(body.group_ids):
         groups[gid].sort_order = i
     await session.commit()
-    return [_dict(groups[gid], await pg.targets_of(session, gid)) for gid in body.group_ids]
+    return [await _full(session, groups[gid]) for gid in body.group_ids]
 
 
 @router.delete("/{project_id}/groups/{group_id}", status_code=204, summary="Delete a print group (its items move to the Default Group)",
