@@ -53,6 +53,10 @@ def sidecar():
             return httpx.Response(200, content=sc.gcode)
         if path == "/api/v1/pack":
             return httpx.Response(200, content=b"PACKED")
+        if path == "/api/v1/pack/mixed":
+            return httpx.Response(200, content=b"MIXED")
+        if path == "/api/v1/projects/inspect":
+            return httpx.Response(200, json={"objects": [{"id": 3, "name": "Gear", "instances": 2}, {"id": 8, "name": "Axle"}]})
         return httpx.Response(404)
 
     def record(request):

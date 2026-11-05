@@ -53,8 +53,21 @@ async def test_v051_rewrites_keys_to_the_current_shape_and_down_restores_the_old
             # The migrated keys are byte-for-byte what the production key builder produces now.
             assert keys == [slice_cache.cache_key(_inputs(c)) for c in CASES]
             assert keys != [_legacy_key(c) for c in CASES]
-            while (await conn.execute(text("SELECT max(version) FROM schema_migrations"))).scalar_one() >= 51:
-                await rollback_last(conn)
+            await rollback_last(conn)                                  # v065 (newer than the migration under test)
+            await rollback_last(conn)                                  # v064
+            await rollback_last(conn)                                  # v063
+            await rollback_last(conn)                                  # v062
+            await rollback_last(conn)                                  # v061
+            await rollback_last(conn)                                  # v060
+            await rollback_last(conn)                                  # v059
+            await rollback_last(conn)                                  # v058
+            await rollback_last(conn)                                  # v057
+            await rollback_last(conn)                                  # v056
+            await rollback_last(conn)                                  # v055
+            await rollback_last(conn)                                  # v054
+            await rollback_last(conn)                                  # v053 (newer than the migration under test)
+            await rollback_last(conn)                                  # v052
+            await rollback_last(conn)                                  # v051
             keys = [r[0] for r in (await conn.execute(text("SELECT cache_key FROM sliced_versions ORDER BY id"))).fetchall()]
             assert keys == [_legacy_key(c) for c in CASES]
     finally:

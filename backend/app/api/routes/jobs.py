@@ -24,7 +24,7 @@ from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config, _slice_params, build_slice_request
+from ...services.queue_engine import effective_process_profile, queue_engine, _slot_for_config, _slice_params, build_slice_request
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider
 from ...services.slicer_service import SliceError, SliceRequest
 from ...plugins.capabilities.filament_inventory import InvSpool
@@ -88,17 +88,17 @@ class PrinterConfigInput(AskFields):
 
 
 class ModelTargetInput(AskFields):
-    """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).
+    """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
-    model_uuid: str
+    model_uuid: str | None
     print_profile: str = ""
     filament_profile: str | None = None
     filament_map: list[dict] | None = None
 
     @field_validator("model_uuid")
     @classmethod
-    def _model_uuid_set(cls, v: str) -> str:
-        if not v or not v.strip():
+    def _model_uuid_set(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
             raise ValueError("model_uuid must not be blank")
         return v
 
@@ -156,9 +156,9 @@ async def _check_gcode_printers(
         if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
             raise HTTPException(422, f"{printer.name} {why}")
     for t in targets:
-        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
+        matching = await model_targets.printers_of_target(session, t.model_uuid)
         if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
-            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            label = await _target_label(session, t.model_uuid)
             raise HTTPException(422, f"No {label} printer can take this file: each one {why}")
 
 
@@ -181,10 +181,10 @@ async def _check_machine_eligibility(
         if not outcome.allowed:
             refused.append(outcome)
     for t in targets:
-        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
+        matching = await model_targets.printers_of_target(session, t.model_uuid)
         outcomes = [await eligibility.evaluate(session, uploaded_file, p, confirmed=confirmed) for p in matching]
         if outcomes and not any(o.allowed for o in outcomes):
-            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            label = await _target_label(session, t.model_uuid)
             refused.append(eligibility.Outcome(False, outcomes[0].code, f"No {label} printer can take this file: "
                                                                         f"{outcomes[0].message}"))
     if not refused:
@@ -213,23 +213,31 @@ async def _check_version_printers(
             raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
                                      "sliced for that printer model")
     for t in targets:
+        if t.model_uuid is None:
+            raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}: pick that printer model, "
+                                     "not Any printer")
         if version.machine_preset not in await slicer_profiles.profiles_of_model(session, t.model_uuid):
             label = await slicer_profiles.model_display_name(session, t.model_uuid)
             raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}, not "
                                      f"{label}")
 
 
+async def _target_label(session: AsyncSession, model_uuid: str | None) -> str:
+    return "Any printer" if model_uuid is None else await slicer_profiles.model_display_name(session, model_uuid)
+
+
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
-    seen: set[str] = set()
+    seen: set[str | None] = set()
     for t in targets:
         if t.model_uuid in seen:
-            raise HTTPException(422, f"Duplicate make/model target {t.model_uuid!r}")
+            raise HTTPException(422, "Any printer is listed more than once" if t.model_uuid is None
+                                else f"Duplicate make/model target {t.model_uuid!r}")
         seen.add(t.model_uuid)
 
 
 async def _require_known_models(session: AsyncSession, targets: list[ModelTargetInput]) -> None:
     for t in targets:
-        if await session.get(PrinterModelRecord, t.model_uuid) is None:
+        if t.model_uuid is not None and await session.get(PrinterModelRecord, t.model_uuid) is None:
             raise HTTPException(422, f"Unknown printer model {t.model_uuid!r}")
 
 
@@ -532,10 +540,11 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
     machine_uuid = catalog.ref_for("machine", machine_name)
-    process_uuid = catalog.ref_for("process", body.print_profile)
+    process_name = effective_process_profile(body, printer)     # "" = the printer's default (BIZ-358)
+    process_uuid = catalog.ref_for("process", process_name)
     if not machine_uuid or not process_uuid:
         return {**empty, "has_embedded_settings": True,
-                "error": f"Profile not found in sidecar: machine={machine_name!r} process={body.print_profile!r}"}
+                "error": f"Profile not found in sidecar: machine={machine_name!r} process={process_name!r}"}
 
     # Filament content doesn't affect the curated (process) diff. If the named
     # filament isn't in the catalog, pick the first compatible one as a stand-in.
@@ -719,7 +728,7 @@ async def get_job_details(
         if p and p.id not in conflicts_by_printer:
             conflicts_by_printer[p.id] = await filament_matching.conflicts_for(loaded)
         conflicts = conflicts_by_printer.get(p.id, set()) if p else set()
-        fit = filament_matching.evaluate(cfg, loaded, conflicts)                  # why this printer does / does not match
+        fit = filament_matching.evaluate_for_printer(cfg, p, conflicts)          # why this printer does / does not match
         slot = _slot_for_config(cfg, loaded, conflicts) if p else None
         resolved.append((cfg, p, slot, fit))
         if inventory_refs.slot_spool_ref(slot) is not None:
@@ -1497,6 +1506,10 @@ async def mark_job_outcome(
         raise HTTPException(400, "This job has no project items to mark")
 
     plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
+    reported = (await session.execute(select(JobItemFailure.id).where(
+        JobItemFailure.job_id == job_id, JobItemFailure.resolution.is_not(None)).limit(1))).first()
+    if reported:      # BIZ-364: results reported at plate clear already requeued / held its failed parts
+        raise HTTPException(409, "This job's print results were reported when its plate was cleared")
 
     # Reverse previous increments
     old_jifs = (await session.execute(

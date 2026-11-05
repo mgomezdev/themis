@@ -1,7 +1,7 @@
 """Persist the filament rows that caused a fleet-wide job block."""
 from sqlalchemy import text
 
-version = 57
+version = 65
 name = "unmatched_filaments"
 
 

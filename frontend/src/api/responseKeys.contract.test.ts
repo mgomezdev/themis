@@ -12,10 +12,10 @@ import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
 import type { AlarmSummary, PrinterAlarm } from './alarms';
-import type { ApiPrinter, SlotConflicts } from './printers';
+import type { ApiPrinter, PartWaiver, PlateResults, SlotConflicts } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
-import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
-import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch } from './queue';
+import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, ProjectJob, ProjectLink, ProjectPart, ProjectReview, ReviewCheck } from './projects';
+import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch, QueuePool } from './queue';
 import type { ModelSlicerProfile, ProfileCandidate, ProfileSuggestions, ProfileVariantOption } from './slicerProfiles';
 import type { CapabilityInfo } from './capabilities';
 import type { PluginConnectionResult, PluginProvides, PluginSummary } from './plugins';
@@ -28,13 +28,13 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 const FLEET = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, dormant: 1, dormant_reason: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
-  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1,
+  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1, waived_parts: 1, waiver_flag: 1, waiver_stopped: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, quiet_start: 1, quiet_end: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -43,8 +43,15 @@ const JOB = {
   deduction_skipped: 1, deduction_note: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,
   eligible_printers: 1, model_targets: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
-  save_slice: 1, save_slice_name: 1, allow_cached_slice: 1, sliced_version_id: 1, slice_cache_info: 1,
+  save_slice: 1, save_slice_name: 1, allow_cached_slice: 1, sliced_version_id: 1, slice_cache_info: 1, pool_group_id: 1,
 } satisfies Record<keyof ApiJob, 1>;
+
+const PROJECT_REVIEW = { checks: 1, open: 1 } satisfies Record<keyof ProjectReview, 1>;
+const REVIEW_CHECK = { level: 1, tab: 1, message: 1, group_id: 1, item_id: 1 } satisfies Record<keyof ReviewCheck, 1>;
+
+const QUEUE_POOL = {
+  group_id: 1, name: 1, project_id: 1, project_name: 1, queue_position: 1, done: 1, printing: 1, left: 1, warning: 1,
+} satisfies Record<keyof QueuePool, 1>;
 
 const JOB_DETAILS = {
   ...JOB, unmatched_filaments: 1, file: 1, plate: 1, printer_configs: 1, assigned_printer: 1, filament_grams_live: 1, estimated_seconds_live: 1,
@@ -62,9 +69,22 @@ const PROJECT = {
   actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1, costs: 1, price_visible: 1, quote_accepted_at: 1,
 } satisfies Record<keyof Project, 1>;
 
+const PROJECT_FAILURE = {
+  id: 1, project_item_id: 1, file_name: 1, job_id: 1, printer_id: 1, printer_name: 1, quantity_failed: 1, created_at: 1, resolution: 1,
+} satisfies Record<keyof ProjectFailure, 1>;
+
+const PLATE_RESULTS = { job_id: 1, project_id: 1, parts: 1, test_print_waiver_id: 1 } satisfies Record<keyof PlateResults, 1>;
+
+const PART_WAIVER = { id: 1, part_key: 1, file_name: 1, failures: 1, last_failure_at: 1, projects: 1 } satisfies Record<keyof PartWaiver, 1>;
+
+const PROJECT_GROUP = {
+  id: 1, project_id: 1, name: 1, sort_order: 1, is_default: 1, strategy: 1, envelope_x: 1, envelope_y: 1, mix_colours: 1, targets: 1,
+  max_parts: 1, pool: 1, pool_warning: 1,
+} satisfies Record<keyof ProjectGroup, 1>;
+
 const PROJECT_ITEM = {
   id: 1, project_id: 1, file_id: 1, file_name: 1, quantity: 1, quantity_completed: 1, quantity_failed: 1,
-  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1, group_id: 1, quantity_held: 1, kind: 1, source_ref: 1, pack_rule: 1,
 } satisfies Record<keyof ProjectItem, 1>;
 
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;
@@ -169,6 +189,13 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['slicer profile variant option', contract.slicer_profile_variant, keysOf(PROFILE_VARIANT)],
     ['job model target', contract.model_target, keysOf(MODEL_TARGET)],
     ['project item', contract.project_item, keysOf(PROJECT_ITEM)],
+    ['project group', contract.project_group, keysOf(PROJECT_GROUP)],
+    ['queue pool', contract.queue_pool, keysOf(QUEUE_POOL)],
+    ['project review', contract.project_review, keysOf(PROJECT_REVIEW)],
+    ['review check', contract.review_check, keysOf(REVIEW_CHECK)],
+    ['project failure', contract.project_failure, keysOf(PROJECT_FAILURE)],
+    ['plate results', contract.plate_results, keysOf(PLATE_RESULTS)],
+    ['part waiver', contract.part_waiver, keysOf(PART_WAIVER)],
     ['project link', contract.project_link, keysOf(PROJECT_LINK)],
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
     ['project job', contract.project_job, keysOf(PROJECT_JOB)],
@@ -203,7 +230,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
 
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
-      'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
+      'job_details_extra', 'project', 'project_item', 'project_group', 'queue_pool', 'project_review', 'review_check', 'project_failure', 'plate_results', 'part_waiver', 'project_link', 'project_part', 'project_job', 'library_file',
       'project_payment', 'customer_payment',
       'portal_project', 'portal_quote', 'portal_payment',
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',

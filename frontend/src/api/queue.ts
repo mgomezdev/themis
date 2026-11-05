@@ -38,15 +38,15 @@ export interface PrinterConfigInput extends Partial<FilamentAsk> {
   filament_map?: FilamentMapEntry[] | null;
 }
 
-/** Eligible on any printer of the registry model `model_uuid` (BIZ-294). */
+/** Eligible on any printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357). */
 export interface ModelTargetInput extends Partial<FilamentAsk> {
-  model_uuid: string;
+  model_uuid: string | null;
   print_profile: string;
   filament_profile?: string | null;
 }
 
 export interface ApiModelTarget extends FilamentAsk {
-  model_uuid: string;
+  model_uuid: string | null;      // null = "Any printer"
   model_label: string | null;     // "<manufacturer> <model>"
   print_profile: string;
   filament_profile: string | null;
@@ -91,7 +91,23 @@ export interface ApiJob {
   allow_cached_slice: boolean;       // print a matching cached version instead of slicing when claimed
   sliced_version_id: number | null;  // the cached version this job prints / printed
   slice_cache_info: SliceCacheInfo | null;
+  pool_group_id?: number | null;     // BIZ-362 (queue rows): the print pool this plate was packed from at claim time
 }
+
+/** A pooled print group of a queued project (BIZ-362): one queue entry each idle printer packs its next plate from. */
+export interface QueuePool {
+  group_id: number;
+  name: string;
+  project_id: number;
+  project_name: string | null;
+  queue_position: number;
+  done: number;
+  printing: number;
+  left: number;
+  warning: string | null;            // why it is stuck: no eligible printer can take the remaining parts
+}
+
+export const getQueuePools = () => request<QueuePool[]>('/api/v1/queue/pools');
 
 /** The latest slicing-cache decision for a job (+ the outcome of saving its slice), for the job-details debug view. */
 export interface SliceCacheInfo {
@@ -286,6 +302,10 @@ export interface QueueConfig {
   check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
   /** Minutes a printer may be offline before it is declared dead (its running job fails and goes back to the top of the queue). 0 = never. */
   printer_dead_after_minutes: number;
+  /** A part is held for a person after failing on this many different printers (BIZ-364). */
+  part_retry_limit: number;
+  /** A printer is waived for a part after failing it this many times (BIZ-365). */
+  waive_after: number;
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

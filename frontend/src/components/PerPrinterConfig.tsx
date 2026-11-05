@@ -48,6 +48,8 @@ const entryAsk = (e: FilamentMapEntry): FilamentAsk => ({
   filament_subtype: e.filament_subtype, filament_color: e.filament_color,
 });
 
+const UNCHOSEN = '__unchosen__';
+
 function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
   const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
     printProfiles: [], filamentProfiles: [],
@@ -147,9 +149,11 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
         {!gcode && <div>
           <label className="label">Print profile</label>
           <select data-testid="print-profile-select" className="select"
-                  value={config.printProfile ?? ''}
-                  onChange={e => onChange({ printProfile: e.target.value || null })}>
-            <option value="">— select profile —</option>
+                  value={config.printProfile ?? UNCHOSEN}
+                  onChange={e => onChange({ printProfile: e.target.value === UNCHOSEN ? null : e.target.value })}>
+            <option value={UNCHOSEN} disabled>— select profile —</option>
+            {/* "" = the printer's own default process profile (BIZ-358); null = not chosen yet */}
+            <option value="">Printer default</option>
             {printProfiles.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           {printProfiles.length === 0 && (

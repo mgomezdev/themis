@@ -102,6 +102,13 @@ class ProviderError(Exception):
         return f"{self.code.value}: {self.message}" if self.message else self.code.value
 
 
+class NothingFits(ProviderError):
+    """`next_plate`: no remaining part fits the target bed (a pool skip, never a failure)."""
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(ErrorCode.UNSUPPORTED_TARGET, message)
+
+
 class CancelToken:
     """Cooperative cancellation. Core sets it (job cancelled / printer stopped); providers poll `cancelled` between
     network round-trips, abort the remote work best-effort, delete partial output and raise
@@ -119,6 +126,14 @@ class CancelToken:
 
 
 # ── targets, settings, requests, results ──────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class PlateManifest:
+    """Per plate of a constructed project: how many instances came from each `ConstructRequest.inputs` index
+    (`plates[plate_number][input_index] = count`), and per input how many instances were requested (qty × parts per copy)."""
+    plates: Mapping[int, Mapping[int, int]]
+    requested: Mapping[int, int] = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class TargetPrinter:
@@ -182,6 +197,19 @@ class ConstructInput:
     path: Path
     quantity: int
     ref: str
+    # BIZ-356: which part of a 3MF this input is (None = the whole model / an STL), and how its copies are placed:
+    # "split" (default) | "together" (each copy whole on one plate) | "solo" (each instance alone on its plate).
+    object_id: str | None = None
+    plate: int | None = None
+    rule: str = "split"
+
+
+@dataclass(frozen=True)
+class ModelObject:
+    """One object of a 3MF, as a provider lists it (BIZ-356)."""
+    id: str
+    name: str
+    instances: int = 1
 
 
 @dataclass(frozen=True)
@@ -269,6 +297,26 @@ class ProjectConstructor(_Provider):
     def construct(self, request: ConstructRequest, output_dir: Path, *, timeout: float = DEFAULT_PRODUCE_TIMEOUT_S,
                   cancel: CancelToken | None = None) -> Artifact:
         """Writes one `PROJECT_3MF` into `output_dir`. Raises ProviderError."""
+
+    def next_plate(self, request: ConstructRequest, output_dir: Path, *, max_parts: int | None = None,
+                   timeout: float = DEFAULT_PRODUCE_TIMEOUT_S, cancel: CancelToken | None = None) -> "tuple[Artifact, dict[int, int]]":
+        """BIZ-362 pools: the single fullest plate `request.target` can print from `request.inputs` (the remaining parts), and how
+        many instances of each input it took ({input index: instances}). Raises `NothingFits` when nothing fits that bed."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot pack a next plate")
+
+    def measure(self, path: Path, selection: "list[dict]") -> "list[tuple[float, float, float] | None]":
+        """BIZ-363: the size (x, y, z mm) of each selected part of `path`: `{}` the whole file / an STL, `{"object_id": id}` one
+        placed instance of an object, `{"plate": n}` a plate as authored. None for a part it can't measure. Default: unsupported."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot measure parts")
+
+    def list_objects(self, model_3mf: Path) -> "list[ModelObject]":
+        """The objects of a 3MF, for picking project items (BIZ-356). Raises ProviderError when the provider can't read it."""
+        raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{type(self).__name__} cannot list 3MF objects")
+
+    def plate_manifest(self, project_3mf: Path) -> "PlateManifest | None":
+        """What `construct` put on each plate of `project_3mf` (BIZ-359), or None when this provider (or this file) reports none.
+        Local, blocking file read; never raises for an unreadable file."""
+        return None
 
 
 class GcodeProducer(_Provider):

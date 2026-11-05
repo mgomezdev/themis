@@ -116,8 +116,14 @@ export interface ApiPrinter {
   no_snapshots_while_idle: boolean;
   bed_x_mm: number;
   bed_y_mm: number;
+  bed_z_mm: number | null;               // BIZ-363: build height; null = the machine profile's (Review fit check)
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
   preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
+  default_process_profile: string | null;   // what a "Printer default" job config slices with; null = none set
+  single_colour_only: boolean;              // never takes multicolour work
+  waiver_flag_at: number;                   // BIZ-365: flag at this many waived parts (0 = off)
+  waiver_stop_at: number;                   // stop taking queue work at this many (0 = off)
+  test_print_job_id: number | null;         // a pending test print: the only job it claims
   quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
   quiet_end: string | null;
 }
@@ -151,8 +157,13 @@ export interface UpdatePrinterBody {
   no_snapshots_while_idle?: boolean;
   bed_x_mm?: number;
   bed_y_mm?: number;
+  bed_z_mm?: number | null;                     // null clears (use the machine profile's height)
   machine_rate_per_hour?: number | null;
   preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
+  default_process_profile?: string | null;     // null clears; must be compatible with the printer's machine profile
+  single_colour_only?: boolean;
+  waiver_flag_at?: number;
+  waiver_stop_at?: number;
   quiet_start?: string | null;
   quiet_end?: string | null;
 }
@@ -330,8 +341,57 @@ export function reconnectPrinter(id: string): Promise<void> {
 
 /** Mark the printer ready for new work (plate cleared) so it can claim the next job.
  *  Same endpoint a QR code / home-automation trigger would hit. */
-export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> {
-  return request(`${BASE}/${id}/plate-cleared`, { method: 'POST' });
+export function markPlateCleared(id: string | number, results?: PlateResultsIn): Promise<PlateClearedOut> {
+  return request(`${BASE}/${id}/plate-cleared`, results
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(results) }
+    : { method: 'POST' });
+}
+
+/** What printed on the plate being cleared (BIZ-364): parts not listed all succeeded. */
+export interface PlateResultsIn {
+  job_id: number;
+  results: { project_item_id: number; quantity_failed: number }[];
+  clear_waiver?: boolean;          // BIZ-365: a test print that came out fine clears its printer's waiver
+}
+
+export interface PlateClearedOut {
+  ok: boolean;
+  requeued_job_ids?: number[];                                  // failed parts packed again (reported results only)
+  held?: { project_item_id: number; quantity: number }[];       // failed on too many printers: a person decides
+}
+
+/** The project job whose results are still to report on this printer's plate; `job_id` null = nothing to ask. */
+export interface PlateResults {
+  job_id: number | null;
+  project_id: number | null;
+  parts: { project_item_id: number; file_name: string; quantity: number }[];
+  test_print_waiver_id: number | null;    // BIZ-365: this job is the printer's test print for that waiver
+}
+
+/** A part this printer keeps failing and no longer gets (BIZ-365). */
+export interface PartWaiver {
+  id: number;
+  part_key: string;
+  file_name: string | null;
+  failures: number;
+  last_failure_at: string | null;
+  projects: string[];
+}
+
+export const listWaivers = (id: number) => request<PartWaiver[]>(`${BASE}/${id}/waivers`);
+export async function clearWaiver(id: number, waiverId: number): Promise<void> {
+  const resp = await apiFetch(`${BASE}/${id}/waivers/${waiverId}`, { method: 'DELETE' });
+  if (!resp.ok) throw new Error(`${resp.status} ${await resp.text().catch(() => resp.statusText)}`);
+}
+export async function clearAllWaivers(id: number): Promise<void> {
+  const resp = await apiFetch(`${BASE}/${id}/waivers`, { method: 'DELETE' });
+  if (!resp.ok) throw new Error(`${resp.status} ${await resp.text().catch(() => resp.statusText)}`);
+}
+export const testPrintWaiver = (id: number, waiverId: number) =>
+  request<{ job_id: number }>(`${BASE}/${id}/waivers/${waiverId}/test-print`, { method: 'POST' });
+
+export function getPlateResults(id: string | number): Promise<PlateResults> {
+  return request(`${BASE}/${id}/plate-results`);
 }
 
 export interface DiscoveredPrinter {

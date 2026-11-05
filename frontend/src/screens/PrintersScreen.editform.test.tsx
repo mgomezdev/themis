@@ -19,6 +19,8 @@ const PRINTER: ApiPrinter = {
   bed_y_mm: 256,
   machine_rate_per_hour: null,
   preferred_slicer_plugin_id: null,
+  default_process_profile: null,
+  single_colour_only: false, bed_z_mm: null, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null,
   quiet_start: null,
   quiet_end: null,
 };
@@ -38,7 +40,7 @@ beforeEach(() => {
     if (url.includes('/orca-machine-catalog')) return new Response('[]', { status: 200 });
     if (url === '/api/v1/printer-models/model-p1s/slicer-profiles') return new Response(JSON.stringify(ROWS), { status: 200 });
     if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], selections: {} }), { status: 200 });
-    if (url.match(/\/printers\/7\/profiles$/)) return new Response(JSON.stringify({ print_profiles: [], filament_profiles: ['Generic PLA @BBL', 'PolyTerra PLA @BBL'] }), { status: 200 });
+    if (url.match(/\/printers\/7\/profiles$/)) return new Response(JSON.stringify({ print_profiles: ['0.20mm Standard @BBL', '0.12mm Fine @BBL'], filament_profiles: ['Generic PLA @BBL', 'PolyTerra PLA @BBL'] }), { status: 200 });
     if (url.match(/\/printers\/7$/) && init?.method === 'PATCH') return new Response(JSON.stringify(PRINTER), { status: 200 });
     return new Response('[]', { status: 200 });
   }));
@@ -106,5 +108,51 @@ describe('EditForm nozzle variant (BIZ-294)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await waitFor(() => expect(patchBody()).toBeTruthy());
     expect(patchBody().nozzle_variant).toBeNull();
+  });
+});
+
+describe('EditForm slicing defaults (BIZ-358)', () => {
+  it('saves a default process profile from the printer’s compatible presets and the single-colour flag', async () => {
+    render(<EditForm printer={PRINTER} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const select = await screen.findByLabelText('Default process profile') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(['— none —', '0.20mm Standard @BBL', '0.12mm Fine @BBL']));
+    fireEvent.change(select, { target: { value: '0.12mm Fine @BBL' } });
+    fireEvent.click(screen.getByLabelText(/Single colour only/));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().default_process_profile).toBe('0.12mm Fine @BBL');
+    expect(patchBody().single_colour_only).toBe(true);
+  });
+
+  it('shows the stored values and clears the default to null', async () => {
+    render(<EditForm printer={{ ...PRINTER, default_process_profile: '0.20mm Standard @BBL', single_colour_only: true }}
+                     types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const select = await screen.findByLabelText('Default process profile') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('0.20mm Standard @BBL'));
+    expect((screen.getByLabelText(/Single colour only/) as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().default_process_profile).toBeNull();
+  });
+});
+
+describe('EditForm build height (BIZ-363)', () => {
+  it('saves a build height, and blank (or not a positive number) clears it to the profile height', async () => {
+    render(<EditForm printer={{ ...PRINTER, bed_z_mm: 250 }} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const z = screen.getByLabelText('Build height (mm)') as HTMLInputElement;
+    expect(z.value).toBe('250');
+    fireEvent.change(z, { target: { value: '320' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().bed_z_mm).toBe(320);
+  });
+
+  it.each([[''], ['0'], ['-5']])('sends null for %j', async (value) => {
+    render(<EditForm printer={{ ...PRINTER, bed_z_mm: 250 }} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Build height (mm)'), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toBeTruthy());
+    expect(patchBody().bed_z_mm).toBeNull();
   });
 });

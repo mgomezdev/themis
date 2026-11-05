@@ -5,7 +5,7 @@ import os
 import socket
 import time as _time
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
@@ -61,7 +61,10 @@ class PrinterCreate(BaseModel):
     no_snapshots_while_idle: bool = False
     bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
     bed_y_mm: float | None = Field(default=None, gt=0)
+    bed_z_mm: float | None = Field(default=None, gt=0, le=5000)   # BIZ-363: build height (null = the machine profile's)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
+    default_process_profile: str | None = None      # BIZ-358: what a "Printer default" job config slices with
+    single_colour_only: bool = False
 
 
 class PrinterUpdate(BaseModel):
@@ -79,11 +82,17 @@ class PrinterUpdate(BaseModel):
     no_snapshots_while_idle: bool | None = None
     bed_x_mm: float | None = Field(default=None, gt=0)
     bed_y_mm: float | None = Field(default=None, gt=0)
+    bed_z_mm: float | None = Field(default=None, gt=0, le=5000)   # explicit null clears (use the machine profile's height)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None
     # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
     preferred_slicer_plugin_id: str | None = None
+    default_process_profile: str | None = None      # explicit null (or "") clears it
+    single_colour_only: bool | None = None
+    # BIZ-365: flag / stop the printer at this many waived parts (0 = off)
+    waiver_flag_at: int | None = Field(default=None, ge=0, le=1000)
+    waiver_stop_at: int | None = Field(default=None, ge=0, le=1000)
 
     @model_validator(mode="after")
     def _quiet_hours_pair(self):
@@ -96,6 +105,18 @@ class PrinterUpdate(BaseModel):
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("quiet_start and quiet_end must be set together (or both null)")
         return self
+
+
+class PartResult(BaseModel):
+    project_item_id: int
+    quantity_failed: int = Field(ge=0)
+
+
+class PlateResults(BaseModel):
+    """What printed on the plate being cleared (BIZ-364). Parts not listed all succeeded."""
+    job_id: Optional[int] = None
+    results: list[PartResult] = []
+    clear_waiver: bool = False        # BIZ-365: the job was a test print and it came out fine: clear its printer's waiver
 
 
 class LightBody(BaseModel):
@@ -146,6 +167,23 @@ async def _check_variant(session: AsyncSession, model_uuid: str | None, raw: dic
     return variant.as_dict()
 
 
+async def _check_default_process(session: AsyncSession, printer: Printer, name: str | None) -> str | None:
+    """A default process profile must be one of the process presets compatible with the printer's machine profile (BIZ-358)."""
+    if not name:
+        return None
+    machine = await slicer_profiles.machine_profile_for(session, printer)
+    if not machine:
+        raise HTTPException(422, f"{printer.name} has no machine profile yet: map its model in Settings > Printer models first")
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        raise HTTPException(422, "The slicer's profile catalog is unavailable, so the process profile can't be checked; try again later")
+    slicer = get_slicing_provider()
+    compat = slicer.compatible_presets if slicer else default_compatible_presets
+    if name not in {p.name for p in compat(cat, machine, "process")}:
+        raise HTTPException(422, f"Process profile {name!r} is not compatible with {machine!r}")
+    return name
+
+
 def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = None) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
@@ -172,10 +210,16 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "bed_x_mm": p.bed_x_mm,
         "bed_y_mm": p.bed_y_mm,
+        "bed_z_mm": p.bed_z_mm,
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
         "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
+        "default_process_profile": p.default_process_profile,
+        "single_colour_only": bool(p.single_colour_only),
+        "waiver_flag_at": p.waiver_flag_at or 0,
+        "waiver_stop_at": p.waiver_stop_at or 0,
+        "test_print_job_id": p.test_print_job_id,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -336,8 +380,11 @@ async def create_printer(
         no_snapshots_while_idle=body.no_snapshots_while_idle,
         bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
         bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
+        bed_z_mm=body.bed_z_mm,
         machine_rate_per_hour=body.machine_rate_per_hour,
+        single_colour_only=body.single_colour_only,
     )
+    printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
@@ -669,6 +716,8 @@ async def update_printer(
         printer.bed_x_mm = body.bed_x_mm
     if body.bed_y_mm is not None:
         printer.bed_y_mm = body.bed_y_mm
+    if "bed_z_mm" in body.model_fields_set:
+        printer.bed_z_mm = body.bed_z_mm
     if "quiet_start" in body.model_fields_set or "quiet_end" in body.model_fields_set:
         printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
     if "machine_rate_per_hour" in body.model_fields_set:
@@ -678,6 +727,15 @@ async def update_printer(
         if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
             raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
         printer.preferred_slicer_plugin_id = wanted
+    if "default_process_profile" in body.model_fields_set and (body.default_process_profile or None) != printer.default_process_profile:
+        # re-validated only when it changes: an unrelated edit must not 422 because the catalog is down or the profile went stale
+        printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
+    if body.single_colour_only is not None:
+        printer.single_colour_only = body.single_colour_only
+    if body.waiver_flag_at is not None:
+        printer.waiver_flag_at = body.waiver_flag_at
+    if body.waiver_stop_at is not None:
+        printer.waiver_stop_at = body.waiver_stop_at
     await session.commit()
     await session.refresh(printer)
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
@@ -766,25 +824,185 @@ async def delete_printer(
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
 
+@router.get("/{printer_id}/waivers", summary="Parts this printer is waived for (BIZ-365)",
+            responses={404: {"description": "Printer not found"}}, dependencies=[Depends(require_scope("printers:read"))])
+async def list_waivers(printer_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Each part this printer keeps failing and no longer gets: failures here, last failure, projects it failed in."""
+    from ...services import part_waivers
+    await _get_or_404(printer_id, session)
+    return await part_waivers.listing(session, printer_id)
+
+
+@router.delete("/{printer_id}/waivers", status_code=204, summary="Clear all of a printer's waivers (BIZ-365)",
+               responses={404: {"description": "Printer not found"}}, dependencies=[Depends(require_scope("printers:write"))])
+async def clear_all_waivers(printer_id: int, session: AsyncSession = Depends(get_session)) -> Response:
+    from ...services import part_waivers
+    await _get_or_404(printer_id, session)
+    await part_waivers.clear(session, printer_id)
+    await session.commit()
+    queue_engine.wake()
+    return Response(status_code=204)
+
+
+@router.delete("/{printer_id}/waivers/{waiver_id}", status_code=204, summary="Clear one waiver (BIZ-365)",
+               responses={404: {"description": "Printer or waiver not found"}},
+               dependencies=[Depends(require_scope("printers:write"))])
+async def clear_waiver(printer_id: int, waiver_id: int, session: AsyncSession = Depends(get_session)) -> Response:
+    from ...services import part_waivers
+    await _get_or_404(printer_id, session)
+    if not await part_waivers.clear(session, printer_id, waiver_id):
+        raise HTTPException(404, f"Waiver {waiver_id} not found on printer {printer_id}")
+    await session.commit()
+    queue_engine.wake()
+    return Response(status_code=204)
+
+
+@router.post("/{printer_id}/waivers/{waiver_id}/test-print", summary="Test-print a waived part on this printer (BIZ-365)",
+             description="One copy of the part, on this printer only (its default process profile + loaded filament). The printer "
+                         "claims nothing else until it has printed it; its plate-clear dialog then offers to clear the waiver.",
+             responses={404: {"description": "Printer or waiver not found"}, 409: {"description": "A test print is already pending"}},
+             dependencies=[Depends(require_scope("printers:control")), Depends(require_scope("jobs:write"))])
+async def test_print_waiver(printer_id: int, waiver_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    from ...models import JobModelTarget, JobPrinterConfig, PartWaiver
+    from ...services import part_waivers, print_results
+    from sqlalchemy import delete as _delete, select as _select
+    printer = await _get_or_404(printer_id, session)
+    waiver = await session.get(PartWaiver, waiver_id)
+    if waiver is None or waiver.printer_id != printer_id:
+        raise HTTPException(404, f"Waiver {waiver_id} not found on printer {printer_id}")
+    if printer.test_print_job_id is not None:
+        raise HTTPException(409, f"{printer.name} already has a test print pending")
+    source, item = await part_waivers.source_of(session, waiver)
+    if source is None or item is None:
+        raise HTTPException(409, "The part's project is gone: there is nothing left to test-print it from")
+    from ...models import Project
+    proj = await session.get(Project, source.project_id)
+    if proj is None or proj.stage != "queued":
+        raise HTTPException(409, "The part's project is not in the queue: queue it to test-print this part")
+    used = (await session.execute(_select(JobPrinterConfig.print_profile).where(
+        JobPrinterConfig.job_id == source.id, JobPrinterConfig.printer_id == printer_id))).scalar()
+    if not printer.default_process_profile and not used:
+        raise HTTPException(422, f"{printer.name} has no default process profile to test-print with: set one first")
+    (job_id, *_) = await print_results.requeue_parts(session, source, {item.id: 1}) or [None]
+    if job_id is None:
+        raise HTTPException(422, "The part could not be prepared for a test print")
+    # This printer only, with its own default process profile (else the profile it used for the failed job); the ask is the part's.
+    profile = "" if printer.default_process_profile else used
+    await session.execute(_delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
+    await session.execute(_delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
+    from ._filament_ask import tuple_columns, row_tuple
+    session.add(JobPrinterConfig(job_id=job_id, printer_id=printer_id, print_profile=profile, **tuple_columns(row_tuple(item))))
+    printer = await session.get(Printer, printer_id)
+    printer.test_print_job_id, printer.test_print_waiver_id = job_id, waiver_id
+    await session.commit()
+    queue_engine.wake()
+    return {"job_id": job_id}
+
+
+@router.delete("/{printer_id}/test-print", status_code=204, summary="Cancel a printer's pending test print (BIZ-365)",
+               responses={404: {"description": "Printer not found"}},
+               dependencies=[Depends(require_scope("printers:control"))])
+async def cancel_test_print(printer_id: int, session: AsyncSession = Depends(get_session)) -> Response:
+    """The printer goes back to queue work; a test job that has not started is cancelled."""
+    printer = await _get_or_404(printer_id, session)
+    if printer.test_print_job_id is not None:
+        job = await session.get(Job, printer.test_print_job_id)
+        if job is not None and job.status in ("queued", "blocked"):
+            job.status = "cancelled"
+        printer.test_print_job_id = printer.test_print_waiver_id = None
+        await session.commit()
+        queue_engine.wake()
+    return Response(status_code=204)
+
+
+@router.get(
+    "/{printer_id}/plate-results",
+    summary="The project job whose print results are still to report on this plate (BIZ-364)",
+    responses={404: {"description": "Printer not found"}},
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def plate_results(printer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """The latest finished project job on this printer with no reported results yet, and its parts (name × quantity on the
+    plate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear."""
+    import json as _json
+    from sqlalchemy import select as _select
+    from ...models import Job, JobItemFailure, ProjectItem, UploadedFile
+    await _get_or_404(printer_id, session)
+    reported = _select(JobItemFailure.job_id).where(JobItemFailure.resolution.is_not(None))
+    printer = await session.get(Printer, printer_id)
+    job = (await session.execute(
+        _select(Job).where(Job.assigned_printer_id == printer_id, Job.project_id.is_not(None),
+                           Job.project_item_quantities.is_not(None), Job.status.in_(["complete", "failed"]),
+                           Job.id.not_in(reported), Job.outcome.is_(None))
+        .order_by(Job.updated_at.desc(), Job.id.desc()).limit(1))).scalar_one_or_none()
+    if job is None:
+        return {"job_id": None, "project_id": None, "parts": [], "test_print_waiver_id": None}
+    parts = []
+    for key, qty in _json.loads(job.project_item_quantities).items():
+        item = await session.get(ProjectItem, int(key))
+        if item is None or int(qty) <= 0:
+            continue
+        f = await session.get(UploadedFile, item.file_id)
+        parts.append({"project_item_id": item.id, "file_name": f.original_filename if f else f"[file {item.file_id}]",
+                      "quantity": int(qty)})
+    test_waiver = printer.test_print_waiver_id if printer is not None and printer.test_print_job_id == job.id else None
+    return {"job_id": job.id, "project_id": job.project_id, "parts": parts, "test_print_waiver_id": test_waiver}
+
+
 @router.post(
     "/{printer_id}/plate-cleared",
     summary="Confirm plate cleared",
     responses={
         404: {"description": "Printer not found"},
     },
-    dependencies=[Depends(require_scope("printers:control"))],
+    dependencies=[],      # printers:control is checked by the `key` dependency below (results also need jobs:write)
 )
 async def plate_cleared(
     printer_id: int,
+    body: Optional[PlateResults] = None,
+    key=Depends(require_scope("printers:control")),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Mark the printer's bed as cleared so the queue engine can assign the next job."""
+    """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
+    what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
+    they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
     printer = await _get_or_404(printer_id, session)
+    outcome: dict = {}
+    recorded: dict | None = None
+    job = None
+    if body is not None and body.job_id is not None:
+        from ...models import Job
+        from ...services import print_results
+        if "jobs:write" not in (getattr(key, "scopes", None) or []):
+            raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
+        job = await session.get(Job, body.job_id)
+        if job is None or job.assigned_printer_id != printer_id:
+            raise HTTPException(422, f"Job {body.job_id} did not print on {printer.name}")
+        if job.project_id is None or job.status not in ("complete", "failed"):
+            raise HTTPException(409, f"Job {body.job_id} is not a finished project job")
+        if printer.test_print_job_id == job.id:
+            job.outcome = "reviewed"           # a test print (BIZ-365) is an extra copy: it credits nothing to the project
+        else:
+            recorded = await print_results.record_and_restore(
+                session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
+    if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
+        test_job = await session.get(Job, printer.test_print_job_id)
+        if test_job is not None and test_job.status in ("complete", "failed"):
+            test_job.outcome = test_job.outcome or "reviewed"
+            printer.test_print_job_id = printer.test_print_waiver_id = None
+    if job is not None and printer.test_print_job_id == job.id:       # BIZ-365: the test print is done
+        if body is not None and body.clear_waiver and printer.test_print_waiver_id is not None:
+            from ...services import part_waivers
+            await part_waivers.clear(session, printer_id, printer.test_print_waiver_id)
+        printer.test_print_job_id = printer.test_print_waiver_id = None
     printer.awaiting_plate_clear = False
-    await session.commit()
+    await session.commit()                 # results + the clear are in before any repacking
     printer_manager.set_awaiting_plate_clear(printer_id, False)
+    if recorded:
+        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
+        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
     queue_engine.wake()
-    return {"ok": True}
+    return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported
 
 
 @router.post(

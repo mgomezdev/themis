@@ -227,3 +227,21 @@ it('flags exactly the failing rows, including a pinned empty tool, and preserves
   fireEvent.change(screen.getByTestId('map-tool-2'), { target: { value: 't:0' } });
   expect(onChange.mock.calls[0][0].filamentMap.map((e: any) => e.model_filament)).toEqual([1, 2, 3]);
 });
+
+describe('PerPrinterConfig printer default process (BIZ-358)', () => {
+  it('offers "Printer default" as a real choice ("") distinct from not chosen (null)', async () => {
+    const onChange = renderCfg(SINGLE);
+    const sel = await screen.findByTestId('print-profile-select') as HTMLSelectElement;
+    expect(sel.value).toBe('__unchosen__');
+    const def = [...sel.options].find(o => o.textContent === 'Printer default')!;
+    expect(def.value).toBe('');
+    fireEvent.change(sel, { target: { value: '' } });
+    expect(onChange).toHaveBeenCalledWith({ printProfile: '' });
+  });
+
+  it('shows a stored "" config as Printer default', async () => {
+    renderCfg(SINGLE, { ...defaultPerPrinterCfg(), printProfile: '' });
+    const sel = await screen.findByTestId('print-profile-select') as HTMLSelectElement;
+    expect(sel.selectedOptions[0].textContent).toBe('Printer default');
+  });
+});

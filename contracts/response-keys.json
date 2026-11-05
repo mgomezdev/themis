@@ -22,7 +22,10 @@
     "capabilities",
     "current_print",
     "alarm_count",
-    "alarm_severity"
+    "alarm_severity",
+    "waived_parts",
+    "waiver_flag",
+    "waiver_stopped"
   ],
   "fleet_printer_connected_only": [
     "fan_model",
@@ -53,11 +56,20 @@
     "no_snapshots_while_idle",
     "bed_x_mm",
     "bed_y_mm",
+    "bed_z_mm",
     "machine_rate_per_hour",
     "preferred_slicer_plugin_id",
+    "default_process_profile",
+    "single_colour_only",
+    "waiver_flag_at",
+    "waiver_stop_at",
+    "test_print_job_id",
     "quiet_start",
     "quiet_end"
   ],
+  "project_review": ["checks", "open"],
+  "review_check": ["level", "tab", "message", "group_id", "item_id"],
+  "queue_pool": ["group_id", "name", "project_id", "project_name", "queue_position", "done", "printing", "left", "warning"],
   "queue_job": [
     "id",
     "uploaded_file_id",
@@ -74,7 +86,8 @@
     "save_slice_name",
     "allow_cached_slice",
     "sliced_version_id",
-    "slice_cache_info"
+    "slice_cache_info",
+    "pool_group_id"
   ],
   "job_details_core": [
     "id",
@@ -160,7 +173,30 @@
     "filament_type",
     "filament_subtype",
     "filament_color",
-    "sort_order"
+    "sort_order",
+    "group_id",
+    "quantity_held",
+    "kind",
+    "source_ref",
+    "pack_rule"
+  ],
+  "plate_results": ["job_id", "project_id", "parts", "test_print_waiver_id"],
+  "part_waiver": ["id", "part_key", "file_name", "failures", "last_failure_at", "projects"],
+  "project_failure": ["id", "project_item_id", "file_name", "job_id", "printer_id", "printer_name", "quantity_failed", "created_at", "resolution"],
+  "project_group": [
+    "id",
+    "project_id",
+    "name",
+    "sort_order",
+    "is_default",
+    "strategy",
+    "envelope_x",
+    "envelope_y",
+    "mix_colours",
+    "targets",
+    "max_parts",
+    "pool",
+    "pool_warning"
   ],
   "project_link": [
     "id",

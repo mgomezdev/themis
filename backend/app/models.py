@@ -31,6 +31,8 @@ class Printer(Base):
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
     bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
     bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    # BIZ-363: build height for the Review fit check; NULL = the machine profile's printable height, else unknown.
+    bed_z_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Server-local 'HH:MM' window in which this printer won't start new jobs (wraps midnight); both or neither.
     quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
@@ -40,6 +42,16 @@ class Printer(Base):
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # The `gcode.produce` plugin this printer slices with (BIZ-291); NULL = the capability default. Not a FK: a plugin may go dormant.
     preferred_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # BIZ-358: the process preset a "Printer default" job config (print_profile == "") slices with; NULL = none set.
+    default_process_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # BIZ-358: takes jobs in any loaded colour but never a multicolour one (filament_map of 2+ colours).
+    single_colour_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # BIZ-365: flag the printer (Fleet warning) / stop it claiming queue work at this many waived parts; 0 = off. While
+    # `test_print_job_id` is set the printer claims only that job.
+    waiver_flag_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    waiver_stop_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    test_print_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    test_print_waiver_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)       # the waiver that test print is for
 
 
 class PrinterModelRecord(Base):
@@ -222,6 +234,8 @@ class Job(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     project_item_quantities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # BIZ-362: the pool (print group) this plate was packed from at claim time; plain int, no FK (the group may be deleted).
+    pool_group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     # --- Actual values (set at production slice time, before GcodeFile deleted) ---
     actual_filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     actual_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -310,7 +324,8 @@ class JobModelTarget(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
-    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    # NULL = "Any printer" (BIZ-357): every printer, including ones with no registry model and ones added later.
+    model_uuid: Mapped[Optional[str]] = mapped_column(ForeignKey("printer_models.id"), index=True, nullable=True)
     print_profile: Mapped[str] = mapped_column(String(512))
     filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
@@ -349,6 +364,10 @@ class QueueConfig(Base):
     # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
     # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
     printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    # A part is held after failing on this many different printers (BIZ-364).
+    part_retry_limit: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # A printer is waived for a part after this many failures of it there (BIZ-365).
+    waive_after: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -471,6 +490,15 @@ class ProjectItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
     quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
+    # What the item is (BIZ-356): "stl" | "3mf_object" (source_ref = object id) | "3mf_plate" (source_ref = plate number) |
+    # "gcode" (source_ref = plate of a .gcode.3mf, else 1); its packing rule "split" | "together" | "solo" | "locked"; and the
+    # file's content hash when the object/plate was picked (a changed file must be re-picked).
+    kind: Mapped[str] = mapped_column(String(20), default="stl", server_default="stl")
+    source_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    pack_rule: Mapped[str] = mapped_column(String(20), default="split", server_default="split")
+    source_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Failed parts held for a person after failing on `part_retry_limit` different printers (BIZ-364): Reprint or Drop.
+    quantity_held: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Filament requirement spec — "any" means no constraint
     filament_type: Mapped[str] = mapped_column(String(50), default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
@@ -485,6 +513,74 @@ class ProjectItem(Base):
     material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # The print group this item belongs to (BIZ-360); NULL only transiently (an item is always put in the Default Group). Plain
+    # integer, no FK (like job_printer_configs.model_target_id): SQLite can't DROP a column a foreign key names, and deleting a
+    # group moves its items to the Default Group explicitly.
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class PartSize(Base):
+    """A part's measured size (BIZ-363 Review fit check), keyed like a waiver: file content hash · kind · source ref, so a changed
+    file is measured again. One instance of an object, a plate as authored, an STL's extents."""
+    __tablename__ = "part_sizes"
+    part_key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    size_x_mm: Mapped[float] = mapped_column(Float)
+    size_y_mm: Mapped[float] = mapped_column(Float)
+    size_z_mm: Mapped[float] = mapped_column(Float)
+    measured_at: Mapped[str] = mapped_column(String(40))
+
+
+class PartWaiver(Base):
+    """A printer waived for a part after failing it `waive_after` times (BIZ-365). `part_key` names the part itself (file content
+    hash + item kind + plate/object), so the waiver holds in every project. Cleared only by a person."""
+    __tablename__ = "part_waivers"
+    __table_args__ = (UniqueConstraint("printer_id", "part_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), index=True)
+    part_key: Mapped[str] = mapped_column(String(160))
+    file_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)       # for display; the key is what matches
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+    # Set when a person cleared it: the waiver is inactive, and only failures after this count toward waiving again.
+    cleared_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class ProjectGroup(Base):
+    """An ordered print group of a project (BIZ-360): which printers take its jobs (`targets`), the bed envelope it packs for, and
+    the colour rule. Exactly one per project is the Default Group (renamable, never deleted; new items land in it)."""
+    __tablename__ = "project_groups"
+    __table_args__ = (Index("ux_project_groups_one_default", "project_id", unique=True, sqlite_where=text("is_default = 1")),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    strategy: Mapped[str] = mapped_column(String(20), default="fixed", server_default="fixed")   # "fixed" (now) | "pool" (BIZ-362)
+    # Fixed-bed envelope in mm; NULL = auto (the smallest bed among the printers the targets cover).
+    envelope_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    envelope_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Colour rule: different single colours may share a plate (toolchangers / forced swaps). Stored; packing honours it with BIZ-356.
+    mix_colours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # BIZ-362 pools: at most this many parts per claimed plate (NULL = as many as fit), and the pool's place in the queue (set at
+    # generate; NULL = not queued).
+    max_parts: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
+class ProjectGroupTarget(Base):
+    """One eligibility entry of a group: `target_key` is the shared selection key (`<printer id>`, `model:<uuid>`, `any`) and
+    `process_profile` the process preset its jobs slice with ("" = the printer's own default, BIZ-358)."""
+    __tablename__ = "project_group_targets"
+    __table_args__ = (UniqueConstraint("group_id", "target_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("project_groups.id", ondelete="CASCADE"), index=True)
+    target_key: Mapped[str] = mapped_column(String(64))
+    process_profile: Mapped[str] = mapped_column(String(512), default="", server_default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
 
@@ -586,6 +682,11 @@ class JobItemFailure(Base):
     project_item_id: Mapped[int] = mapped_column(ForeignKey("project_items.id", ondelete="CASCADE"))
     quantity_failed: Mapped[int] = mapped_column(Integer)
     quantity_on_plate: Mapped[int] = mapped_column(Integer)
+    # BIZ-364 failure log: the printer it printed on (plain int: a deleted printer keeps its history), when it was reported, and
+    # what happened to the failed parts: "requeued" | "held" | "reprinted" | "dropped" (NULL = a plain outcome review).
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    resolution: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
 
 class MaintenanceItem(Base):

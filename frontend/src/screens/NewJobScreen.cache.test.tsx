@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NewJobScreen } from './NewJobScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
+import { pickPrinter } from '../test/pickPrinter';
 
 // New Job and the slicing cache (BIZ-194): the "save sliced gcode" option and the "use a cached version or reslice"
 // prompt.
@@ -62,7 +63,7 @@ describe('NewJobScreen — cached sliced versions', () => {
   it('asks nothing when the model has no cached versions', async () => {
     const api = open([]);
     await upload();
-    await screen.findByText('Barnabus');
+    await screen.findByRole('button', { name: '+ Printer' });
     expect(api.to('GET', '/api/v1/files/42/sliced-versions?plate=1')).toHaveLength(1);
     expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
   });
@@ -137,7 +138,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Reslice instead' }));
 
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
     await userEvent.click(addButton());
@@ -152,7 +153,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Reslice' }));
 
     expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
 
@@ -183,7 +184,7 @@ describe('NewJobScreen — cached versions, edge cases', () => {
 
     expect(await screen.findByText(/Failed to load the cached version/)).toBeTruthy();
     expect(screen.queryByTestId('using-cached')).toBeNull();
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
     await screen.findByText(/1 job added to queue/);
@@ -206,7 +207,7 @@ describe('NewJobScreen — save sliced gcode', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' }));
     expect(screen.getByText('Saved next to model.3mf in /Prints — reuse it next time instead of slicing again.')).toBeTruthy();
     await userEvent.type(screen.getByLabelText('Saved gcode name'), '  Benchy PETG  ');
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
 
@@ -217,7 +218,7 @@ describe('NewJobScreen — save sliced gcode', () => {
   it('sends nothing about saving when left off', async () => {
     const api = open();
     await upload();
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
 
@@ -231,7 +232,7 @@ describe('NewJobScreen — save sliced gcode', () => {
       'GET /api/v1/files/42/plates': { filename: 'part.gcode', plates: [plate(1)] },
     });
     await upload('part.gcode');
-    await screen.findByText('Barnabus');
+    await screen.findByRole('button', { name: '+ Printer' });
     expect(screen.queryByText('Save sliced gcode to library')).toBeNull();
   });
 });

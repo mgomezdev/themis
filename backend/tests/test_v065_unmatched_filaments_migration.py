@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v057_unmatched_filaments as migration
+from app.migrations import v065_unmatched_filaments as migration
 
 
 async def test_unmatched_filaments_migration_preserves_existing_jobs_and_is_idempotent(tmp_path):
