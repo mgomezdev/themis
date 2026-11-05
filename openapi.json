@@ -1715,13 +1715,294 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/waivers": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Parts this printer is waived for (BIZ-365)",
+        "description": "Each part this printer keeps failing and no longer gets: failures here, last failure, projects it failed in.",
+        "operationId": "list_waivers_api_v1_printers__printer_id__waivers_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Waivers Api V1 Printers  Printer Id  Waivers Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Clear all of a printer's waivers (BIZ-365)",
+        "operationId": "clear_all_waivers_api_v1_printers__printer_id__waivers_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/waivers/{waiver_id}": {
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Clear one waiver (BIZ-365)",
+        "operationId": "clear_waiver_api_v1_printers__printer_id__waivers__waiver_id__delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "waiver_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Waiver Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer or waiver not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/waivers/{waiver_id}/test-print": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Test-print a waived part on this printer (BIZ-365)",
+        "description": "One copy of the part, on this printer only (its default process profile + loaded filament). The printer claims nothing else until it has printed it; its plate-clear dialog then offers to clear the waiver.",
+        "operationId": "test_print_waiver_api_v1_printers__printer_id__waivers__waiver_id__test_print_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "waiver_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Waiver Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Print Waiver Api V1 Printers  Printer Id  Waivers  Waiver Id  Test Print Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer or waiver not found"
+          },
+          "409": {
+            "description": "A test print is already pending"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/test-print": {
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Cancel a printer's pending test print (BIZ-365)",
+        "description": "The printer goes back to queue work; a test job that has not started is cancelled.",
+        "operationId": "cancel_test_print_api_v1_printers__printer_id__test_print_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/plate-results": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "The project job whose print results are still to report on this plate (BIZ-364)",
+        "description": "The latest finished project job on this printer with no reported results yet, and its parts (name \u00d7 quantity on the\nplate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear.",
+        "operationId": "plate_results_api_v1_printers__printer_id__plate_results_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Plate Results Api V1 Printers  Printer Id  Plate Results Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [
           "printers"
         ],
         "summary": "Confirm plate cleared",
-        "description": "Mark the printer's bed as cleared so the queue engine can assign the next job.",
+        "description": "Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record\nwhat printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once\nthey have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook).",
         "operationId": "plate_cleared_api_v1_printers__printer_id__plate_cleared_post",
         "parameters": [
           {
@@ -1734,6 +2015,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PlateResults"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4246,6 +4544,53 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/objects": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "List a 3MF's objects (BIZ-356)",
+        "description": "The objects of a .3mf, for picking project items: `[{id, name, instances}]`. Read by the 3mf.construct provider.",
+        "operationId": "get_model_objects_api_v1_files__file_id__objects_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Model Objects Api V1 Files  File Id  Objects Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Not a 3MF, or the provider can't read it"
+          },
+          "503": {
+            "description": "No project builder is configured or it is unreachable"
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/embedded-settings": {
       "get": {
         "tags": [
@@ -6322,6 +6667,271 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/groups": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List a project's print groups, in queue order",
+        "operationId": "list_groups_api_v1_projects__project_id__groups_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Groups Api V1 Projects  Project Id  Groups Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add a print group (last in queue order)",
+        "operationId": "create_group_api_v1_projects__project_id__groups_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Group Api V1 Projects  Project Id  Groups Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/groups/{group_id}": {
+      "patch": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Configure a print group",
+        "description": "Only the fields sent change. `targets` replaces the whole list; `envelope_x`/`envelope_y` null = auto (the smallest bed among the printers the targets cover).",
+        "operationId": "patch_group_api_v1_projects__project_id__groups__group_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Group Api V1 Projects  Project Id  Groups  Group Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete a print group (its items move to the Default Group)",
+        "operationId": "delete_group_api_v1_projects__project_id__groups__group_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The Default Group can't be deleted"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/groups/order": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Set the queue order of a project's print groups",
+        "operationId": "order_groups_api_v1_projects__project_id__groups_order_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupOrder"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Order Groups Api V1 Projects  Project Id  Groups Order Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "tags": [
@@ -7642,13 +8252,175 @@
             "description": "Project has no items or contains non-STL files"
           },
           "502": {
-            "description": "Orca sidecar error during generation"
+            "description": "The project builder failed during generation"
+          },
+          "503": {
+            "description": "The project builder is not ready"
           },
           "504": {
             "description": "Generation timed out"
           },
           "409": {
             "description": "Project is a draft, or another request with this Idempotency-Key is still running"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/review": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Project Builder review checks (BIZ-363)",
+        "description": "What would stop the project queueing well, each naming the Builder tab that fixes it (`details`, `items`, `groups`): `error` blocks queueing, `note` informs, `ok` confirms. `open` counts the errors. Checks: draft stage, groups without eligible printers, \"Printer default\" on a printer with no default process profile, parts that fit no eligible bed (X/Y either way round, and Z when known), loaded colours, gcode eligibility.",
+        "operationId": "project_review_api_v1_projects__project_id__review_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Project Review Api V1 Projects  Project Id  Review Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/failures": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "The project's failure log (BIZ-364)",
+        "description": "Every reported failure, oldest first: part, job, printer, when, and what happened to the failed parts (`requeued`, `held`, `reprinted`, `dropped`).",
+        "operationId": "project_failures_api_v1_projects__project_id__failures_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Project Failures Api V1 Projects  Project Id  Failures Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/items/{item_id}/held": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Reprint or drop an item's held parts (BIZ-364)",
+        "operationId": "resolve_held_parts_api_v1_projects__project_id__items__item_id__held_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Resolve Held Parts Api V1 Projects  Project Id  Items  Item Id  Held Post"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Nothing of this item is held"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -7937,6 +8709,33 @@
                   },
                   "type": "array",
                   "title": "Response Get Queue Api V1 Queue Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/queue/pools": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Active print pools",
+        "description": "Pooled print groups of queued projects (BIZ-362), in queue order: each is one queue entry that idle printers pack their\nnext plate from. `warning` says why one is stuck (no eligible printer can take its remaining parts).",
+        "operationId": "get_queue_pools_api_v1_queue_pools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Get Queue Pools Api V1 Queue Pools Get"
                 }
               }
             }
@@ -11781,6 +12580,11 @@
             "title": "Eligible Model Uuids",
             "default": []
           },
+          "eligible_any_printer": {
+            "type": "boolean",
+            "title": "Eligible Any Printer",
+            "default": false
+          },
           "save_slice": {
             "type": "boolean",
             "title": "Save Slice",
@@ -11835,6 +12639,153 @@
         ],
         "title": "GithubBody"
       },
+      "GroupCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "GroupCreate"
+      },
+      "GroupOrder": {
+        "properties": {
+          "group_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Group Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group_ids"
+        ],
+        "title": "GroupOrder"
+      },
+      "GroupPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "envelope_x": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Envelope X"
+          },
+          "envelope_y": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Envelope Y"
+          },
+          "mix_colours": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix Colours"
+          },
+          "targets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupTargetIn"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targets"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "fixed",
+                  "pool"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "max_parts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 500.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Parts"
+          }
+        },
+        "type": "object",
+        "title": "GroupPatch"
+      },
+      "GroupTargetIn": {
+        "properties": {
+          "target_key": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Target Key"
+          },
+          "process_profile": {
+            "type": "string",
+            "title": "Process Profile",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_key"
+        ],
+        "title": "GroupTargetIn"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -11847,6 +12798,23 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HeldAction": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reprint",
+              "drop"
+            ],
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "HeldAction"
       },
       "HomeBody": {
         "properties": {
@@ -12763,7 +13731,14 @@
             "title": "Filament Color"
           },
           "model_uuid": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Model Uuid"
           },
           "print_profile": {
@@ -12803,7 +13778,7 @@
           "model_uuid"
         ],
         "title": "ModelTargetInput",
-        "description": "Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
+        "description": "Eligible on *any* printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
       },
       "NozzleTempBody": {
         "properties": {
@@ -13157,6 +14132,25 @@
         ],
         "title": "OverrideCheckRequest"
       },
+      "PartResult": {
+        "properties": {
+          "project_item_id": {
+            "type": "integer",
+            "title": "Project Item Id"
+          },
+          "quantity_failed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Quantity Failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_item_id",
+          "quantity_failed"
+        ],
+        "title": "PartResult"
+      },
       "PasswordBody": {
         "properties": {
           "password": {
@@ -13281,6 +14275,37 @@
         },
         "type": "object",
         "title": "PaymentPatch"
+      },
+      "PlateResults": {
+        "properties": {
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PartResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "default": []
+          },
+          "clear_waiver": {
+            "type": "boolean",
+            "title": "Clear Waiver",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "PlateResults",
+        "description": "What printed on the plate being cleared (BIZ-364). Parts not listed all succeeded."
       },
       "PluginTest": {
         "properties": {
@@ -13620,6 +14645,19 @@
             ],
             "title": "Bed Y Mm"
           },
+          "bed_z_mm": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 5000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Z Mm"
+          },
           "machine_rate_per_hour": {
             "anyOf": [
               {
@@ -13632,6 +14670,22 @@
               }
             ],
             "title": "Machine Rate Per Hour"
+          },
+          "default_process_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Process Profile"
+          },
+          "single_colour_only": {
+            "type": "boolean",
+            "title": "Single Colour Only",
+            "default": false
           }
         },
         "type": "object",
@@ -13808,6 +14862,19 @@
             ],
             "title": "Bed Y Mm"
           },
+          "bed_z_mm": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 5000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Z Mm"
+          },
           "machine_rate_per_hour": {
             "anyOf": [
               {
@@ -13853,6 +14920,54 @@
               }
             ],
             "title": "Preferred Slicer Plugin Id"
+          },
+          "default_process_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Process Profile"
+          },
+          "single_colour_only": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Single Colour Only"
+          },
+          "waiver_flag_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Stop At"
           }
         },
         "type": "object",
@@ -14056,6 +15171,63 @@
             "type": "integer",
             "title": "Sort Order",
             "default": 0
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "stl",
+                  "3mf_object",
+                  "3mf_plate",
+                  "gcode"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "pack_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "split",
+                  "together",
+                  "solo",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Rule"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
           }
         },
         "type": "object",
@@ -14131,6 +15303,34 @@
               }
             ],
             "title": "Sort Order"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "pack_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "split",
+                  "together",
+                  "solo",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack Rule"
           }
         },
         "type": "object",
@@ -14545,6 +15745,32 @@
             ],
             "title": "Printer Dead After Minutes"
           },
+          "part_retry_limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part Retry Limit"
+          },
+          "waive_after": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waive After"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14603,6 +15829,14 @@
             "type": "integer",
             "title": "Printer Dead After Minutes"
           },
+          "part_retry_limit": {
+            "type": "integer",
+            "title": "Part Retry Limit"
+          },
+          "waive_after": {
+            "type": "integer",
+            "title": "Waive After"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14631,6 +15865,8 @@
         "required": [
           "check_interval_minutes",
           "printer_dead_after_minutes",
+          "part_retry_limit",
+          "waive_after",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

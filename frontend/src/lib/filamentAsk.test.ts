@@ -74,5 +74,6 @@ describe('helpers', () => {
   it('a hand-entered typeless slot is loaded, an empty placeholder is not', () => {
     expect(slotIsLoaded({ type: '', color: '' })).toBe(true);
     expect(slotIsLoaded({ type: '', color: '', empty: true })).toBe(false);
+    expect(slotIsLoaded({ type: 'PLA', color: '#519F61', empty: true })).toBe(false);
   });
 });

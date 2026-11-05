@@ -71,7 +71,7 @@ def _engine(factory, tmp_path, *, archive=False):
     slicer = MagicMock()
     slicer._data_dir = tmp_path / "data"
 
-    def fake_slice(req: SliceRequest):
+    def fake_slice(req: SliceRequest, *_):
         out = tmp_path / "data" / "gcode" / str(req.job_id)
         out.mkdir(parents=True, exist_ok=True)
         path = out / (req.export_args[1] if req.export_args else f"out_j{req.job_id}.gcode")

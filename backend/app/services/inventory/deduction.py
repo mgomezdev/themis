@@ -81,7 +81,8 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
     return Plan("enqueued", pid, spool_ref, job.id, printer_id, grams, source)
 
 
-def completion_uses(config, loaded: list | None, grams: float, breakdown: list | None) -> tuple[list[dict], list[str]]:
+def completion_uses(config, loaded: list | None, grams: float, breakdown: list | None, *,
+                    usage_by_slot: dict[int, float] | None = None) -> tuple[list[dict], list[str]]:
     """The spool deductions of one finished print and the notes for what could not be tracked: `([{"spool_ref", "grams"}], [note])`.
 
     The spool is the one bound to the slot that PRINTED (the claim-time plan), per used slot for a multi-material job; the job's own
@@ -89,7 +90,7 @@ def completion_uses(config, loaded: list | None, grams: float, breakdown: list |
     the per-extruder breakdown (extruder index = tool index). A slot with no bound spool is skipped and named in a note, so the
     operator can bind a spool and correct the weight."""
     plan = filament_matching.plan_for(config, loaded)
-    slots = list(dict.fromkeys(u.slot for u in plan))
+    slots = list(usage_by_slot) if usage_by_slot is not None else list(dict.fromkeys(u.slot for u in plan))
     if not slots:
         return [], ["No filament slot was recorded for this print, so no spool was tracked"]
     loaded = list(loaded or [])
@@ -100,7 +101,9 @@ def completion_uses(config, loaded: list | None, grams: float, breakdown: list |
     unbound: list[str] = []
     for slot in slots:
         ref = refs.slot_spool_ref(loaded[slot]) if 0 <= slot < len(loaded) else None
-        if len(slots) == 1:
+        if usage_by_slot is not None:
+            share = usage_by_slot[slot]
+        elif len(slots) == 1:
             share = float(grams)
         elif by_extruder:
             share = by_extruder.get(slot, 0.0)

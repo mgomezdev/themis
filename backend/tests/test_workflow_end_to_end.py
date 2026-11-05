@@ -19,7 +19,7 @@ GCODE = "; filament used [g] = 12.5\n; estimated printing time (normal mode) = 1
 @pytest_asyncio.fixture
 async def farm(client, session_factory, tmp_path, monkeypatch):
     """A real engine wired to the routes and to the shared printer_manager, as the app lifespan does."""
-    def slice_to_per_job_file(req):  # the real slicer writes gcode/<job_id>/...; never share a file between jobs
+    def slice_to_per_job_file(req, *_):  # the real slicer writes gcode/<job_id>/...; never share a file between jobs
         out = tmp_path / f"job-{req.job_id}.gcode"
         out.write_text(GCODE)
         return str(out)

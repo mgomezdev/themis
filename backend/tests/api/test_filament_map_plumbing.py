@@ -6,10 +6,10 @@ from app.services.slicer_service import SliceRequest
 from app.api.routes.jobs import PrinterConfigInput
 
 
-def test_slice_request_has_prepare_hook_default_none():
+def test_slice_request_has_no_slice_side_mapping_by_default():
     req = SliceRequest(job_id=1, source_3mf="x", plate_number=0, machine_preset="M",
                        process_preset="P", filament_presets=["F"])
-    assert req.prepare_hook is None
+    assert (req.tool_index, req.filament_map) == (None, None)
 
 
 def test_printer_config_input_accepts_tool_index():
@@ -123,3 +123,42 @@ async def test_tool_index_and_filament_map_round_trip_through_create_details_and
         await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [config]})
     (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
     assert stored["tool_index"] is None and stored["filament_map"] is None  # clearing works too
+
+
+async def test_blocked_filament_rows_survive_details_and_edit_clears_them(client, create_job, create_printer, session_factory):
+    from app.models import Job
+    printer_id = await create_printer()
+    job_id = await create_job(printer_id=printer_id)
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "blocked"
+        job.block_reason = "no eligible printer: Filament 1 (ABS): no loaded match"
+        job.unmatched_filaments = {str(printer_id): [1]}
+        await session.commit()
+    details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
+    assert details["unmatched_filaments"] == {str(printer_id): [1]}
+    with patch("app.api.routes.jobs.queue_engine") as engine:
+        response = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [{
+            "printer_id": printer_id, "print_profile": "Process", "filament_map": [{
+                "model_filament": 1, "tool_index": None, "filament_type": "PLA", "filament_subtype": "any", "filament_color": "#519F61"
+            }]
+        }]})
+        assert response.status_code == 200, response.text
+        engine.wake.assert_called_once()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason, job.unmatched_filaments) == ("queued", None, None)
+    details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
+    assert details["unmatched_filaments"] == {}
+    assert details["printer_configs"][0]["filament_map"][0]["tool_index"] is None
+
+
+@pytest.mark.parametrize("entry", [{"model_filament": 10**9}, {"model_filament": 0}, {"model_filament": 1, "tool_index": 10**9}])
+async def test_an_out_of_range_filament_number_or_tool_is_refused_at_the_api(client, create_job, create_printer, entry):
+    """Security review: the AMS mapping is as long as the highest filament number, so the API caps it."""
+    printer_id = await create_printer()
+    job_id = await create_job(printer_id=printer_id)
+    response = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [{
+        "printer_id": printer_id, "print_profile": "Process",
+        "filament_map": [{"filament_type": "PLA", "filament_subtype": "any", **entry}]}]})
+    assert response.status_code == 422, response.text

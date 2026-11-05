@@ -6,7 +6,8 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, getPlateResults, type PlateResults, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { PrintResultsModal } from '../components/PrintResultsModal';
 import { CAP, useInventory, useSpools } from '../api/inventory';
 import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
@@ -652,6 +653,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
             {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -887,24 +889,49 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
   printerId: string; refetchFleet: () => void; block?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState<PlateResults | null>(null);
   return (
-    <button
-      className="btn primary sm"
-      style={block ? { width: '100%' } : undefined}
-      disabled={busy}
-      onClick={async (e) => {
-        e.stopPropagation();
-        setBusy(true);
-        try { await markPlateCleared(printerId); refetchFleet(); }
-        finally { setBusy(false); }
-      }}>
-      {Icons.check} Ready for new work
-    </button>
+    <>
+      <button
+        className="btn primary sm"
+        style={block ? { width: '100%' } : undefined}
+        disabled={busy}
+        onClick={async (e) => {
+          e.stopPropagation();
+          setBusy(true);
+          try {
+            // A finished project job asks what printed first (BIZ-364); anything else is a plain clear.
+            const pending = await getPlateResults(printerId).catch(() => null);
+            if (pending?.job_id != null && pending.parts.length > 0) { setAsking(pending); return; }
+            await markPlateCleared(printerId);
+            refetchFleet();
+          } finally { setBusy(false); }
+        }}>
+        {Icons.check} Ready for new work
+      </button>
+      {asking && (
+        <PrintResultsModal printerId={printerId} pending={asking} onClose={() => setAsking(null)}
+                           onDone={() => { setAsking(null); refetchFleet(); }} />
+      )}
+    </>
   );
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
 /** Unacknowledged-alarm badge; links to that printer's alarms. */
+/** BIZ-365: a printer that collected enough waived parts to flag (wash the plate / do maintenance) or stop. */
+function WaiverBadge({ printer: p }: { printer: Printer }) {
+  if (!p.waiverFlag && !p.waiverStopped) return null;
+  const n = p.waivedParts ?? 0;
+  return (
+    <span data-testid="waiver-badge" onClick={e => e.stopPropagation()}
+          title={`${n} waived part${n === 1 ? '' : 's'}: ${p.waiverStopped ? 'not taking queue work' : 'consider a plate wash or maintenance'}`}
+          className={`pill ${p.waiverStopped ? 'err' : 'warn'}`} style={{ fontSize: 11 }}>
+      {p.waiverStopped ? 'Stopped' : 'Check'}: {n} waived
+    </span>
+  );
+}
+
 function AlarmBadge({ printer: p }: { printer: Printer }) {
   const inRouter = useInRouterContext();
   if (!p.alarmCount || !p.alarmSeverity) return null;
@@ -934,6 +961,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
           {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
           {!p.queueOn && <QueueOffBadge />}
           <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>

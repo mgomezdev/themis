@@ -42,7 +42,8 @@ test('operator golden path: create job, cancel it, clear the plate', async ({ pa
   await page.getByRole('button', { name: /Pick from library/i }).click();
   await page.getByRole('button', { name: /multi\.3mf/i }).click();
   await page.waitForLoadState('networkidle');
-  await page.getByRole('button', { name: /Mono/i }).first().click();
+  await page.getByRole('button', { name: '+ Printer' }).click();
+  await page.getByRole('menuitem', { name: /^Mono/i }).click();
   await expect(page.getByTestId('print-profile-select')).toBeVisible();
   await page.getByTestId('print-profile-select').selectOption('0.20mm Standard');
   const add = page.getByRole('button', { name: /Add .* jobs? to queue/i });

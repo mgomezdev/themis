@@ -8,7 +8,8 @@ import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../c
 import { OverridePanel } from '../components/OverridePanel';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { isPresliced } from '../lib/fileKind';
-import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
+import { buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
+import { PrinterTargetPicker } from '../components/PrinterTargetPicker';
 import { apiFetch } from '../api/client';
 
 // ---- hooks ----
@@ -21,64 +22,6 @@ function usePrinterList(): ApiPrinter[] {
     return () => { alive = false; };
   }, []);
   return printers;
-}
-
-// ---- Checkbox ----
-
-function Checkbox({ checked }: { checked: boolean }) {
-  return (
-    <div style={{
-      width: 18, height: 18, flexShrink: 0, borderRadius: 5,
-      border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
-      background: checked ? 'var(--accent)' : 'transparent',
-      display: 'grid', placeItems: 'center',
-    }}>
-      {checked && <span style={{ color: 'white', display: 'inline-flex', fontSize: 10 }}>✓</span>}
-    </div>
-  );
-}
-
-// ---- PrinterPicker ----
-
-const BADGE: Record<string, string> = { elegoo_centauri: 'ECC', bambu: 'P1S' };
-
-function PrinterPicker({ printers, selected, onToggle }: {
-  printers: ApiPrinter[];
-  selected: string[];
-  onToggle: (id: string) => void;
-}) {
-  if (printers.length === 0) return <div className="tiny muted">No printers configured.</div>;
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-      {printers.map(p => {
-        const sid = String(p.id);
-        const isSelected = selected.includes(sid);
-        const badge = BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase();
-        return (
-          <button key={p.id} onClick={() => onToggle(sid)} style={{
-            padding: 12,
-            background: isSelected ? 'var(--bg-3)' : 'var(--bg-1)',
-            border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-1)'}`,
-            boxShadow: isSelected ? '0 0 0 1px var(--accent)' : 'none',
-            borderRadius: 10, textAlign: 'left', cursor: 'pointer',
-            color: 'var(--text-1)', fontFamily: 'inherit',
-          }}>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
-              <span className={`elig ${isSelected ? 'on' : 'off'}`}
-                    style={isSelected ? { background: 'rgba(59,130,246,0.20)' } : undefined}>
-                {badge}
-              </span>
-              <div className="col" style={{ flex: 1, minWidth: 0 }}>
-                <div className="small" style={{ fontWeight: 500 }}>{p.name}</div>
-                <div className="tiny muted">{p.printer_type}</div>
-              </div>
-              <Checkbox checked={isSelected} />
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 // ---- Main screen ----
@@ -179,7 +122,7 @@ export function EditJobScreen() {
 
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return gcode ? !!pp : !!(pp?.printProfile);
+    return gcode ? !!pp : pp?.printProfile != null;      // "" = Printer default
   });
 
   async function handleSave() {
@@ -271,8 +214,7 @@ export function EditJobScreen() {
             <SectionHeader title="Eligible printers"
                            sub="Which printers may claim this job. Configure slicing settings for each." />
             {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
-            <PrinterPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
-            <ModelPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
+            <PrinterTargetPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
           </div>
 
           {/* Per-printer config */}
@@ -292,6 +234,8 @@ export function EditJobScreen() {
                       config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                       onChange={patch => patchPerPrinter(sid, patch)}
                       modelFilaments={isModelKey(sid) ? undefined : modelFilaments}
+                      unmatchedFilaments={JSON.stringify(perPrinter[sid]?.filamentMap) === JSON.stringify(job?.printer_configs.find(c => String(c.printer_id) === sid)?.filament_map)
+                        ? job?.unmatched_filaments?.[sid] : undefined}
                       gcode={gcode}
                     />
                   );
@@ -340,7 +284,7 @@ export function EditJobScreen() {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
                   const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
-                  const done = gcode ? !!pp : !!(pp?.printProfile);
+                  const done = gcode ? !!pp : pp?.printProfile != null;
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.models import Job, Project, SlicedVersion, UploadedFile
+from app.models import Job, SlicedVersion, UploadedFile
 from app.services.artifact_store import ArtifactStoreError, LocalDiskArtifactStore
 from tests.api.test_slice_cache_api import _version_for, library  # noqa: F401 — `library` is a fixture
 from tests.conftest import make_sliced_archive
@@ -262,16 +262,16 @@ async def test_reuploading_a_cached_files_bytes_returns_that_file(client, librar
     ("part.gcode", b"; filament used [g] = 1\nG28\n"),
     ("part.gcode.3mf", make_sliced_archive()),
 ])
-async def test_a_pre_sliced_file_cannot_be_a_project_item(client, library, upload_3mf, session_factory, name, data):
+async def test_a_pre_sliced_file_is_a_gcode_project_item_never_packed(client, library, upload_3mf, session_factory, name, data):
+    """BIZ-356 (was: refused): a pre-sliced file is a "gcode" item printed as sliced; it can't be packed or given another rule."""
     project = (await client.post("/api/v1/projects", json={"name": "P"})).json()["id"]
     file_id = await upload_3mf(name, data)
 
     resp = await client.post(f"/api/v1/projects/{project}/items", json={"file_id": file_id, "quantity": 1})
 
-    assert resp.status_code == 422
-    async with session_factory() as s:
-        assert (await s.get(Project, project)) is not None
-        assert (await client.get(f"/api/v1/projects/{project}/items")).json() == []
+    assert resp.status_code == 201, resp.text
+    assert (resp.json()["kind"], resp.json()["pack_rule"]) == ("gcode", "locked")
+    assert (await client.post(f"/api/v1/projects/{project}/items", json={"file_id": file_id, "pack_rule": "split"})).status_code == 422
 
 
 

@@ -1,14 +1,14 @@
 """Project child resources (items, links), stage promotion, generate preconditions, project jobs, delete."""
 from unittest.mock import patch
 
-from tests.fake_providers import FakeSlicingProvider
+from tests.fake_providers import FakeProjectConstructor
 import pytest
 from sqlalchemy import func, select
 
 from app.models import Job, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 
 _ITEM_KEYS = {"id", "project_id", "file_id", "file_name", "quantity", "quantity_completed", "quantity_failed",
-              "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order"}  # src/api/projects.ts ProjectItem
+              "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order", "group_id", "quantity_held", "kind", "source_ref", "pack_rule"}  # src/api/projects.ts ProjectItem
 _LINK_KEYS = {"id", "project_id", "url", "label", "sort_order", "created_at"}
 
 
@@ -83,6 +83,9 @@ async def test_item_lifecycle_add_list_update_delete(client, project, upload_3mf
         "quantity": 3, "quantity_completed": 0, "quantity_failed": 0,
         "filament_manufacturer": None, "filament_type": "PLA", "filament_subtype": "any", "filament_color": "#FF0000",
         "sort_order": 2,
+        "group_id": (await client.get(f"/api/v1/projects/{project}/groups")).json()[0]["id"],   # the Default Group
+        "quantity_held": 0,
+        "kind": "3mf_plate", "source_ref": "1", "pack_rule": "split",
     }
     assert (await client.get(f"/api/v1/projects/{project}/items")).json() == [created]
 
@@ -227,7 +230,7 @@ _STL = b"solid x\nendsolid x\n"
 
 async def _generate(client, project_id: int, tmp_path, *, sidecar: str | None = "http://laminus.test"):
     with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.api.routes.projects.get_slicing_provider", return_value=FakeSlicingProvider() if sidecar else None):
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor() if sidecar else None):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"process_preset": "0.20mm Standard"})
 
 
@@ -250,7 +253,7 @@ async def test_generate_requires_the_sidecar(client, project, tmp_path, upload_3
 
     resp = await _generate(client, project, tmp_path, sidecar=None)
 
-    assert resp.status_code == 422 and "Settings -> Laminus" in resp.json()["detail"]
+    assert resp.status_code == 422 and "No project builder is configured" in resp.json()["detail"]
     await _assert_no_jobs(client, project)
 
 
@@ -261,13 +264,14 @@ async def test_generate_requires_items(client, project, tmp_path):
     await _assert_no_jobs(client, project)
 
 
-async def test_generate_rejects_non_stl_items(client, project, tmp_path, upload_3mf):
+async def test_generate_packs_a_3mf_plate_item(client, project, tmp_path, upload_3mf):
+    """BIZ-356 (was: refused): a .3mf item is its plate 1, packed through the construct provider."""
     await _add_item(client, project, await upload_3mf(filename="model.3mf"))
 
     resp = await _generate(client, project, tmp_path)
 
-    assert resp.status_code == 400 and "not an STL" in resp.json()["detail"]
-    await _assert_no_jobs(client, project)
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["jobs"]) == 1
 
 
 async def test_generate_reports_an_stl_missing_from_disk(client, project, tmp_path, upload_3mf):

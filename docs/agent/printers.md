@@ -116,19 +116,19 @@ listing just the variants the model maps.
 ## Slicing pipeline (`SlicerService` → Laminus sidecar)
 
 **As of the 2026-06-23 Orca-sidecar migration, Themis does not invoke OrcaSlicer locally for
-production slicing.** `SlicerService.slice(SliceRequest)` resolves `machine_preset`/`process_preset`/
-`filament_presets` names to UUIDs against the sidecar's cached profile catalog, then delegates the
-whole slice — 3MF assembly, profile resolution, gcode generation — to a separate Laminus process over
-HTTP (`SlicingProvider.slice` → Laminus adapter: `slice_start` → `poll_status` → `download`). The
+production slicing.** `SlicerService.slice(SliceRequest)` hands the slice to the resolved `gcode.produce` plugin's
+neutral `produce()` (BIZ-295); `LaminusGcodeProducer` resolves `machine_preset`/`process_preset`/`filament_presets` names to
+UUIDs against the cached profile catalog and delegates the whole slice — 3MF assembly, profile resolution, gcode
+generation — to a separate Laminus process over HTTP (`SlicingProvider.slice` → Laminus adapter: `slice_start` →
+`poll_status` (checks the cancel token between polls) → `download`). The
 pre-sidecar local pipeline (preset resolver, profile index, config/3MF builders) was deleted in BIZ-261.
 
-**`SliceRequest.prepare_hook`** (opaque `Callable[[Path], None]`, built by `slicer_service.tool_mapping_hook(client, tool_index,
-filament_map, provider)` in `queue_engine._run_slice_and_print` and the jobs route) still runs — but now against a
-**job-scoped copy** of the source 3MF that `SlicerService` makes in the job's output directory, not the
-original. `source_3mf` is the shared library file every job/printer referencing that upload resolves
+**Slice-side tool mapping** (`SliceRequest.tool_index` / `filament_map`, set by `slicer_service.slice_side_mapping(client,
+tool_index, filament_map)` in `queue_engine._slice_request` and the jobs route; BIZ-295 replaced the old `prepare_hook`) is
+applied by the producer to a **job-scoped copy** of the source 3MF in the job's output directory, not the original. `source_3mf` is the shared library file every job/printer referencing that upload resolves
 to; running the hook on it directly would mutate it for every other consumer (this was a real
 regression, fixed — see the git log around `slicer_service.py`). Recovery tier: on `SliceError`, the
-sidecar itself retries geometry-only; `prepare_hook` isn't Themis's to re-invoke on that retry.
+sidecar itself retries geometry-only; the remap isn't Themis's to re-run on that retry.
 `filament_profile` (from the matched loaded slot) is passed as the filament preset; `filament_colours`
 from the job ask.
 
@@ -139,7 +139,7 @@ before).
 
 **Filament→tool routing is a slicing-provider operation** (`SlicingProvider.apply_tool_mapping(source_3mf, *, tool_index, filament_map)`,
 flag `TOOL_MAPPING`; base default raises `SlicingProviderError`; both args empty = no-op; both set = error):
-- **Which printers:** only a client with `slice_tool_mapping = True` (Snapmaker) gets a hook — `tool_mapping_hook` returns None otherwise
+- **Which printers:** only a client with `slice_tool_mapping = True` (Snapmaker) gets a slice-side mapping — `slice_side_mapping` returns (None, None) otherwise
   (Bambu realizes the mapping at print time via `ams_mapping`; Elegoo has none), so their 3MFs are never rewritten.
 - **Laminus adapter** (`providers/laminus/adapter.py`): `TOOL_MAPPING = True`; delegates to `services/snapmaker/remap.remap_3mf(prepared,
   *, tool_index, filament_map)` (the code stays in Themis for now; it moves to Laminus's multi-material capability, BIZ-248). It rewrites the prepared 3MF in-place:

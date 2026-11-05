@@ -27,6 +27,7 @@ from .api.routes.api_keys import router as api_keys_router
 from .api.routes.customer_portal import router as customer_portal_router
 from .api.routes.cameras import router as cameras_router
 from .api.routes.customers import router as customers_router
+from .api.routes.project_groups import router as project_groups_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
@@ -228,6 +229,7 @@ app.include_router(alarms_router)
 app.include_router(labor_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
+app.include_router(project_groups_router)        # before projects_router: its literal /groups/order path must win
 app.include_router(projects_router)
 app.include_router(payments_router)
 app.include_router(public_router)

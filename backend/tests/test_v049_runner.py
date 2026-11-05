@@ -47,7 +47,16 @@ async def test_runner_applies_v049_to_an_existing_install_and_rollback_keeps_the
             assert (await conn.execute(text(applied))).scalar() == 1
             assert [p["thumbnail_path"] for p in await _stored(conn, file_id)] == [
                 f"{file_id}/thumbnails/plate_1.png", f"{file_id}/thumbnails/plate_2.png"]
-            await rollback_last(conn)                                  # v056 (newer than the migration under test)
+            await rollback_last(conn)                                  # v065 (newer than the migration under test)
+            await rollback_last(conn)                                  # v064
+            await rollback_last(conn)                                  # v063
+            await rollback_last(conn)                                  # v062
+            await rollback_last(conn)                                  # v061
+            await rollback_last(conn)                                  # v060
+            await rollback_last(conn)                                  # v059
+            await rollback_last(conn)                                  # v058
+            await rollback_last(conn)                                  # v057
+            await rollback_last(conn)                                  # v056
             await rollback_last(conn)                                  # v055
             await rollback_last(conn)                                  # v054
             await rollback_last(conn)                                  # v053 (newer than the migration under test)
