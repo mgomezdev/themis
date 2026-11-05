@@ -23,5 +23,7 @@ def test_fingerprint_changes_with_every_cache_relevant_field():
         _settings(plate_type="Textured PEI"),
         _settings(filament_map=((1, 0),)),
         _settings(filaments=(FilamentChoice(1, "PETG", "Generic PETG"),)),
+        _settings(filaments=(FilamentChoice(1, "PLA", "Other PLA", "#ff0000"),)),   # profile only
+        _settings(filaments=(FilamentChoice(2, "PLA", "Generic PLA", "#ff0000"),)),   # slot only
     ]
     assert len({v.fingerprint() for v in variants} | {base}) == len(variants) + 1
