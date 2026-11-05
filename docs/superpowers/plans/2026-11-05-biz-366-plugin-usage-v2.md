@@ -24,7 +24,7 @@
   - Each report slot maps to the spool bound to that slot id in the attempt's start context, else in the end-time loaded slots; a slot found in neither is noted.
   - With no report: a completed attempt uses the slicer estimate routed through the slot plan (the existing path); any other end deducts nothing, with a note.
   - The result is frozen per attempt in `filament_accounting.attempts[attempt_id]` before any outbox write; redelivery reuses it.
-  - `filament_accounting.total_grams` and `jobs.actual_filament_grams` become the sum over the settled attempts.
+  - `filament_accounting.total_grams` is the sum over the settled attempts (`jobs.actual_filament_grams` stays the sliced estimate: it feeds the estimate fallback).
 - **Attempt-scoped inventory.**
   - `job_spool_snapshots.attempt_id` (NOT NULL, `''` for legacy rows); the unique key becomes (job, attempt, provider, spool). Table rebuild in v066.
   - `inventory_pending_writes.attempt_id` (nullable).

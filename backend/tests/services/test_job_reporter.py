@@ -348,3 +348,46 @@ async def test_a_reprint_is_a_new_attempt_whose_revisions_start_again_and_the_ol
     assert await reporter.report_usage(job_id, _v2(second, 0), printer_id=printer_id)               # revision 0 is fine again
     with pytest.raises(JobReportError, match="another or unknown print attempt"):
         await reporter.report_usage(job_id, _v2(first, 6), printer_id=printer_id)
+
+
+async def test_a_cancelled_print_takes_its_final_report_until_it_is_settled_after_the_grace(env, session_factory):
+    """BIZ-366 v2: a cancel's attempt is settled CANCEL_SETTLE_GRACE_S later, so the plugin's final summary still counts."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from app.models import EventDelivery, EventOutbox
+    from app.services import completion_events, job_details
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    async with session_factory() as s:                                          # the cancel route's transaction
+        await completion_events.enqueue_attempt_ended(s, job_id, printer_id, result="cancelled")
+        job = await s.get(Job, job_id)
+        job.status = "cancelled"
+        await s.commit()
+        row = (await s.execute(select(EventOutbox).where(EventOutbox.name == "job.attempt_ended"))).scalar_one()
+        due = [d.next_attempt_at for d in (await s.execute(select(EventDelivery).where(EventDelivery.outbox_id == row.id))).scalars()]
+    soon = datetime.now(timezone.utc) + timedelta(seconds=completion_events.CANCEL_SETTLE_GRACE_S - 10)
+    assert due and all(datetime.fromisoformat(d) > soon for d in due)             # held for the grace period
+    assert await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)   # the final summary, after the cancel
+    async with session_factory() as s:                                          # once settled, the attempt is closed
+        await job_details.set_details(s, job_id, "core", {"filament_accounting": {"attempts": {attempt: {"grams": 4.0}}, "total_grams": 4.0}})
+        await s.commit()
+    with pytest.raises(JobReportError, match="no longer printing"):
+        await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)
+
+
+async def test_a_failed_print_is_settled_at_once_and_takes_no_late_report(env, session_factory):
+    from sqlalchemy import select
+    from app.models import EventDelivery, EventOutbox
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report(job_id, "failed", reason="spaghetti")
+    async with session_factory() as s:
+        row = (await s.execute(select(EventOutbox).where(EventOutbox.name == "job.attempt_ended"))).scalar_one()
+        (d,) = (await s.execute(select(EventDelivery).where(EventDelivery.outbox_id == row.id))).scalars()
+        assert row.envelope["payload"]["result"] == "failed" and d.next_attempt_at <= qe_module._now()
+    with pytest.raises(JobReportError, match="no longer printing"):
+        await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)

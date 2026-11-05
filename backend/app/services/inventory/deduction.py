@@ -70,6 +70,8 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
     if await outbox.exists_for_job(session, pid, spool_ref, job.id, attempt_id):     # a redelivered event: already planned
         return Plan("skipped")
     snap = await snapshots.get(session, job.id, pid, spool_ref, attempt_id or "")
+    if snap is None and attempt_id:                                    # a print that started before v066 snapshotted per job ('')
+        snap = await snapshots.get(session, job.id, pid, spool_ref, "")
     job.deduction_skipped = False
     job.deduction_note = None
     if snap is None:

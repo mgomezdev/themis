@@ -13,13 +13,30 @@ Deductions happen only when the active provider can track and write weight and t
 legacy completion path (the `inventory` payload of an old event, else the completion-time slots)."""
 from __future__ import annotations
 
+import asyncio
+import weakref
+
 from sqlalchemy import select
 
 from ...eventing import EventEnvelope
-from ...models import Job, JobPrinterConfig
+from ...models import EventOutbox, Job, JobPrinterConfig
 from .. import filament_usage, job_details
-from ..job_reporter import REPORT_FIELD
+from ..job_reporter import REPORT_FIELD, REPORTS_FIELD
 from . import config, deduction, outbox, provider, refs, snapshots
+
+
+# Settling an attempt is read-modify-write of the job's `filament_accounting`; `job_complete.inventory` and
+# `job_attempt_ended.inventory` run as separate subscribers, so one job's settlements are serialized here (one process).
+_job_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[int, asyncio.Lock]]" = weakref.WeakKeyDictionary()
+
+
+def _lock(job_id: int) -> asyncio.Lock:
+    """The job's settlement lock on the running loop (a lock belongs to one loop)."""
+    return _job_locks.setdefault(asyncio.get_running_loop(), {}).setdefault(job_id, asyncio.Lock())
+
+
+class PreviousAttemptPending(Exception):
+    """`job.started` arrived before the job's previous attempt was settled: retried by the hub (its writes must exist first)."""
 
 
 async def _config_for(session, job_id: int, printer_id: int | None) -> JobPrinterConfig | None:
@@ -50,20 +67,45 @@ async def snapshot_on_start(envelope: EventEnvelope) -> None:
         pid = provider.provider_id()
         if job is None or job.status != "printing" or pid is None:
             return                                    # delivered late (the print already ended): the weight now is not the start weight
+        previous = context["value"].get("previous_attempt_id") if context["status"] == "ok" else None
+        if previous and await _awaiting_settlement(session, job_id, previous):
+            # A reprint snapshots from the previous attempt's pending write: that write must exist first (events of different
+            # subscribers are not ordered). The hub retries this delivery with backoff.
+            raise PreviousAttemptPending(f"job {job_id}: attempt {previous} is not settled yet")
         spool_refs = [r for r in spool_refs if not await outbox.exists_for_job(session, pid, r, job_id, attempt_id or None)]
     for spool_ref in spool_refs:
         await snapshots.take(factory, job_id, printer_id, spool_ref, attempt_id)    # provider I/O, with no session held
 
 
+async def _awaiting_settlement(session, job_id: int, attempt_id: str) -> bool:
+    """Is `attempt_id` waiting on its `job.attempt_ended` (published, but its deductions not planned yet)?"""
+    saved = (await job_details.get_details_in(session, job_id, ["filament_accounting"], origin="core"))["filament_accounting"]["value"]
+    entry = _attempts(saved).get(attempt_id)
+    if entry is not None and (entry.get("planned") or entry.get("legacy")):
+        return False
+    return (await session.execute(select(EventOutbox.id).where(
+        EventOutbox.dedup_key == f"job.attempt_ended:{attempt_id}").limit(1))).first() is not None
+
+
 def _attempts(accounting) -> dict:
-    """The job's settled attempts ({attempt_id: entry}); a single-entry record from before v2 counts as one attempt."""
+    """The job's settled attempts ({attempt_id: entry}); a single-entry record from PR #173 (before v2) counts as one `legacy`
+    attempt: its writes were keyed by job, not attempt, so a redelivery must check them that way."""
     if not isinstance(accounting, dict):
         return {}
     if isinstance(accounting.get("attempts"), dict):
         return dict(accounting["attempts"])
     if accounting.get("attempt_id"):
-        return {accounting["attempt_id"]: {**accounting, "grams": sum((accounting.get("by_slot") or {}).values())}}
+        return {accounting["attempt_id"]: {**accounting, "grams": sum((accounting.get("by_slot") or {}).values()), "legacy": True}}
     return {}
+
+
+async def _mark_planned(session, job_id: int, attempt_id: str) -> None:
+    saved = (await job_details.get_details_in(session, job_id, ["filament_accounting"], origin="core"))["filament_accounting"]["value"]
+    if not isinstance(saved, dict) or not isinstance(saved.get("attempts"), dict) or attempt_id not in saved["attempts"]:
+        return
+    saved["attempts"][attempt_id] = {**saved["attempts"][attempt_id], "planned": True}
+    await job_details.set_details(session, job_id, "core", {"filament_accounting": saved})
+    await session.commit()
 
 
 async def _settle(session, job: Job, printer_id: int | None, context: dict, *, ended: str, end_loaded: list | None,
@@ -75,7 +117,11 @@ async def _settle(session, job: Job, printer_id: int | None, context: dict, *, e
     if entry is not None:
         return entry                                  # redelivered: the allocation was frozen when the attempt was first settled
     details = await job_details.get_details_in(session, job.id, [REPORT_FIELD, "filament_usage"])
-    report = details[REPORT_FIELD]["value"] if details[REPORT_FIELD]["status"] == "ok" else None
+    # This attempt's report: core's per-attempt copy (the plugin's own field holds only its latest one, which a reprint replaces).
+    reports = (await job_details.get_details_in(session, job.id, [REPORTS_FIELD], origin="core"))[REPORTS_FIELD]["value"]
+    report = reports.get(context["attempt_id"]) if isinstance(reports, dict) else None
+    if report is None and details[REPORT_FIELD]["status"] == "ok":
+        report = details[REPORT_FIELD]["value"]           # a report stored directly as the plugin's field (no copy)
     usage = details["filament_usage"]["value"] if details["filament_usage"]["status"] == "ok" else None
     grams, breakdown = actual_grams, job.actual_filament_breakdown
     if isinstance(usage, dict) and usage.get("grams") is not None:
@@ -97,10 +143,10 @@ async def _settle(session, job: Job, printer_id: int | None, context: dict, *, e
              "slots": [{"slot": s.get("slot"), "grams": g} for s, g in alloc.slots],
              "uses": [{"spool_ref": r, "grams": g} for r, g in merged.items()], "notes": notes, "provider": provider.provider_id()}
     attempts[context["attempt_id"]] = entry
+    # A reprint adds to what the earlier attempts used: the job's consumption is `total_grams`. `jobs.actual_filament_grams` stays the
+    # sliced estimate (the per-attempt fallback reads it, and its breakdown must match it).
     total = sum(float(e.get("grams") or 0.0) for e in attempts.values())
     await job_details.set_details(session, job.id, "core", {"filament_accounting": {"attempts": attempts, "total_grams": total}})
-    if any(float(e.get("grams") or 0.0) > 0 for e in attempts.values()):
-        job.actual_filament_grams = total             # a reprint adds to what the earlier attempts used
     await session.commit()
     return entry
 
@@ -130,33 +176,49 @@ async def _settle_and_deduct(envelope: EventEnvelope, *, ended: str, context: di
     from ...eventing.hub import hub
     job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
     factory = hub.session_factory
-    async with factory() as session:
-        job = await session.get(Job, job_id)
-        if job is None:
-            return True
-        if context is None:
-            saved = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]
-            context = saved["value"] if saved["status"] == "ok" else None
-        if not isinstance(context, dict) or not context.get("attempt_id"):
-            return False
-        entry = await _settle(session, job, printer_id, context, ended=ended,
-                              end_loaded=envelope.payload.get("loaded_filaments"), actual_grams=envelope.payload.get("actual_grams"))
-        enabled = deduction.can_deduct() and await config.deduct_enabled(session)
-    if not enabled:
-        return True
-    if entry.get("provider") != provider.provider_id():
-        uses, notes = [], ["Inventory provider changed after usage was allocated; correct the spool weights by hand"]
-    else:
-        uses, notes = entry.get("uses") or [], entry.get("notes") or []
-    if uses or notes:
-        source = "manual_complete" if envelope.payload.get("source") == "manual" else "queue"
-        await _deduct(factory, job_id, printer_id, uses, notes, source=source, attempt_id=context["attempt_id"])
+    async with _lock(job_id):
+        async with factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return True
+            if context is None:
+                saved = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]
+                context = saved["value"] if saved["status"] == "ok" else None
+            if not isinstance(context, dict) or not context.get("attempt_id"):
+                return False
+            entry = await _settle(session, job, printer_id, context, ended=ended,
+                                  end_loaded=envelope.payload.get("loaded_filaments"), actual_grams=envelope.payload.get("actual_grams"))
+            enabled = deduction.can_deduct() and await config.deduct_enabled(session)
+        if enabled:
+            if entry.get("provider") != provider.provider_id():
+                uses, notes = [], ["Inventory provider changed after usage was allocated; correct the spool weights by hand"]
+            else:
+                uses, notes = entry.get("uses") or [], entry.get("notes") or []
+            if uses or notes:
+                source = "manual_complete" if envelope.payload.get("source") == "manual" else "queue"
+                # A PR #173-era record was written per job (outbox rows with no attempt, its snapshot keyed ''): check it that way.
+                await _deduct(factory, job_id, printer_id, uses, notes, source=source,
+                              attempt_id=None if entry.get("legacy") else context["attempt_id"])
+        if not entry.get("planned") and not entry.get("legacy"):
+            async with factory() as session:
+                await _mark_planned(session, job_id, context["attempt_id"])
     return True
 
 
 async def deduct_on_attempt_ended(envelope: EventEnvelope) -> None:
     # The event carries the attempt's start context: by the time it is delivered the job may already have started its next attempt.
-    await _settle_and_deduct(envelope, ended=envelope.payload["result"], context=envelope.payload.get("context"))
+    context = envelope.payload.get("context") or None
+    if context is not None and context.get("attempt_id") != envelope.payload.get("attempt_id"):
+        context = None
+    if context is None:                           # an event without its context: only the saved one can be this attempt's
+        from ...eventing.hub import hub
+        async with hub.session_factory() as session:
+            saved = (await job_details.get_details_in(session, envelope.entities["job_id"], ["filament_usage_context"], origin="core"))
+            value = saved["filament_usage_context"]["value"]
+            context = value if isinstance(value, dict) and value.get("attempt_id") == envelope.payload.get("attempt_id") else None
+        if context is None:
+            return
+    await _settle_and_deduct(envelope, ended=envelope.payload["result"], context=context)
 
 
 async def deduct_on_complete(envelope: EventEnvelope) -> None:

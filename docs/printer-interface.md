@@ -537,7 +537,9 @@ The report is a **cumulative** snapshot for the attempt, never an incremental de
   - a malformed report;
   - a report sent after the attempt ended.
 
-  Send your last report **before** reporting `complete` or `failed`.
+  Send your last report **before** reporting `complete` or `failed`. A **cancelled** print (job cancel, or a stop from Themis) is
+  settled 120 s after the cancel (`completion_events.CANCEL_SETTLE_GRACE_S`): until then its attempt still takes your final report,
+  sent once the printer has actually stopped.
 
 **Every attempt is settled when it ends:**
 - **How an attempt ends:** completed (`job.complete`), failed, cancelled while printing, or requeued after the printer died (all
@@ -547,7 +549,7 @@ The report is a **cumulative** snapshot for the attempt, never an incremental de
 - **No report:** a completed attempt falls back to the slicer estimate routed through the claim-time slot plan, labelled
   `estimated`. A failed, cancelled or requeued attempt deducts nothing and the job notes "no usage reported".
 - **Reprints add up:** each attempt deducts on its own (start snapshots and inventory writes are per attempt). The job's
-  `filament_accounting` lists every attempt, and `total_grams` / `jobs.actual_filament_grams` are their sum.
+  `filament_accounting` lists every attempt and `total_grams` is their sum (`jobs.actual_filament_grams` stays the sliced estimate).
 - **Frozen once settled:** an attempt's allocation is frozen when it is first settled. A redelivered event, or a revision sent
   after the attempt ended, never deducts again or differently.
 

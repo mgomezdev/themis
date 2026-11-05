@@ -44,10 +44,14 @@ async def start(factory, engine=None, printer_id=None, job_id=None):
 
 
 async def report(factory, job_id, context, slots, **over):
+    """What `JobReporter.report_usage` stores: the plugin's latest report, and core's copy per attempt."""
+    from app.services.job_reporter import REPORTS_FIELD
+    body = {"version": 2, "attempt_id": context["attempt_id"], "revision": 1, "final": True, "source": "reported",
+            "slots": [{"slot": s, "grams": g} for s, g in slots], **over}
     async with factory() as session:
-        await job_details.set_details(session, job_id, "prn", {REPORT_FIELD: {
-            "version": 2, "attempt_id": context["attempt_id"], "revision": 1, "final": True, "source": "reported",
-            "slots": [{"slot": s, "grams": g} for s, g in slots], **over}})
+        saved = (await job_details.get_details_in(session, job_id, [REPORTS_FIELD], origin="core"))[REPORTS_FIELD]["value"] or {}
+        await job_details.set_details(session, job_id, "prn", {REPORT_FIELD: body})
+        await job_details.set_details(session, job_id, "core", {REPORTS_FIELD: {**saved, context["attempt_id"]: body}})
         await session.commit()
 
 
@@ -99,7 +103,7 @@ async def test_a_failed_print_deducts_its_report_and_a_reprint_deducts_on_top(se
     acc = await accounting(session_factory, job_id)
     assert [e["result"] for e in acc["attempts"].values()] == ["requeued", "complete"] and acc["total_grams"] == 15.0
     async with session_factory() as session:
-        assert (await session.get(Job, job_id)).actual_filament_grams == 15.0
+        assert (await session.get(Job, job_id)).actual_filament_grams == 20.0          # the sliced estimate stays (it is the fallback)
 
 
 async def test_a_failed_print_with_no_report_deducts_nothing_and_says_so(session_factory):
@@ -190,3 +194,93 @@ async def test_the_deduction_starts_from_the_attempts_start_weight_not_the_weigh
     async with session_factory() as session:
         (row,) = (await session.execute(select(InventoryPendingWrite).where(InventoryPendingWrite.spool_ref == "11"))).scalars()
     assert (row.pre_weight_g, row.target_g, row.attempt_id) == (200.0, 195.0, context["attempt_id"])
+
+
+async def _outbox(factory, name):
+    async with factory() as session:
+        rows = (await session.execute(select(EventOutbox).where(EventOutbox.name == name).order_by(EventOutbox.id))).scalars().all()
+        return [EventEnvelope.model_validate(r.envelope) for r in rows]
+
+
+async def test_a_reprints_start_snapshot_waits_until_the_previous_attempt_is_settled(session_factory):
+    """Review: `job.started` (attempt 2) and `job.attempt_ended` (attempt 1) are different subscribers with no ordering. If the
+    snapshot came first it would start from the weight before attempt 1's write, and that write would be superseded (lost)."""
+    import pytest
+    from app.services.inventory.subscribers import PreviousAttemptPending
+    engine, printer_id, job_id, fake, ctx1 = await start(session_factory)
+    await report(session_factory, job_id, ctx1, [(0, 5.0)])
+    assert await engine.requeue_dead_print(job_id, printer_id, "offline")          # attempt_ended written, not delivered
+    assert await engine.mark_printing(job_id, printer_id, origin="core")           # attempt 2 starts at once
+    started = (await _outbox(session_factory, "job.started"))[-1]
+    with pytest.raises(PreviousAttemptPending):
+        await subscribers.snapshot_on_start(started)
+    (ended,) = await _outbox(session_factory, "job.attempt_ended")
+    await subscribers.deduct_on_attempt_ended(ended)
+    await tasks.drain()
+    await subscribers.snapshot_on_start(started)                                   # the retry: now chained from attempt 1
+    async with session_factory() as session:
+        ctx2 = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+    assert ctx2["previous_attempt_id"] == ctx1["attempt_id"]
+    await report(session_factory, job_id, ctx2, [(0, 10.0)])
+    assert await engine.complete_job(job_id, printer_id, origin="core")
+    await drain(session_factory)
+    assert fake.writes[-1] == ("11", 185.0)
+
+
+async def test_two_attempts_settling_at_once_both_stay_on_record(session_factory, monkeypatch):
+    import asyncio
+    from app.services.inventory import subscribers as subs
+    real = subs.job_details.get_details_in
+
+    async def slow(session, job_id, fields, **kw):                # a yield between reading the accounting and writing it back
+        out = await real(session, job_id, fields, **kw)
+        if REPORT_FIELD in fields:
+            await asyncio.sleep(0.05)
+        return out
+    monkeypatch.setattr(subs.job_details, "get_details_in", slow)
+    engine, printer_id, job_id, fake, ctx1 = await start(session_factory)
+    await report(session_factory, job_id, ctx1, [(0, 5.0)])
+    assert await engine.requeue_dead_print(job_id, printer_id, "offline")
+    (ended,) = await _outbox(session_factory, "job.attempt_ended")
+    assert await engine.mark_printing(job_id, printer_id, origin="core")           # attempt 2, before attempt 1 is settled
+    async with session_factory() as session:
+        ctx2 = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+    await report(session_factory, job_id, ctx2, [(4, 7.0)])
+    assert await engine.complete_job(job_id, printer_id, origin="core")
+    (complete,) = await _outbox(session_factory, "job.complete")
+    await asyncio.gather(subscribers.deduct_on_attempt_ended(ended), subscribers.deduct_on_complete(complete),
+                         subscribers.deduct_on_complete(complete))
+    await tasks.drain()
+    acc = await accounting(session_factory, job_id)
+    assert set(acc["attempts"]) == {ctx1["attempt_id"], ctx2["attempt_id"]} and acc["total_grams"] == 12.0
+    assert sorted(fake.writes) == [("11", 195.0), ("22", 193.0)]
+
+
+async def test_a_redelivered_completion_never_deducts_twice(session_factory):
+    engine, printer_id, job_id, fake, context = await start(session_factory)
+    await report(session_factory, job_id, context, [(0, 5.0)])
+    assert await engine.complete_job(job_id, printer_id, origin="core")
+    await drain(session_factory)
+    (complete,) = await _outbox(session_factory, "job.complete")
+    await subscribers.deduct_on_complete(complete)
+    await tasks.drain()
+    assert fake.writes == [("11", 195.0)]
+
+
+async def test_a_record_settled_before_v2_is_not_deducted_again_on_redelivery(session_factory):
+    """Review: a PR #173 `filament_accounting` (one attempt, no `attempts`) whose writes have no attempt id."""
+    from app.models import InventoryPendingWrite
+    engine, printer_id, job_id, fake, context = await start(session_factory)
+    async with session_factory() as session:
+        await job_details.set_details(session, job_id, "core", {"filament_accounting": {
+            "status": "planned", "source": "reported", "attempt_id": context["attempt_id"], "provider": "spoolman",
+            "by_slot": {"0": 5.0}, "uses": [{"spool_ref": "11", "grams": 5.0}], "notes": []}})
+        session.add(InventoryPendingWrite(provider="spoolman", spool_ref="11", target_g=195.0, job_id=job_id, printer_id=printer_id,
+                                          source="queue", created_at="2026-11-04T00:00:00", status="applied", attempt_id=None))
+        await session.commit()
+    assert await engine.complete_job(job_id, printer_id, origin="core")
+    await drain(session_factory)
+    assert fake.writes == []
+    async with session_factory() as session:
+        rows = (await session.execute(select(InventoryPendingWrite).where(InventoryPendingWrite.job_id == job_id))).scalars().all()
+    assert len(rows) == 1

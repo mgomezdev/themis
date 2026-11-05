@@ -42,6 +42,9 @@ def bind_engine(engine) -> None:
 EVENT = "job.complete"
 STARTED = "job.started"
 ATTEMPT_ENDED = "job.attempt_ended"
+# A cancelled print is settled this long after the cancel: the printer's plugin can still send its final usage report, which only
+# arrives once the printer has actually stopped (BIZ-366 v2). Failed and requeued prints are settled at once.
+CANCEL_SETTLE_GRACE_S = 120.0
 HANDLER_TIMEOUT_S = 30.0
 
 
@@ -53,6 +56,7 @@ async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, 
     envelope = EventEnvelope(name=STARTED, schema_version=CORE_EVENTS[STARTED].version, origin=origin, entities=entities,
                              dedup_key=f"{STARTED}:{job.id}:{printer_id}:{job.updated_at}",
                              payload={"loaded_filaments": list(loaded_filaments or [])})
+    previous = (await job_details.get_details_in(session, job.id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
     accepted = await hub.enqueue_durable(session, envelope)
     if accepted:
         cfg = (await session.execute(select(JobPrinterConfig).where(
@@ -62,6 +66,8 @@ async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, 
         # Generic printer facts, persisted in the physical-start transaction. Inventory interprets bindings itself.
         await job_details.set_details(session, job.id, "core", {"filament_usage_context": {
             "attempt_id": envelope.dedup_key, "printer_id": printer_id,
+            # A reprint's start snapshot waits for this attempt's writes (inventory/subscribers.py).
+            "previous_attempt_id": previous.get("attempt_id") if isinstance(previous, dict) else None,
             "slot_plan": filament_matching.plan_to_json(filament_matching.plan_for(cfg, loaded_filaments)),
             "loaded_filaments": deepcopy(loaded_filaments or []),
         }})
@@ -83,7 +89,9 @@ async def enqueue_attempt_ended(session: AsyncSession, job_id: int, printer_id: 
                              dedup_key=f"{ATTEMPT_ENDED}:{context['attempt_id']}",
                              payload={"result": result, "attempt_id": context["attempt_id"], "context": deepcopy(context),
                                       "loaded_filaments": list(loaded_filaments or [])})
-    return await hub.enqueue_durable(session, envelope)
+    from datetime import datetime, timedelta, timezone
+    deliver_at = datetime.now(timezone.utc) + timedelta(seconds=CANCEL_SETTLE_GRACE_S) if result == "cancelled" else None
+    return await hub.enqueue_durable(session, envelope, deliver_at=deliver_at)
 
 
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,
