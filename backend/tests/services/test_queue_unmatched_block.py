@@ -309,7 +309,8 @@ async def test_all_candidate_failures_are_stored_and_another_printer_can_claim(e
     assert (claimed.status, claimed.assigned_printer_id, claimed.block_reason, claimed.unmatched_filaments) == ("slicing", 2, None, None)
     async with session_factory() as s:
         config = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == 2))).scalar_one()
-        assert config.slot_plan == [{"model_filament": i, "slot": 0} for i in range(1, 5)]
+        assert [{k: v for k, v in e.items() if k != "identity"} for e in config.slot_plan] == [
+            {"model_filament": i, "slot": 0} for i in range(1, 5)]
         assert all(e["tool_index"] is None for e in config.filament_map)
 
 
@@ -321,3 +322,21 @@ async def test_hardware_filament_sync_wakes_engine_after_persisting_slots(env, s
     env.engine.wake.assert_called_once()
     async with session_factory() as s:
         assert (await s.get(Printer, 1)).loaded_filaments[0]["type"] == "PETG"
+
+
+async def test_the_fleet_check_combines_a_missing_process_profile_with_the_structured_filament_rows(env, session_factory):
+    """Merge of BIZ-358 into BIZ-235: a printer with the filament but no process profile reports that (and no unmatched row);
+    a printer without the filament reports its unmatched filament rows; the job blocks with both."""
+    await add_printer(env, session_factory, 1, PA_CF)                    # has the filament, no default process profile
+    await add_printer(env, session_factory, 2, PLA)                      # wrong filament
+    job_id = await add_job(env, session_factory, [1, 2])
+    async with session_factory() as s:
+        for cfg in (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars():
+            cfg.print_profile = ""                                       # "Printer default"
+        await s.commit()
+    await env.engine._sweep_unmatched_jobs()
+    blocked = await job(session_factory, job_id)
+    assert blocked.status == "blocked"
+    assert blocked.unmatched_filaments == {"2": [1]}
+    assert "P1 has no default process profile" in blocked.block_reason
+    assert "P2: Filament 1" in blocked.block_reason

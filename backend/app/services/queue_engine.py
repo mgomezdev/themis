@@ -79,20 +79,23 @@ def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
 
 
 def _ams_mapping(plan: list, loaded: list) -> list[int] | None:
-    """Printer tray ids in model-filament order, never list indices or spool refs."""
+    """Printer tray ids indexed by model filament (entry N-1 = filament N), never list indices or spool refs. A filament number the
+    plan doesn't use (a plate printing filaments 1 and 3 of a project) is -1, the documented "unused" value of `ams_mapping`."""
     if not plan:
         return None
-    ordered = sorted(plan, key=lambda u: u.model_filament or 1)
-    if any(not 0 <= u.slot < len(loaded) for u in ordered):
+    if any(not 0 <= u.slot < len(loaded) for u in plan):
         raise ValueError("A mapped filament slot was removed before printing")
-    trays = [loaded[u.slot].get("ams_tray_id") for u in ordered]
-    if all(t is None for t in trays):
+    by_filament: dict[int, int | None] = {}
+    for u in plan:
+        mf = 1 if u.model_filament is None else u.model_filament       # the single-filament ask is filament 1
+        if type(mf) is not int or mf < 1 or mf in by_filament:
+            raise ValueError(f"Filament {mf} is mapped more than once or is not a filament number")
+        by_filament[mf] = loaded[u.slot].get("ams_tray_id")
+    if all(t is None for t in by_filament.values()):
         return None  # this printer does not use AMS tray identifiers
-    if any(type(t) is not int or t < 0 for t in trays):
+    if any(type(t) is not int or t < 0 for t in by_filament.values()):
         raise ValueError("Every mapped filament needs a valid AMS tray identifier")
-    if [u.model_filament or 1 for u in ordered] != list(range(1, len(ordered) + 1)):
-        raise ValueError("AMS mapping must include every model filament in order")
-    return trays
+    return [by_filament.get(n, -1) for n in range(1, max(by_filament) + 1)]
 
 
 def effective_process_profile(config, printer) -> str:
@@ -1057,7 +1060,8 @@ class QueueEngine:
         # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
         # user cancel) that committed while we awaited the Laminus health probe above.
         plate_number = job.plate_number
-        config.slot_plan = filament_matching.plan_to_json(fit.plan)    # the slots this print uses: slicing and deduction follow it
+        # The slots this print uses (slicing and deduction follow it), with what each holds now: dispatch re-checks that.
+        config.slot_plan = filament_matching.plan_to_json(filament_matching.pin_identities(fit.plan, printer.loaded_filaments))
         result = await session.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
@@ -1775,10 +1779,10 @@ class QueueEngine:
                 job.updated_at = now
             printer = await self._hold_plate_gate(session, printer_id)
             await job_details.set_details(session, job_id, origin or "core", {"print_start_time": now, **(details or {})})
-            try:
-                reporting_client = self._mgr.get_client(printer_id)
-            except KeyError:
-                reporting_client = None  # a plugin can report a start without a connected control client
+            from .printer_client_factory import client_class
+            # The plugin's class says whether filament->tool routing is baked in at slice time; a start can be reported with no
+            # connected control client, and that must not change how its usage is read.
+            reporting_client = client_class(printer.plugin_id or printer.printer_type) if printer else None
             # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
             await completion_events.enqueue_job_started(session, job, printer_id, origin=origin or "core",
                                                         loaded_filaments=(printer.loaded_filaments if printer else None),
@@ -1823,9 +1827,15 @@ class QueueEngine:
             if job.actual_filament_grams is not None:
                 reported["filament_usage"] = {"grams": job.actual_filament_grams, "breakdown": job.actual_filament_breakdown}
             existing_usage = (await job_details.get_details_in(session, job_id, ["filament_usage"], origin=origin or "core"))["filament_usage"]["value"]
+            extra = dict(details or {})
             if isinstance(existing_usage, dict) and "version" in existing_usage:
                 reported["filament_usage"] = existing_usage  # retain partial/rollover reports too; never hide uncertainty with an estimate
-            await job_details.set_details(session, job_id, origin or "core", {**reported, **(details or {})})
+                # A legacy `details["filament_usage"]` on complete must not replace it either (it would drop the version and turn a
+                # partial / rollover report back into a full estimate deduction).
+                if "filament_usage" in extra:
+                    logger.info("job %s: ignored details.filament_usage on complete; a versioned usage report is on record", job_id)
+                    extra.pop("filament_usage")
+            await job_details.set_details(session, job_id, origin or "core", {**reported, **extra})
             await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
             await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", origin=origin or "core",
                                                          loaded_filaments=printer.loaded_filaments if printer else None)

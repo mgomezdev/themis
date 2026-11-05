@@ -53,3 +53,20 @@ def test_tagged_spools_report_a_tag_id_and_a_material_code(live_trays):
 def test_decoded_manufacturers_for_the_loaded_spools(live_trays):
     for slot in BambuMQTTClient._parse_ams(live_trays):
         print(slot["ams_tray_id"], slot["filament_id"], "->", slot["manufacturer"])
+
+
+def test_tray_ids_are_unit_times_four_plus_tray_and_empty_trays_are_left_out(live_trays):
+    """PR #173 (BIZ-235): `ams_mapping` sends these global tray ids (unit*4 + tray, external spool 254), indexed by model filament.
+    Empty trays are left out of the loaded list, so list positions shift when a tray empties: the claim plan records each slot's
+    tray id and dispatch re-checks it (filament_matching.still_loaded). Read-only."""
+    raw = [(int(u.get("id", 0)), int(t.get("id", 0)), bool((t.get("tray_type") or "").strip()))
+           for u in (live_trays.get("ams") or {}).get("ams", []) for t in u.get("tray", [])]
+    parsed = [s for s in BambuMQTTClient._parse_ams(live_trays) if s.get("ams_unit") is not None]
+    print("raw trays (unit, tray, loaded):", raw)
+    print("parsed:", [(s["ams_unit"], s["ams_tray_id"], s["type"]) for s in parsed])
+    if not raw:
+        pytest.skip("no AMS unit reported")
+    assert [s["ams_tray_id"] for s in parsed] == [u * 4 + t for u, t, loaded in raw if loaded]
+    vt = live_trays.get("vt_tray")
+    if isinstance(vt, dict) and (vt.get("tray_type") or "").strip():
+        assert any(s["ams_tray_id"] == 254 for s in BambuMQTTClient._parse_ams(live_trays))

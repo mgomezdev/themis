@@ -580,4 +580,4 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
 
 
-Migration v057 adds nullable JSON `jobs.unmatched_filaments`: a map from printer id to unmatched model filament numbers, captured with a fleet-wide filament block. `NULL` means no stored filament failure; the details API returns `{}`. Requeue, unblock and a successful claim clear this snapshot.
+Migration v065 adds nullable JSON `jobs.unmatched_filaments`: a map from printer id to unmatched model filament numbers, captured with a fleet-wide filament block. `NULL` means no stored filament failure; the details API returns `{}`. Requeue, unblock and a successful claim clear this snapshot.

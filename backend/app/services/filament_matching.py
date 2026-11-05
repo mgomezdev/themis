@@ -23,12 +23,18 @@ def is_loaded(slot: dict) -> bool:
 
 @dataclass(frozen=True)
 class SlotUse:
-    """One resolved colour: `model_filament` (1-based, None for the single-filament ask) prints from loaded[`slot`]."""
+    """One resolved colour: `model_filament` (1-based, None for the single-filament ask) prints from loaded[`slot`]. `identity` is
+    what that slot held when a printer claimed the job (tray id, type, colour): slot numbers are list positions, and a vendor that
+    lists only occupied trays renumbers them when a tray is emptied, so dispatch checks the identity, not just the index."""
     model_filament: int | None
     slot: int
+    identity: dict | None = field(default=None, compare=False)
 
     def as_dict(self) -> dict:
-        return {"model_filament": self.model_filament, "slot": self.slot}
+        out = {"model_filament": self.model_filament, "slot": self.slot}
+        if self.identity is not None:
+            out["identity"] = self.identity
+        return out
 
 
 @dataclass
@@ -175,8 +181,23 @@ def plan_from_json(raw) -> list[SlotUse] | None:
     for item in raw:
         if not isinstance(item, dict) or not isinstance(item.get("slot"), int):
             return None
-        out.append(SlotUse(item.get("model_filament"), item["slot"]))
+        ident = item.get("identity")
+        out.append(SlotUse(item.get("model_filament"), item["slot"], ident if isinstance(ident, dict) else None))
     return out
+
+
+_IDENTITY_KEYS = ("ams_tray_id", "type", "color")
+
+
+def slot_identity(slot: dict | None) -> dict:
+    return {k: (slot or {}).get(k) for k in _IDENTITY_KEYS}
+
+
+def pin_identities(plan: list[SlotUse], loaded: list | None) -> list[SlotUse]:
+    """`plan` with each slot's current identity recorded (claim time), so dispatch can tell the slot still holds that filament."""
+    loaded = list(loaded or [])
+    return [SlotUse(u.model_filament, u.slot, slot_identity(loaded[u.slot]) if 0 <= u.slot < len(loaded) else None)
+            for u in plan]
 
 
 def plan_for(config, loaded: list | None) -> list[SlotUse]:
@@ -208,6 +229,8 @@ def still_loaded(plan: list[SlotUse], loaded: list | None) -> str | None:
     for u in plan:
         if not (0 <= u.slot < len(loaded)) or not is_loaded(loaded[u.slot]):
             return f"the filament in {_label(u.slot)} was removed"
+        if u.identity is not None and slot_identity(loaded[u.slot]) != u.identity:
+            return f"the filament in {_label(u.slot)} changed since the job was claimed"
     return None
 
 

@@ -112,8 +112,10 @@ def test_ams_profiles_and_dispatch_tray_mapping_follow_model_order_not_physical_
 
 
 @pytest.mark.parametrize("plan,loaded", [
-    ([(1, 0), (2, 1)], [{"ams_tray_id": 0}, {}]),
-    ([(1, 0), (3, 1)], [{"ams_tray_id": 0}, {"ams_tray_id": 4}]),
+    ([(1, 0), (2, 1)], [{"ams_tray_id": 0}, {}]),                        # a mapped filament with no tray id
+    ([(1, 0), (1, 1)], [{"ams_tray_id": 0}, {"ams_tray_id": 4}]),        # one filament mapped twice
+    ([(0, 0)], [{"ams_tray_id": 0}]),                                    # not a filament number
+    ([(1, 0), (2, 3)], [{"ams_tray_id": 0}, {"ams_tray_id": 4}]),        # a slot that is gone
 ])
 def test_incomplete_ams_mapping_cannot_silently_print_a_partial_tray_list(plan, loaded):
     from app.services.filament_matching import SlotUse
@@ -134,3 +136,29 @@ def test_invalid_model_indices_produce_a_recoverable_error_before_slice_routing(
     params = _slice_params(Job(), config, Printer(loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
     with pytest.raises(ValueError, match="unique positive model filament number"):
         engine._slice_request(1, 1, 1, params, "laminus")
+
+
+def test_ams_mapping_is_indexed_by_filament_number_with_unused_filaments_minus_one():
+    """Review: a plate printing filaments 1 and 3 of a project maps filament 2 to -1 (unused), not an error or a short list."""
+    from app.services.filament_matching import SlotUse
+    from app.services.queue_engine import _ams_mapping
+    loaded = [{"ams_tray_id": 0}, {"ams_tray_id": 4}]
+    assert _ams_mapping([SlotUse(3, 1), SlotUse(1, 0)], loaded) == [0, -1, 4]
+    assert _ams_mapping([SlotUse(2, 1)], loaded) == [-1, 4]
+    assert _ams_mapping([SlotUse(None, 1)], loaded) == [4]                  # the single-filament ask is filament 1
+    assert _ams_mapping([SlotUse(1, 0)], [{}]) is None                     # not an AMS printer
+
+
+def test_a_slot_that_now_holds_a_different_filament_no_longer_satisfies_the_claim_plan():
+    """Review: slot numbers are list positions; emptying a tray renumbers the rest, so the claim records what each slot held."""
+    from app.services import filament_matching as fm
+    at_claim = [{"slot": 0, "type": "PLA", "color": "#000000", "ams_tray_id": 0},
+                {"slot": 1, "type": "PETG", "color": "#FFFFFF", "ams_tray_id": 2}]
+    stored = fm.plan_to_json(fm.pin_identities([fm.SlotUse(1, 1)], at_claim))
+    assert stored == [{"model_filament": 1, "slot": 1, "identity": {"ams_tray_id": 2, "type": "PETG", "color": "#FFFFFF"}}]
+    plan = fm.plan_from_json(stored)
+    assert fm.still_loaded(plan, at_claim) is None
+    renumbered = [at_claim[0], {"slot": 1, "type": "TPU", "color": "#FF0000", "ams_tray_id": 3}]     # tray 2 emptied
+    assert "changed since the job was claimed" in fm.still_loaded(plan, renumbered)
+    assert fm.still_loaded(fm.plan_from_json([{"model_filament": 1, "slot": 1}]), renumbered) is None   # old plans: index only
+    assert fm.plan_from_json(stored)[0] == fm.SlotUse(1, 1)                 # identity is not part of plan equality

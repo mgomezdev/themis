@@ -255,7 +255,8 @@ async def test_claim_stores_the_chosen_slots_as_the_configs_plan(db, tmp_path):
     async with db() as session:
         cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         assert (await session.get(Job, job_id)).status == "printing"
-        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]          # the ask says standard: T0 (silk) is not it
+        assert cfg.slot_plan == [{"model_filament": None, "slot": 1,               # the ask says standard: T0 (silk) is not it
+                                  "identity": {"ams_tray_id": None, "type": "PLA", "color": "#FF0000"}}]
 
 
 @pytest.mark.asyncio
@@ -283,7 +284,7 @@ async def test_a_conflicting_slot_is_not_used_but_the_printers_other_slot_prints
 
     async with db() as session:
         cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]
+        assert [{k: v for k, v in e.items() if k != "identity"} for e in cfg.slot_plan] == [{"model_filament": None, "slot": 1}]
 
 
 @pytest.mark.asyncio

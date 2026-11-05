@@ -33,7 +33,9 @@ class JobReporter:
         """Persist a cumulative per-slot/filament usage report for the current physical print.
 
         Plugins read `filament_usage_context.attempt_id` through ctx.job_details, then send monotonically
-        increasing revisions. Duplicates/out-of-order revisions return False. Reports do not deduct by themselves;
+        increasing revisions. Duplicates/out-of-order revisions return False; a report after the print ended (the job is no
+        longer printing on this printer) raises JobReportError, so a late final summary is never mistaken for a duplicate.
+        Reports do not deduct by themselves;
         successful completion freezes the chosen allocation and drives the inventory outbox.
         """
         from ..eventing.hub import hub
@@ -48,7 +50,10 @@ class JobReporter:
             guard = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing",
                 func.coalesce(Job.assigned_printer_id, Job.printed_on_printer_id) == printer_id).values(updated_at=Job.updated_at))
             if guard.rowcount == 0:
-                return False
+                job = await session.get(Job, job_id)
+                raise JobReportError(f"job {job_id} is no longer printing on printer {printer_id} "
+                                     f"(status {getattr(job, 'status', None)!r}): its usage was already settled from the estimate "
+                                     "or an earlier report; send reports before completing the job")
             context = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
             if context is None or parsed.attempt_id != context["attempt_id"]:
                 raise JobReportError("filament usage report belongs to another or unknown print attempt")
