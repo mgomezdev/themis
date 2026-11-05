@@ -18,7 +18,7 @@ def printer_manifest(pid: str, *, fields=(), unsupported=()) -> PluginManifest:
 
 
 async def test_the_catalog_route_lists_enabled_plugins_fields_and_drops_them_when_disabled(client):
-    register(printer_manager_stub := printer_manifest("cat_prn", fields=("cat_field",), unsupported=("cat_unsupported",)))
+    register(printer_manifest("cat_prn", fields=("cat_field",), unsupported=("cat_unsupported",)))
     assert "cat_field" not in {f["name"] for f in (await client.get("/api/v1/job-fields")).json()}
     await plugin_host.update_config("cat_prn", enabled=True)
     rows = {f["name"]: f for f in (await client.get("/api/v1/job-fields")).json()}

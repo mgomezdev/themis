@@ -513,7 +513,7 @@ async def test_reorder_front_gives_lowest_position(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
@@ -542,7 +542,7 @@ async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):

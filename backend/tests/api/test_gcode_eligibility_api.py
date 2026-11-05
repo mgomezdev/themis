@@ -97,7 +97,7 @@ async def test_put_replaces_the_set_and_a_model_file_has_no_eligibility(client, 
 
 async def test_files_can_be_filtered_by_eligible_model_with_unknown_files_opt_in(client):
     models = await model_ids(client)
-    x1 = await upload(client, "x1.gcode", [models["x1"]])
+    await upload(client, "x1.gcode", [models["x1"]])
     x2 = await upload(client, "x2.gcode", [models["x2"]])
     legacy = await upload(client, "legacy.gcode")
 

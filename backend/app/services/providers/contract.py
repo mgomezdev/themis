@@ -13,6 +13,8 @@ packages implement them. Nothing here names a vendor.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -168,7 +170,7 @@ class SliceSettings:
     plate_type: str | None = None    # the printer's build-plate type (neutral; not an override); None = machine default
 
     def fingerprint(self) -> str:
-        return _sha({  # noqa: F821 -- pre-existing: _sha is undefined (fingerprint() has no callers)
+        return _sha({
             "process_profile": self.process_profile,
             "plate_type": self.plate_type,
             "filaments": [[f.slot, f.material, f.profile] for f in self.filaments],   # colour excluded
@@ -176,6 +178,11 @@ class SliceSettings:
             "tool_index": self.tool_index,
             "filament_map": [list(p) for p in self.filament_map] if self.filament_map else None,
         })
+
+
+def _sha(payload: dict) -> str:
+    """Stable digest of a JSON-able payload (key order irrelevant)."""
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
