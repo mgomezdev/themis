@@ -1,7 +1,7 @@
 """POST /settings/fleet-import edge cases (the backup/redaction basics live in tests/test_fleet_backup.py)."""
 import io
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 

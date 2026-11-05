@@ -3,13 +3,11 @@ import ftplib
 import io
 import json
 import logging
-import socket
 import ssl
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import Callable, ClassVar, Optional
+from typing import Callable, ClassVar
 
 import paho.mqtt.client as mqtt
 

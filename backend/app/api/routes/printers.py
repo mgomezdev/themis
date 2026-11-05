@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-import time as _time
 
 from typing import Literal, Optional
 

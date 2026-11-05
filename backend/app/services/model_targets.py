@@ -6,7 +6,7 @@ know about targets. A printer's make/model is its registry model (`Printer.model
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 

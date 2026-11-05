@@ -1,6 +1,5 @@
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from app.services.printer_manager import PrinterManager
 from app.plugins.bambu.client import serialize_bambu
 from app.services.abstract_printer_client import PrinterCapabilities

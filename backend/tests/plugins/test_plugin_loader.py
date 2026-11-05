@@ -1,6 +1,5 @@
 """Startup loading of installed plugins (BIZ-223): bundled-format toml, sys.path order, contained failures, restart-applied
 batches, pending removal, status reconciliation."""
-import shutil
 import sqlite3
 import sys
 

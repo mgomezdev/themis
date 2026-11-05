@@ -1,6 +1,5 @@
 """BIZ-365: a printer that fails the same part `waive_after` times is waived for that part in every project; waived printers
 skip jobs carrying it; per-printer flag / stop thresholds; a test print jumps the queue and its results can clear the waiver."""
-import json
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import select

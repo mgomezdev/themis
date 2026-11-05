@@ -208,7 +208,6 @@ async def test_plugin_and_capability_responses_carry_their_keys(client, monkeypa
 
 
 async def test_model_slicer_profile_responses_carry_their_keys(client, create_printer, model_uuid_of):
-    from unittest.mock import patch
     from app.services.providers.slicing import MachineCandidate, NozzleVariantOption
     from tests.fake_providers import FakeSlicingProvider
 
@@ -235,7 +234,6 @@ async def test_model_slicer_profile_responses_carry_their_keys(client, create_pr
 
 
 async def test_job_model_targets_carry_the_model_target_keys(client, upload_3mf, create_printer, model_uuid_of):
-    from unittest.mock import patch
     model = await model_uuid_of(await create_printer())
     with patch("app.api.routes.jobs.queue_engine"):
         job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": await upload_3mf(), "model_targets": [

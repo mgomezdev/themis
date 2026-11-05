@@ -1,8 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy import select
-from app.models import Printer
-from app.services.abstract_printer_client import PrinterCapabilities
+from unittest.mock import MagicMock
 
 
 async def test_get_printer_types(client):
@@ -206,9 +203,6 @@ async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(c
         assert (await session.get(Job, job_id)).printed_on_printer_id is None
 
 
-import pytest
-from unittest.mock import MagicMock
-from httpx import AsyncClient
 
 
 @pytest.mark.asyncio

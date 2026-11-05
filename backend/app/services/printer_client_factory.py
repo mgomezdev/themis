@@ -3,7 +3,6 @@ its client class as its manifest `factory`, and a printer row points at its plug
 from __future__ import annotations
 
 import inspect
-from dataclasses import asdict
 
 from ..models import Printer
 from ..plugins import get_plugin, registered_plugins

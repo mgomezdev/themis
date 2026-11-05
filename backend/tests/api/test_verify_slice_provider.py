@@ -1,5 +1,4 @@
 """BIZ-291: the manual slices (verify-slice, complete-manually) use the printer's slicer, like the queue does."""
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.api.routes.jobs import _build_slice_request

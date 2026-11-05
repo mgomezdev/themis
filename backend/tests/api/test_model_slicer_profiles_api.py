@@ -368,7 +368,8 @@ async def test_the_last_default_can_go_when_every_printer_has_its_own_override_o
 
 
 async def test_a_backup_row_missing_its_provider_is_skipped_with_a_warning_and_a_model_never_ends_up_without_a_default(client, p1s):
-    import io, json
+    import io
+    import json
     pid, model = p1s
     row = lambda d, name, default: {"plugin_id": "bambu", "manufacturer_id": "bambu", "model_id": "p1s", "provider_plugin_id": "laminus",
                                     "nozzle_diameter_mm": d, "flow": "standard", "machine_profile": name, "is_default": default}

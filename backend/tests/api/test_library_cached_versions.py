@@ -5,9 +5,8 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 
-from app.models import Job, Project, SlicedVersion, UploadedFile
+from app.models import Job, SlicedVersion, UploadedFile
 from app.services.artifact_store import ArtifactStoreError, LocalDiskArtifactStore
 from tests.api.test_slice_cache_api import _version_for, library  # noqa: F401 — `library` is a fixture
 from tests.conftest import make_sliced_archive

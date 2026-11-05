@@ -1,7 +1,6 @@
 import io
 import json
 import zipfile
-import pytest
 from app.services.three_mf_parser import parse_embedded_settings
 
 

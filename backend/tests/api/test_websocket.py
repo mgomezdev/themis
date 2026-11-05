@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient

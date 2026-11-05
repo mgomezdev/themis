@@ -1,5 +1,4 @@
 import json
-import time
 from unittest.mock import MagicMock
 import pytest
 from app.plugins.elegoo_centauri.client import ElegooCentauriClient, ElegooState, _CAMERA_PORT

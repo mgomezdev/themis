@@ -13,14 +13,11 @@ packages implement them. Nothing here names a vendor.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 CAP_3MF_CONSTRUCT = "3mf.construct"
 CAP_GCODE_PRODUCE = "gcode.produce"
@@ -171,7 +168,7 @@ class SliceSettings:
     plate_type: str | None = None    # the printer's build-plate type (neutral; not an override); None = machine default
 
     def fingerprint(self) -> str:
-        return _sha({
+        return _sha({  # noqa: F821 -- pre-existing: _sha is undefined (fingerprint() has no callers)
             "process_profile": self.process_profile,
             "plate_type": self.plate_type,
             "filaments": [[f.slot, f.material, f.profile] for f in self.filaments],   # colour excluded

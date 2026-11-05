@@ -1,15 +1,12 @@
 """Tests for catalog_utils.py — catalog_name_sets and compute_drift."""
 from __future__ import annotations
 
-import json
 import pytest
 import pytest_asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import Base
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile
 from tests.catalog_helpers import catalog_from_dict as C
 from app.plugins.capabilities.filament_inventory import InvMaterial, InventoryProviderError
