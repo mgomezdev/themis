@@ -59,7 +59,7 @@ async def test_patch_sends_only_orca_profiles_in_extra():
 
     ctx, mock_client = _mock_client(_ok_response(returned))
     with ctx:
-        result = await patch_filament(BASE_URL, None, FILAMENT_ID, profiles)
+        await patch_filament(BASE_URL, None, FILAMENT_ID, profiles)
 
     mock_client.patch.assert_called_once()
     call_kwargs = mock_client.patch.call_args

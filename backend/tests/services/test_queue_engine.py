@@ -482,7 +482,7 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
 
     qe = QueueEngine(db, mgr, mock_slicer)
     _install_fake_put(qe)
-    job_id = await _seed_job(db, printer_id=1)
+    await _seed_job(db, printer_id=1)
 
     # First cycle slices the job
     await qe._process_queue()

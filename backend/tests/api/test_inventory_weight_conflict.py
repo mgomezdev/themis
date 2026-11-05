@@ -142,7 +142,7 @@ async def test_a_held_conflict_blocks_later_writes_for_that_spool_only(client, s
     fake, wid = await _held(client, session_factory)
     fake.spools["2"] = spool("2", 50.0)
     later = await _queue(session_factory, ref="1", pre=80.0, target=70.0)
-    other = await _queue(session_factory, ref="2", pre=50.0, target=40.0)
+    await _queue(session_factory, ref="2", pre=50.0, target=40.0)
 
     assert (await client.post(f"{BASE}/pending-writes/flush")).json() == {"applied": 1}
     assert fake.writes == [("2", 40.0)]

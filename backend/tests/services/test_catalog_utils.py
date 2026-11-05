@@ -304,7 +304,6 @@ async def test_compute_drift_spoolman_stale_name(drift_session):
 @pytest.mark.asyncio
 async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
     """Spoolman HTTP failure → inventory_error set; printer hits still captured."""
-    removed_uuid = "aaaa-1111"
     new_cat = {
         "machine": [{"name": "Bambu X1C New"}],  # remove "Bambu X1C"
         "process": [{"name": "0.20mm Standard"}],
