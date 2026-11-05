@@ -6,7 +6,7 @@ from tests.fake_providers import FakeSlicingProvider
 from tests.slicing_env import slicing_provider
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest_asyncio
 

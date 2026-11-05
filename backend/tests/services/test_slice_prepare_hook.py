@@ -1,7 +1,7 @@
 from tests.fake_providers import FakeSlicingProvider
-from tests.catalog_helpers import cached_raw, prime_catalog
+from tests.catalog_helpers import prime_catalog
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app.services.slicer_service import SlicerService, SliceRequest
 
 

@@ -5,7 +5,6 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 
 from app.models import Job, Project, SlicedVersion, UploadedFile
 from app.services.artifact_store import ArtifactStoreError, LocalDiskArtifactStore

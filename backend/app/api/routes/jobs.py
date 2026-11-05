@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -26,7 +25,7 @@ from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
-from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
+from ...services.providers.slicing import effective_provider_id, slicing_provider_for
 from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._filament_ask import AskFields, ask_columns, ask_out, type_labels
@@ -520,6 +519,7 @@ async def check_overrides(
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
     # project config. If the sidecar is unavailable or any required UUID is missing,
     # skip the diff rather than blocking job creation.
+    # Local import on purpose: tests patch `app.services.providers.slicing.get_slicing_provider`, which only reaches a name looked up here.
     from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 
     slicing = get_slicing_provider()

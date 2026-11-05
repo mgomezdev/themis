@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from sqlalchemy import select
 
 from app import plugins
 from app.models import CapabilitySelection, PluginConfig

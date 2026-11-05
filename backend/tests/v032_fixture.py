@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v033_slice_cache, v036_inventory_refs, v037_inventory_deduction, v052_model_slicer_profiles, v053_filament_tuple
+from app.migrations import v033_slice_cache, v036_inventory_refs, v052_model_slicer_profiles, v053_filament_tuple
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
 # Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).

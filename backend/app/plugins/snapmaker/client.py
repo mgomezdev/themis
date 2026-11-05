@@ -7,8 +7,8 @@ from typing import ClassVar
 import httpx  # noqa: F401  (the transport lives in services/moonraker; tests patch `<this module>.httpx.*`)
 
 from ...services.filament_tuple import canon_subtype, split_type
-from ...services.abstract_printer_client import ConnectionField, DiscoveredPrinter, PrinterCapabilities
-from ...services.moonraker.client import DEFAULT_PORT, MoonrakerClientBase, MoonrakerState, NORM_STATE as _NORM_STATE
+from ...services.abstract_printer_client import PrinterCapabilities
+from ...services.moonraker.client import DEFAULT_PORT, MoonrakerClientBase, MoonrakerState
 
 logger = logging.getLogger(__name__)
 

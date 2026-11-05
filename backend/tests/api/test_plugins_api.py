@@ -4,7 +4,7 @@ import pytest
 
 from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT
 from tests.fake_providers import FakeInventoryProvider
-from tests.inventory_helpers import enable_spoolman, use_provider
+from tests.inventory_helpers import use_provider
 
 KEY = "hunter2-api-key"
 

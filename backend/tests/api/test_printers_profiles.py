@@ -1,6 +1,5 @@
 from tests.catalog_helpers import catalog_from_dict, prime_catalog
 from app.services import catalog_service
-import pytest
 from unittest.mock import AsyncMock, patch
 
 _FAKE_CATALOG = {

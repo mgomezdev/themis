@@ -3,10 +3,10 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Callable
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
 from .events import event_bus

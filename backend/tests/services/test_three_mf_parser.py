@@ -1,7 +1,6 @@
 import zipfile
-import pytest
 from pathlib import Path
-from app.services.three_mf_parser import parse_three_mf, PlateInfo
+from app.services.three_mf_parser import parse_three_mf
 from tests.conftest import slice_info_xml
 
 

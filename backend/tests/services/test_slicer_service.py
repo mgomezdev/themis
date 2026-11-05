@@ -3,7 +3,7 @@ from tests.catalog_helpers import cached_raw, prime_catalog
 import struct
 import zipfile as _zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -350,8 +350,7 @@ def test_inject_thumbnail_noop_for_invalid_png_magic(tmp_path):
 @pytest.mark.asyncio
 async def test_slice_uses_custom_output_dir(tmp_path):
     """When output_dir is provided, the slice method uses it instead of the default."""
-    from pathlib import Path
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
     from app.services.slicer_service import SlicerService, SliceRequest
 
     custom_dir = tmp_path / "estimates" / "99"

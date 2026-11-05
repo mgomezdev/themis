@@ -201,7 +201,7 @@ async def test_correcting_the_weight_by_hand_supersedes_a_held_conflict(client, 
 
 
 async def test_a_completion_records_the_start_weight_the_write_was_computed_from(client, session_factory):
-    from app.services.inventory import deduction, snapshots
+    from app.services.inventory import deduction
     from app.models import JobSpoolSnapshot
     fake = FakeInventoryProvider(spools=[spool("1", 100.0)])
     await use_provider(fake)

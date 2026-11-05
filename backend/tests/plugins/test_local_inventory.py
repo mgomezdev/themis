@@ -15,7 +15,7 @@ from app.plugins.local_inventory.migrations import v001_tables, v002_subtype
 from app.plugins.local_inventory.provider import LocalInventoryProvider
 from app.plugins.local_inventory.settings import LocalInventorySettings
 from app.plugins.migrations import run_plugin_migrations
-from app.services.inventory import deduction, outbox, read, snapshots, tasks
+from app.services.inventory import deduction, read, snapshots, tasks
 
 BASE = "/api/v1/inventory"
 PLUGIN = "/api/v1/plugins/local_inventory"

@@ -110,7 +110,7 @@ def load_bundled() -> list[str]:
     one is logged and skipped (Themis must boot); returns the ids of the plugins that failed so callers/tests can see them."""
     import logging
     from pathlib import Path
-    from .package import TOML_NAME, check_matches, read_toml
+    from .package import check_matches, read_toml
     failed: list[str] = []
     for dotted in BUNDLED_MODULES:
         try:

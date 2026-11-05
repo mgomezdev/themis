@@ -1,7 +1,6 @@
 """Printer discovery over a virtual LAN: each vendor hook, the range sweep (private ranges only, other VLANs),
 passive SSDP merge, and the /printers/discover API."""
 import asyncio
-import asyncio
 import ipaddress
 
 import pytest
@@ -9,8 +8,6 @@ import pytest
 from app.services import discovery
 from app.services.abstract_printer_client import AbstractPrinterClient
 from app.plugins.bambu.client import BambuMQTTClient, parse_ssdp_headers
-from app.plugins.elegoo_centauri.client import ElegooCentauriClient
-from app.plugins.bambu.client import BambuMQTTClient
 from app.plugins.elegoo_centauri.client import ElegooCentauriClient
 from app.plugins.mock.client import MockPrinterClient
 from app.plugins.snapmaker.client import SnapmakerExtendedClient

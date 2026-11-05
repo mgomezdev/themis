@@ -2,8 +2,7 @@ import io
 from tests.fake_providers import fake_packer
 import zipfile
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 
 def _make_stl_bytes() -> bytes:
@@ -191,7 +190,7 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
     expected_folder = f"/Job Pack 3MFs/{job_id}"
 
     # Verify DB record via the list endpoint filtered by the expected folder.
-    list_resp = await client.get(f"/api/v1/files", params={"folder": expected_folder})
+    list_resp = await client.get("/api/v1/files", params={"folder": expected_folder})
     assert list_resp.status_code == 200
     files_in_folder = list_resp.json()
     assert len(files_in_folder) == 1
@@ -378,7 +377,8 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
          patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
         (tmp_path / "library").mkdir(exist_ok=True)
         (tmp_path / "filecache").mkdir(exist_ok=True)
-        import io as _io, zipfile as _zf
+        import io as _io
+        import zipfile as _zf
         buf = _io.BytesIO()
         with _zf.ZipFile(buf, "w") as zf:
             zf.writestr("Metadata/plate_1.png", b"\x89PNG")

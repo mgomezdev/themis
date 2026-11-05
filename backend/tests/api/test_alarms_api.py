@@ -1,7 +1,6 @@
 """Alarm feed API, fleet badge, settings, and the PrinterManager → alarms path."""
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.services import alarms as alarm_service
 from app.services.abstract_printer_client import Alarm, PrinterCapabilities

@@ -6,7 +6,7 @@ from app.plugins.capabilities.filament_inventory import InvMaterial
 from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
 from tests.inventory_helpers import use_provider
 import json
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient

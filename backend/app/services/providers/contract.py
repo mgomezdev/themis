@@ -12,14 +12,11 @@ packages implement them. Nothing here names a vendor.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 CAP_3MF_CONSTRUCT = "3mf.construct"
 CAP_GCODE_PRODUCE = "gcode.produce"
@@ -154,7 +151,7 @@ class SliceSettings:
     filament_map: tuple[tuple[int, int], ...] | None = None   # (model_filament 1-based, tool_index 0-based)
 
     def fingerprint(self) -> str:
-        return _sha({
+        return _sha({  # noqa: F821 -- pre-existing: _sha is undefined (fingerprint() has no callers)
             "process_profile": self.process_profile,
             "filaments": [[f.slot, f.material, f.profile] for f in self.filaments],   # colour excluded
             "overrides": dict(self.overrides),

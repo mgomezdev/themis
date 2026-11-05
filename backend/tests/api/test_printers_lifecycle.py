@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from app.services.catalog_service import CatalogUnavailable
 from tests.catalog_helpers import patch_cached_catalog
-from fastapi import HTTPException
 
 from app.services.printer_manager import printer_manager
 

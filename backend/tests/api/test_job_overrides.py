@@ -157,7 +157,6 @@ def test_slice_raises_without_sidecar():
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
 
 import pytest
 

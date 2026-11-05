@@ -1,5 +1,4 @@
 import io
-import json
 import os
 import zipfile
 from collections.abc import AsyncGenerator
