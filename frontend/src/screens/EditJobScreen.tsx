@@ -234,6 +234,8 @@ export function EditJobScreen() {
                       config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                       onChange={patch => patchPerPrinter(sid, patch)}
                       modelFilaments={isModelKey(sid) ? undefined : modelFilaments}
+                      unmatchedFilaments={JSON.stringify(perPrinter[sid]?.filamentMap) === JSON.stringify(job?.printer_configs.find(c => String(c.printer_id) === sid)?.filament_map)
+                        ? job?.unmatched_filaments?.[sid] : undefined}
                       gcode={gcode}
                     />
                   );

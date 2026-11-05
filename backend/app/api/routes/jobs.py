@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,9 +24,9 @@ from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import effective_process_profile, queue_engine, _slot_for_config
+from ...services.queue_engine import effective_process_profile, queue_engine, _slot_for_config, _slice_params, build_slice_request
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider
-from ...services.slicer_service import DEFAULT_BED_MM, SliceError, SliceRequest, slice_side_mapping
+from ...services.slicer_service import SliceError, SliceRequest
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._filament_ask import AskFields, ask_columns, ask_out, type_labels
 from ...services.inventory import read as inventory_read, refs as inventory_refs
@@ -67,8 +66,8 @@ _CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", 
 
 class FilamentMapEntry(AskFields):
     """One model color: pinned to a tool slot (`tool_index`), or a tuple ask (`filament_*`) resolved against the printer's slots."""
-    model_filament: int | None = None
-    tool_index: int | None = None
+    model_filament: int | None = Field(default=None, ge=1, le=filament_matching.MAX_MODEL_FILAMENTS)
+    tool_index: int | None = Field(default=None, ge=0, le=255)
 
 
 class PrinterConfigInput(AskFields):
@@ -778,6 +777,7 @@ async def get_job_details(
     return {
         **_to_dict(job),
         "block_reason": job.block_reason,
+        "unmatched_filaments": job.unmatched_filaments or {},
         "file": file_info,
         "plate": plate_info,
         "printer_configs": printer_configs,
@@ -920,6 +920,7 @@ async def update_job_configs(
 
     job.status = "queued"
     job.block_reason = None
+    job.unmatched_filaments = None
     job.assigned_printer_id = None
     uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
     gcode_job = is_presliced_file(uploaded_file)
@@ -974,6 +975,7 @@ async def unblock_job(
         cfg.slice_error = None
     job.status = "queued"
     job.block_reason = None
+    job.unmatched_filaments = None
     job.assigned_printer_id = None
     job.queue_position = await _front_queue_position(session)
     job.updated_at = datetime.now(timezone.utc).isoformat()
@@ -1067,47 +1069,16 @@ def _build_slice_request(
     """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
     matched `config` - shared by verify-slice and complete-manually, both of which
     slice in an isolated directory and never touch the job's production gcode path."""
-    loaded = printer.loaded_filaments or []
-    slot = _slot_for_config(config, loaded)
-    filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
-    colour = (slot or {}).get("color") or config.ask_color            # preview only: the colour of what is actually loaded
-
-    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-    file_base = f"{safe}_p{job.plate_number}_j{job.id}"
-
+    fit = filament_matching.evaluate(config, printer.loaded_filaments)
+    if not fit.eligible:
+        raise HTTPException(422, f"{printer.name}: " + "; ".join(fit.reasons))
+    params = _slice_params(job, config, printer, uploaded_file, machine_preset, fit.plan)
     client = printer_manager._clients.get(printer.id)
-    export_args = client.orca_export_args(file_base) if client else []
-
-    cfg_tool_index = config.tool_index
-    cfg_filament_map = config.filament_map
-    provider_id = effective_provider_id(printer.preferred_slicer_plugin_id)     # the slicer this printer's jobs use (BIZ-291)
-    slice_tool, slice_map = slice_side_mapping(client, cfg_tool_index, cfg_filament_map)
-
-    if cfg_filament_map:
-        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
-        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-    else:
-        filament_presets = [filament_profile] if filament_profile else []
-
-    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
-    plate_config.update(job.overrides or {})
-    return SliceRequest(
-        job_id=job.id,
-        source_3mf="",
-        source_key=uploaded_file.relative_path,
-        plate_number=job.plate_number,
-        machine_preset=machine_preset,
-        process_preset=effective_process_profile(config, printer),
-        filament_presets=filament_presets,
-        filament_colours=[colour] if colour else [],
-        export_args=export_args,
-        extra_config=plate_config,
-        provider_id=provider_id,
-        tool_index=slice_tool,
-        filament_map=slice_map,
-        bed_mm=(float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2]),
-    )
+    try:
+        req, _ = build_slice_request(job.id, printer.id, job.plate_number, params, client)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return req
 
 
 @router.post(
@@ -1263,6 +1234,7 @@ async def complete_job_manually(
     job.assigned_printer_id = body.printer_id
     job.printed_on_printer_id = body.printer_id
     job.block_reason = None
+    job.unmatched_filaments = None
 
     job.actual_filament_grams = grams
     job.actual_seconds = secs

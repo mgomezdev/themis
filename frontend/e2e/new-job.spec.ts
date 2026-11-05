@@ -123,7 +123,7 @@ test.describe('New Job — filament/tool', () => {
   });
 
   test('single-tool printer defaults to an undefined ask and sends the typed tuple', async ({ page }) => {
-    const mocks = await mockApi(page);
+    const mocks = await mockApi(page, { modelFilaments: [{ index: 1, color: '#F78E0E', type: 'PLA' }] });
     await page.goto('/queue/new');
     await page.waitForLoadState('networkidle');
 

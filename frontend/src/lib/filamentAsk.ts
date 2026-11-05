@@ -76,7 +76,7 @@ export function describeAsk(a: FilamentAsk): string {
 type SlotLike = Pick<LoadedFilament, 'type' | 'color'> & { subtype?: string | null; manufacturer?: string | null; empty?: boolean };
 
 /** A tool-changer placeholder for an empty tool is not loaded; a hand-entered slot without a type still is. */
-export const slotIsLoaded = (s: SlotLike): boolean => !!clean(s.type) || !s.empty;
+export const slotIsLoaded = (s: SlotLike): boolean => !s.empty;
 
 function slotTuple(s: SlotLike): { manufacturer: string | null; type: string | null; subtype: string | null; color: string | null } {
   let type = clean(s.type);

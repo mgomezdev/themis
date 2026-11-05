@@ -578,3 +578,6 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 `idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
 `webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
+
+
+Migration v065 adds nullable JSON `jobs.unmatched_filaments`: a map from printer id to unmatched model filament numbers, captured with a fleet-wide filament block. `NULL` means no stored filament failure; the details API returns `{}`. Requeue, unblock and a successful claim clear this snapshot.

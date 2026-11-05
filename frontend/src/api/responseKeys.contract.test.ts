@@ -54,7 +54,7 @@ const QUEUE_POOL = {
 } satisfies Record<keyof QueuePool, 1>;
 
 const JOB_DETAILS = {
-  ...JOB, file: 1, plate: 1, printer_configs: 1, assigned_printer: 1, filament_grams_live: 1, estimated_seconds_live: 1,
+  ...JOB, unmatched_filaments: 1, file: 1, plate: 1, printer_configs: 1, assigned_printer: 1, filament_grams_live: 1, estimated_seconds_live: 1,
 } satisfies Record<keyof ApiJobDetails, 1>;
 
 const FILAMENT_MATCH = { eligible: 1, slots: 1, reasons: 1 } satisfies Record<keyof FilamentMatch, 1>;
