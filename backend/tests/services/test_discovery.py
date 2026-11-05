@@ -128,11 +128,11 @@ async def test_the_deadline_truncates_and_reports_it(lan):
 # ── range validation ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [
-    "8.8.8.0/24", "1.1.1.1", "192.168.0.0/16", "10.0.0.0/8", "nonsense", "::1", "2001:db8::/32",
+    "8.8.8.0/24", "1.1.1.1", "10.0.0.0/15", "10.0.0.0/8", "nonsense", "::1", "2001:db8::/32",
     "127.0.0.1", "127.0.0.0/24", "0.0.0.0/24", "192.0.2.0/24", "198.18.0.0/24", "240.0.0.1", "255.255.255.255", "224.0.0.1",
     "172.32.0.0/24", "192.169.0.0/24", "169.253.0.0/24",
 ])
-def test_ranges_must_be_private_ipv4_no_larger_than_a_slash_20(text):
+def test_ranges_must_be_private_ipv4_no_larger_than_a_slash_16(text):
     with pytest.raises(discovery.ScanRangeError):
         discovery.parse_range(text)
 
@@ -172,8 +172,55 @@ async def test_one_garbage_datagram_does_not_drop_the_other_announcements(lan):
 
 async def test_the_host_cap_applies_across_all_ranges_not_per_range(lan):
     with pytest.raises(discovery.ScanRangeError):
-        await _scan(lan, "10.0.0.0/20", "10.0.16.0/24")                                      # 4096 + 256
+        await _scan(lan, "10.0.0.0/16", "10.1.0.0/24")
     assert lan.probes == []
+
+
+@pytest.mark.parametrize('text', ['192.168.x.1', '192.x.0.x', '192.168.x', '192.168.999.x', 'x.x.x.x', '10.x.x.x'])
+def test_invalid_or_oversized_wildcards_are_rejected(text):
+    with pytest.raises(discovery.ScanRangeError):
+        discovery.parse_range(text)
+
+
+@pytest.mark.parametrize('text,expected', [('192.168.x.x', '192.168.0.0/16'),
+    ('192.168.7.*', '192.168.7.0/24'), ('192.168.7.X', '192.168.7.0/24')])
+def test_wildcard_ranges(text, expected):
+    assert str(discovery.parse_range(text)) == expected
+
+
+async def test_default_wildcard_sweeps_entire_subnet_with_bounded_workers(lan):
+    baseline = len(asyncio.all_tasks())
+    peak = baseline
+    real = lan.http_get_json
+    async def counting(*args):
+        nonlocal peak
+        peak = max(peak, len(asyncio.all_tasks()))
+        return await real(*args)
+    lan.http_get_json = counting
+    result = await discovery.scan(lan, ['192.168.x.x'], {'snapmaker': SnapmakerExtendedClient}, listen_s=0)
+    assert result.scanned == 65534 and result.truncated is False
+    assert [p.ip for p in result.found] == ['192.168.7.30']
+    assert peak - baseline <= 2 * discovery._CONCURRENCY + 2
+
+
+async def test_cancelling_scan_drains_every_worker(lan):
+    entered = asyncio.Event()
+    in_flight = 0
+    async def blocked(*args):
+        nonlocal in_flight
+        in_flight += 1
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            in_flight -= 1
+    lan.http_get_json = blocked
+    task = asyncio.create_task(discovery.scan(lan, ['192.168.x.x'], {'snapmaker': SnapmakerExtendedClient}))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert in_flight == 0
 
 
 async def test_in_flight_probes_never_exceed_the_concurrency_bound(lan):
@@ -284,6 +331,47 @@ async def test_real_network_http_get_json_reports_status_and_body_and_reuses_one
         await net.aclose()
         srv.shutdown()
     assert net._http is None
+
+
+async def test_real_http_pool_can_serve_every_scan_worker_without_dropping_queued_hosts():
+    from app.services.discovery_net import RealNetwork
+    ready = asyncio.Event()
+    entered = 0
+    handlers = set()
+
+    async def respond(reader, writer):
+        nonlocal entered
+        task = asyncio.current_task()
+        handlers.add(task)
+        try:
+            await reader.readuntil(b'\r\n\r\n')
+            entered += 1
+            if entered == discovery._CONCURRENCY:
+                ready.set()
+            # Every worker must reach the server before any response is released.
+            # A smaller client pool would time out queued probes as unreachable.
+            await ready.wait()
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}')
+            await writer.drain()
+        except OSError:
+            pass
+        finally:
+            writer.close()
+            handlers.discard(task)
+
+    server = await asyncio.start_server(respond, '127.0.0.1', 0, backlog=256)
+    port = server.sockets[0].getsockname()[1]
+    net = RealNetwork()
+    try:
+        answers = await asyncio.gather(*(net.http_get_json(f'http://127.0.0.1:{port}/server/info', 5)
+                                        for _ in range(discovery._CONCURRENCY)))
+        assert answers == [(200, {})] * discovery._CONCURRENCY
+    finally:
+        ready.set()
+        await net.aclose()
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*list(handlers), return_exceptions=True)
 
 
 async def test_real_network_listen_never_raises_without_multicast():

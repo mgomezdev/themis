@@ -89,11 +89,15 @@ async def _data_info(m: PluginManifest, session: AsyncSession) -> dict:
 
 
 def _detail(m: PluginManifest, data: dict) -> dict:
+    from ...services.printer_client_factory import client_class
+    from ...services.abstract_printer_client import AbstractPrinterClient
+    cls = client_class(m.id)
     stored = plugin_host.settings(m.id)
     defaults = {k: f.default for k, f in m.settings_model.model_fields.items()
                 if k not in m.secret_fields and not f.is_required()}
     return {
         **_summary(m),
+        "printer_discovery": bool(cls and cls.discover_host.__func__ is not AbstractPrinterClient.discover_host.__func__),
         "settings": {**defaults, **{k: v for k, v in stored.items() if k not in m.secret_fields}},
         "secrets": {f: plugin_host.has_secret(m.id, f) for f in sorted(m.secret_fields)},     # set / not set, never the value
         "settings_schema": m.settings_model.model_json_schema(),

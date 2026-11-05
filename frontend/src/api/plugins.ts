@@ -64,6 +64,7 @@ export interface PluginSummary {
 }
 
 export interface PluginDetail extends PluginSummary {
+  printer_discovery?: boolean;
   settings: Record<string, unknown>;
   /** Secret fields: whether a value is stored (the value itself never leaves the server). */
   secrets: Record<string, boolean>;

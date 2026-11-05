@@ -7,6 +7,7 @@ import { SCHEMA_VERSION, settingsKind, type SettingsKind } from '../api/uiSchema
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
 import { INVENTORY_CAPABILITY } from '../api/inventory';
 import { InventoryProviderPanel } from './InventoryProviderPanel';
+import { PrinterPluginDiscovery } from './PrinterPluginDiscovery';
 
 /** The default plugin page every plugin can reference: header (name, version, docs, enable, health), a connection form
  *  generated from the plugin's settings model (secrets are write-only), a Test connection button and, for an active
@@ -244,6 +245,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       </div>
 
       {plugin.provides.some(p => p.capability === INVENTORY_CAPABILITY && p.status === 'serving') && <InventoryProviderPanel plugin={plugin} />}
+      {plugin.enabled && plugin.printer_discovery && <PrinterPluginDiscovery key={plugin.id} pluginId={plugin.id} />}
     </div>
   );
 }

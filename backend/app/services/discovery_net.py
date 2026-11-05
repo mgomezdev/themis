@@ -76,7 +76,10 @@ class RealNetwork:
 
     async def http_get_json(self, url: str, timeout: float) -> tuple[int, dict | None]:
         if self._http is None:
-            self._http = httpx.AsyncClient(trust_env=False, follow_redirects=False)     # no proxy env, no redirects
+            self._http = httpx.AsyncClient(
+                trust_env=False, follow_redirects=False,
+                limits=httpx.Limits(max_connections=128, max_keepalive_connections=20),
+            )  # match scan workers so pool contention does not masquerade as an unreachable host
         try:
             r = await asyncio.wait_for(self._http.get(url, timeout=timeout), timeout + 0.5)
         except Exception:
