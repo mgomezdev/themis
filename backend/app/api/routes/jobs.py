@@ -66,8 +66,8 @@ _CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", 
 
 class FilamentMapEntry(AskFields):
     """One model color: pinned to a tool slot (`tool_index`), or a tuple ask (`filament_*`) resolved against the printer's slots."""
-    model_filament: int | None = None
-    tool_index: int | None = None
+    model_filament: int | None = Field(default=None, ge=1, le=filament_matching.MAX_MODEL_FILAMENTS)
+    tool_index: int | None = Field(default=None, ge=0, le=255)
 
 
 class PrinterConfigInput(AskFields):

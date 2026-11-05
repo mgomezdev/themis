@@ -162,3 +162,13 @@ def test_a_slot_that_now_holds_a_different_filament_no_longer_satisfies_the_clai
     assert "changed since the job was claimed" in fm.still_loaded(plan, renumbered)
     assert fm.still_loaded(fm.plan_from_json([{"model_filament": 1, "slot": 1}]), renumbered) is None   # old plans: index only
     assert fm.plan_from_json(stored)[0] == fm.SlotUse(1, 1)                 # identity is not part of plan equality
+
+
+def test_an_out_of_range_filament_number_is_refused_before_building_the_mapping():
+    """Security review: the mapping is as long as the highest filament number, so it is capped."""
+    from app.services.filament_matching import MAX_MODEL_FILAMENTS, SlotUse
+    from app.services.queue_engine import _ams_mapping
+    loaded = [{"ams_tray_id": 0}]
+    assert len(_ams_mapping([SlotUse(MAX_MODEL_FILAMENTS, 0)], loaded)) == MAX_MODEL_FILAMENTS
+    with pytest.raises(ValueError):
+        _ams_mapping([SlotUse(10**9, 0)], loaded)

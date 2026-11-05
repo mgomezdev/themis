@@ -21,6 +21,10 @@ def is_loaded(slot: dict) -> bool:
     return not slot.get("empty", False)
 
 
+# A project's filament numbers (1-based) and tool slots stay within this: the AMS mapping is a list as long as the highest one.
+MAX_MODEL_FILAMENTS = 32
+
+
 @dataclass(frozen=True)
 class SlotUse:
     """One resolved colour: `model_filament` (1-based, None for the single-filament ask) prints from loaded[`slot`]. `identity` is

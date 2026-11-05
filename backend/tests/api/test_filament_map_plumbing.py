@@ -151,3 +151,14 @@ async def test_blocked_filament_rows_survive_details_and_edit_clears_them(client
     details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
     assert details["unmatched_filaments"] == {}
     assert details["printer_configs"][0]["filament_map"][0]["tool_index"] is None
+
+
+@pytest.mark.parametrize("entry", [{"model_filament": 10**9}, {"model_filament": 0}, {"model_filament": 1, "tool_index": 10**9}])
+async def test_an_out_of_range_filament_number_or_tool_is_refused_at_the_api(client, create_job, create_printer, entry):
+    """Security review: the AMS mapping is as long as the highest filament number, so the API caps it."""
+    printer_id = await create_printer()
+    job_id = await create_job(printer_id=printer_id)
+    response = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [{
+        "printer_id": printer_id, "print_profile": "Process",
+        "filament_map": [{"filament_type": "PLA", "filament_subtype": "any", **entry}]}]})
+    assert response.status_code == 422, response.text

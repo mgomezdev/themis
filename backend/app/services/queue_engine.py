@@ -88,7 +88,7 @@ def _ams_mapping(plan: list, loaded: list) -> list[int] | None:
     by_filament: dict[int, int | None] = {}
     for u in plan:
         mf = 1 if u.model_filament is None else u.model_filament       # the single-filament ask is filament 1
-        if type(mf) is not int or mf < 1 or mf in by_filament:
+        if type(mf) is not int or not 1 <= mf <= filament_matching.MAX_MODEL_FILAMENTS or mf in by_filament:
             raise ValueError(f"Filament {mf} is mapped more than once or is not a filament number")
         by_filament[mf] = loaded[u.slot].get("ams_tray_id")
     if all(t is None for t in by_filament.values()):
