@@ -242,7 +242,7 @@ async def test_the_tracker_holds_a_standing_alarm_through_a_restart_then_resolve
     # The grace window is measured on the alarm clock (`alarms.now`), so pin it: with real time, a slow run (coverage
     # tracing) could spend longer than the grace between the two observes and resolve the alarm on the empty report.
     # The re-check timer still runs on the event loop's clock (grace + 1 s), which the test waits out for real.
-    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    clock = [datetime.now(timezone.utc)]                                         # recent, so purge_old never treats it as old
     monkeypatch.setattr(alarms, "now", lambda: clock[0].isoformat())
     monkeypatch.setattr(alarms, "RESOLVE_GRACE_S", 0.05)
     pid = await create_printer()
