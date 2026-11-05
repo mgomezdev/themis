@@ -299,59 +299,52 @@ async def test_a_dead_printers_late_completion_cannot_touch_the_job_that_now_pri
     assert len(await rows(session_factory, EventOutbox)) == outbox_before
 
 
-async def test_usage_reports_are_attempt_bound_ordered_and_preserved_on_completion(env, session_factory):
+async def _attempt(session_factory, job_id):
+    from app.services import job_details
+    async with session_factory() as session:
+        return (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+
+
+def _v2(attempt_id, revision, slots=((0, 4.0),)):
+    return {"version": 2, "attempt_id": attempt_id, "revision": revision, "final": True, "source": "reported",
+            "slots": [{"slot": s, "grams": g} for s, g in slots]}
+
+
+async def test_usage_reports_are_attempt_bound_ordered_and_kept_after_completion(env, session_factory):
+    from app.services import job_details
+    from app.services.job_reporter import REPORT_FIELD
     job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
     reporter = JobReporter("prn_a")
     assert await reporter.report(job_id, "started")
-    from app.services import job_details
-    async with session_factory() as session:
-        saved = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
-    report = {"version": 1, "attempt_id": saved["attempt_id"], "report_id": "summary", "revision": 2,
-              "basis": "physical_slot", "source": "reported", "final": True, "complete": True,
-              "grams": 0.0, "breakdown": []}
-    assert await reporter.report_usage(job_id, report, printer_id=printer_id)
-    assert not await reporter.report_usage(job_id, report, printer_id=printer_id)
-    assert not await reporter.report_usage(job_id, {**report, "revision": 1}, printer_id=printer_id)
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)
+    assert not await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)           # duplicate
+    assert not await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)           # older
     with pytest.raises(JobReportError, match="another or unknown print attempt"):
-        await reporter.report_usage(job_id, {**report, "attempt_id": "old-print"}, printer_id=printer_id)
+        await reporter.report_usage(job_id, _v2("old-print", 3), printer_id=printer_id)
+    with pytest.raises(JobReportError, match="invalid filament usage report"):
+        await reporter.report_usage(job_id, {**_v2(attempt, 3), "version": 1}, printer_id=printer_id)
     assert await reporter.report(job_id, "complete")
-    value = (await job_details.get_details(job_id, ["filament_usage"]))["filament_usage"]["value"]
-    assert value["revision"] == 2 and value["source"] == "reported" and value["grams"] == 0.0
+    value = (await job_details.get_details(job_id, [REPORT_FIELD]))[REPORT_FIELD]["value"]
+    assert value["revision"] == 2 and value["slots"] == [{"slot": 0, "grams": 4.0}]
     with pytest.raises(JobReportError, match="no longer printing"):                 # late, not a duplicate: the plugin is told
-        await reporter.report_usage(job_id, {**report, "revision": 3}, printer_id=printer_id)
+        await reporter.report_usage(job_id, _v2(attempt, 3), printer_id=printer_id)
 
 
-@pytest.mark.parametrize("tool_mapped,basis", [(True, "physical_slot"), (False, "slicer_filament")])
-async def test_the_usage_basis_comes_from_the_printer_plugin_even_with_no_connected_client(
-        env, session_factory, monkeypatch, tool_mapped, basis):
-    """Review: a start reported while no control client is connected must still read usage the way that printer slices."""
-    from app.services import job_details, printer_client_factory
-    job_id, _ = await seed(session_factory, env.tmp, status="sliced")
-
-    class Kind:
-        slice_tool_mapping = tool_mapped
-    monkeypatch.setattr(printer_client_factory, "client_class", lambda key: Kind if key == "prn_a" else None)
-    with pytest.raises(KeyError):
-        env.mgr.get_client(1)                                                       # nothing connected
-    assert await JobReporter("prn_a").report(job_id, "started")
-    async with session_factory() as session:
-        ctx = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
-    assert ctx["basis"] == basis
-
-
-async def test_a_details_filament_usage_on_complete_never_replaces_a_versioned_report(env, session_factory):
-    """Review: an unversioned details payload would turn a partial report back into a full estimate deduction."""
-    from app.services import job_details
+async def test_a_reprint_is_a_new_attempt_whose_revisions_start_again_and_the_old_attempt_is_closed(env, session_factory):
     job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
     reporter = JobReporter("prn_a")
     assert await reporter.report(job_id, "started")
-    async with session_factory() as session:
-        ctx = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
-    partial = {"version": 1, "attempt_id": ctx["attempt_id"], "report_id": "live", "revision": 1, "basis": "physical_slot",
-               "source": "reported", "final": False, "complete": False, "grams": 3.0, "breakdown": [{"index": 0, "grams": 3.0}]}
-    assert await reporter.report_usage(job_id, partial, printer_id=printer_id)
-    assert await reporter.report(job_id, "complete", details={"filament_usage": {"grams": 99.0, "breakdown": None}, "print_seconds": 42})
-    details = await job_details.get_details(job_id, ["filament_usage", "print_seconds"])
-    assert details["filament_usage"]["value"]["version"] == 1 and details["filament_usage"]["value"]["complete"] is False
-    assert details["filament_usage"]["value"]["grams"] == 3.0
-    assert details["print_seconds"]["value"] == 42                                  # the rest of the payload still lands
+    first = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report_usage(job_id, _v2(first, 5), printer_id=printer_id)
+    assert await env.engine.requeue_dead_print(job_id, printer_id, "offline")
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.status, job.assigned_printer_id = "sliced", printer_id
+        await s.commit()
+    assert await reporter.report(job_id, "started")
+    second = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert second != first
+    assert await reporter.report_usage(job_id, _v2(second, 0), printer_id=printer_id)               # revision 0 is fine again
+    with pytest.raises(JobReportError, match="another or unknown print attempt"):
+        await reporter.report_usage(job_id, _v2(first, 6), printer_id=printer_id)

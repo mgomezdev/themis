@@ -1095,12 +1095,19 @@ async def stop_printer(
         )
     )
     now = datetime.now(timezone.utc).isoformat()
+    printer = await session.get(Printer, printer_id)
     for job in result.scalars().all():
+        if job.status in ("printing", "paused"):     # a started print: settle the attempt's usage (BIZ-366 v2)
+            from ...services import completion_events
+            await completion_events.enqueue_attempt_ended(session, job.id, printer_id, result="cancelled",
+                                                          loaded_filaments=printer.loaded_filaments if printer else None)
         job.status = "cancelled"
         job.assigned_printer_id = None
         job.queue_position = None
         job.updated_at = now
     await session.commit()
+    from ...eventing.hub import hub as _hub
+    _hub.wake()                                  # deliver a `job.attempt_ended` written above
     from ...services.queue_engine import queue_engine
     queue_engine.cancel_slice(printer_id=printer_id)    # and a slice being made for it (cancel <-> stop, BIZ-295)
     return {"ok": True}

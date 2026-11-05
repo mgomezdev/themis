@@ -20,13 +20,13 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..eventing import EventEnvelope
 from ..eventing.registry import CORE_EVENTS
 from ..eventing.hub import hub
-from ..models import Job, JobDetail, JobPrinterConfig, Printer
+from ..models import Job, JobPrinterConfig, Printer
 from . import filament_matching, job_details
 from .inventory import subscribers as inventory_subscribers
 
@@ -41,11 +41,12 @@ def bind_engine(engine) -> None:
 
 EVENT = "job.complete"
 STARTED = "job.started"
+ATTEMPT_ENDED = "job.attempt_ended"
 HANDLER_TIMEOUT_S = 30.0
 
 
 async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, *, loaded_filaments: list[dict] | None,
-                              origin: str | None = "core", usage_basis: str = "physical_slot") -> bool:
+                              origin: str | None = "core") -> bool:
     """Add the durable `job.started` event to the caller's start transaction (no commit; call `hub.wake()` after it). One per
     physical start: the key carries the start time, so a job restarted after a failed attempt is a new event."""
     entities: dict[str, int | str] = {"job_id": job.id, "printer_id": printer_id}
@@ -56,15 +57,33 @@ async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, 
     if accepted:
         cfg = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job.id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
-        await session.execute(delete(JobDetail).where(JobDetail.job_id == job.id,
-            JobDetail.field.in_(["filament_usage", "filament_accounting"])))
+        # A new physical attempt gets a new attempt id. Earlier attempts' reports and accounting stay: a report names its attempt, so
+        # settlement ignores one from another attempt, and `filament_accounting` keeps every attempt so a reprint adds to it (BIZ-366 v2).
         # Generic printer facts, persisted in the physical-start transaction. Inventory interprets bindings itself.
         await job_details.set_details(session, job.id, "core", {"filament_usage_context": {
-            "attempt_id": envelope.dedup_key, "printer_id": printer_id, "basis": usage_basis,
+            "attempt_id": envelope.dedup_key, "printer_id": printer_id,
             "slot_plan": filament_matching.plan_to_json(filament_matching.plan_for(cfg, loaded_filaments)),
             "loaded_filaments": deepcopy(loaded_filaments or []),
         }})
     return accepted
+
+
+async def enqueue_attempt_ended(session: AsyncSession, job_id: int, printer_id: int | None, *, result: str,
+                                loaded_filaments: list[dict] | None = None, origin: str | None = "core") -> bool:
+    """Add the durable `job.attempt_ended` event to the caller's transaction (no commit): a STARTED print ended without completing
+    (`failed`, `cancelled` while printing, `requeued` after its printer died). Inventory settles that attempt's usage from it. One per
+    attempt (keyed on the start context's attempt id); a job that never started an attempt publishes nothing."""
+    context = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+    if not isinstance(context, dict) or not context.get("attempt_id"):
+        return False
+    entities: dict[str, int | str] = {"job_id": job_id}
+    if printer_id is not None:
+        entities["printer_id"] = printer_id
+    envelope = EventEnvelope(name=ATTEMPT_ENDED, schema_version=CORE_EVENTS[ATTEMPT_ENDED].version, origin=origin, entities=entities,
+                             dedup_key=f"{ATTEMPT_ENDED}:{context['attempt_id']}",
+                             payload={"result": result, "attempt_id": context["attempt_id"], "context": deepcopy(context),
+                                      "loaded_filaments": list(loaded_filaments or [])})
+    return await hub.enqueue_durable(session, envelope)
 
 
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,

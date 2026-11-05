@@ -508,34 +508,52 @@ with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
 ```
 
 
-## Cumulative filament usage reports (BIZ-366)
+## Filament usage reports (BIZ-366, contract v2)
 
-A printer plugin may call `await ctx.job_reporter.report_usage(job_id, report, printer_id=printer_id)` while the job is printing. Read the current physical attempt id from `ctx.job_details.get(job_id, ["filament_usage_context"])`. The version-1 report is a cumulative snapshot, never an incremental debit:
+**The printer plugin owns usage reporting.** For each physical print attempt it tells Themis how many grams each of its loaded slots
+fed. Themis owns which spool was in each slot, so it never infers rollover: an AMS rollover onto a backup spool is simply a second
+slot in the report. Call `await ctx.job_reporter.report_usage(job_id, report, printer_id=printer_id)` while the job is printing.
+The report is a **cumulative** snapshot for the attempt, never an incremental debit:
 
 ```json
 {
-  "version": 1,
-  "attempt_id": "the saved filament_usage_context.attempt_id",
-  "report_id": "printer-summary",
+  "version": 2,
+  "attempt_id": "the job's filament_usage_context.attempt_id",
   "revision": 3,
-  "basis": "physical_slot",
-  "source": "reported",
   "final": true,
-  "complete": true,
-  "rollover": true,
-  "grams": 20.0,
-  "breakdown": [{"index": 2, "grams": 5.0}, {"index": 1, "grams": 15.0}]
+  "source": "reported",
+  "slots": [{"slot": 9, "grams": 5.0}, {"slot": 4, "grams": 15.0}]
 }
 ```
 
-Both index bases are zero-based: `physical_slot` indexes Themis's saved loaded-slot list; `slicer_filament` indexes model filament N as N-1. Neither is a vendor tray id or inventory spool ref. `source` is `reported`, `measured`, or `estimated`; use `measured` only when verified device data supports that claim. Themis cannot determine precision merely from the presence of a printer report. The report revision increases monotonically within a physical attempt. Duplicate/older revisions return false; wrong-attempt reports are rejected, and so is a report sent once the job is no longer printing on that printer (`JobReportError`): send the final summary before reporting `complete`. On `complete`, a `details["filament_usage"]` never replaces a versioned report already on record. The complete breakdown must sum to the total (allowing small rounding differences); negative/non-finite values and duplicate indices are rejected.
+- **`attempt_id`:** read it from `ctx.job_details.get(job_id, ["filament_usage_context"])`. A new attempt id starts every time the
+  job starts printing, including a reprint after a failure.
+- **`slot`:** your published slot id, the `slot` of an entry in the printer's `loaded_filaments` (a Bambu global tray id). It is
+  never a list position or a spool ref.
+- **Slot entries:** at most 64, each slot id once, grams finite and ≥ 0.
+- **`source`:** `reported` (the printer's own figure) or `measured` (verified device data only).
+- **`revision`:** increases within an attempt. A duplicate or older revision returns `False`. Errors (`JobReportError`):
+  - a report for another attempt;
+  - a malformed report;
+  - a report sent after the attempt ended.
 
-At completion, a final complete physical-slot report can attribute a rollover between spools already loaded at start. Partial reports, unknown consumption splits, unknown starting bindings and slicer-based rollover estimates require reconciliation. A same-slot spool replacement needs binding epochs, outside v1: report it as incomplete. Never infer grams from print progress or classify every active-tray change as rollover; normal multicolour prints switch trays too.
+  Send your last report **before** reporting `complete` or `failed`.
 
-The usage basis (`physical_slot` vs `slicer_filament`) comes from the printer plugin class (`slice_tool_mapping`), not from whether its control client is connected when the start is reported.
+**Every attempt is settled when it ends:**
+- **How an attempt ends:** completed (`job.complete`), failed, cancelled while printing, or requeued after the printer died (all
+  three via the durable `job.attempt_ended`).
+- **Spool binding:** each reported slot is charged to the spool bound to that slot when the attempt started. A slot that was empty
+  then, such as a spool loaded mid-print, uses its binding when the attempt ended.
+- **No report:** a completed attempt falls back to the slicer estimate routed through the claim-time slot plan, labelled
+  `estimated`. A failed, cancelled or requeued attempt deducts nothing and the job notes "no usage reported".
+- **Reprints add up:** each attempt deducts on its own (start snapshots and inventory writes are per attempt). The job's
+  `filament_accounting` lists every attempt, and `total_grams` / `jobs.actual_filament_grams` are their sum.
+- **Frozen once settled:** an attempt's allocation is frozen when it is first settled. A redelivered event, or a revision sent
+  after the attempt ended, never deducts again or differently.
 
-AMS mapping (`StartPrintOptions.ams_mapping`): entry N-1 is the tray id for model filament N; a filament number the plate does not use is `-1`. Slot plans record each planned slot's identity (tray id, type, colour) at claim, and dispatch refuses a slot whose identity changed (a vendor that lists only occupied trays renumbers them when one is emptied).
+Never invent sensor data or infer grams from print progress: report what the printer exposes, or nothing (the estimate then applies to
+completed prints). Which printers report what is per plugin; Bambu's per-tray reporting, rollover included, is BIZ-367.
 
-`filament_usage_context` captures start-time routing and slot facts. The inventory observer snapshots potential replacement spools and stores normalized slot/spool allocations and provenance as `filament_accounting`. The initial completion allocation is frozen before outbox writes; report revisions after completion do not silently revise deductions. Existing unversioned usage details and jobs without a saved start context retain their compatibility path.
-
-The current Bambu adapter exposes active-tray/loaded-filament state, but quantified per-slot usage and rollover protocol reporting still need verification and adapter integration. The generic report contract does not imply that any printer supports measured consumption.
+AMS mapping (`StartPrintOptions.ams_mapping`): entry N-1 is the tray id for model filament N, and `-1` marks a filament number the
+plate does not use. Slot plans record each planned slot's identity (tray id, type, colour) at claim, and dispatch refuses a slot whose
+identity changed. A vendor that lists only occupied trays renumbers them when one is emptied.

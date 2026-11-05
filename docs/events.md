@@ -30,7 +30,7 @@ Publication is validated against the **catalog** (`registry.event_catalog()` = `
 core event or another plugin's), the schema version must be current and the payload valid. A violation raises `EventError` to the
 **publisher** (a programming error); nothing a subscriber does can ever raise into a publisher.
 
-Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.failed`,
+Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.attempt_ended` (**durable**, BIZ-366 v2: a started print ended without completing — `failed` / `cancelled` / `requeued` — once per attempt; inventory settles that attempt's filament usage from it), `job.failed`,
 `job.blocked`, `printer.alarm`, `spool.low` (best-effort). `job.started`, `job.complete`, `job.failed` and `job.blocked` are at **version 2**
 (v2 adds `origin`); a stored v1 envelope has no `origin` and is delivered unchanged with `origin=None`, only new publications must carry the
 current version.

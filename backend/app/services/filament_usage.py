@@ -1,7 +1,9 @@
-"""Translate explicitly indexed consumption into physical slots, without guessing rollover quantities.
+"""Filament used by one physical print attempt, per loaded slot (BIZ-366 v2).
 
-The printer plugin owns the facts. Themis owns the saved route and slot/spool bindings.
-All indices here are zero-based; slicer filament index N refers to model_filament N+1.
+The printer plugin owns the facts: it reports the cumulative grams each of ITS loaded slots fed during the attempt (an AMS rollover
+onto a backup spool is simply a second slot). Themis owns the slot -> spool bindings: the attempt's start context says which spool
+was in each slot. With no report, a completed print falls back to the slicer's estimate routed through the claim-time slot plan;
+an attempt that ended any other way (failed, cancelled, requeued) deducts nothing without a report.
 """
 from __future__ import annotations
 
@@ -11,98 +13,110 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+MAX_REPORT_SLOTS = 64
 
-class UsageEntry(BaseModel):
+
+class SlotUsage(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    index: int = Field(ge=0)
+    slot: int = Field(ge=0)            # the plugin's published slot id (`loaded_filaments[].slot`), not a list position
     grams: float = Field(ge=0)
 
 
 class UsageReport(BaseModel):
-    """A plugin's cumulative report for exactly one Themis physical print attempt.
-
-    A complete physical-slot report attributes consumption to the spools captured at start.
-    Same-slot spool replacement cannot be expressed by v1: report complete=False for reconciliation.
-    A tray switch without a consumption reading is never a measured usage report.
-    """
+    """A plugin's cumulative usage for exactly one Themis physical print attempt (`filament_usage_context.attempt_id`)."""
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    version: Literal[1]
+    version: Literal[2]
     attempt_id: str = Field(min_length=1)
-    report_id: str = Field(min_length=1)
     revision: int = Field(ge=0)
-    basis: Literal["physical_slot", "slicer_filament"]
-    source: Literal["reported", "measured", "estimated"]
     final: bool
-    complete: bool
-    rollover: bool = False
-    grams: float = Field(ge=0)
-    breakdown: list[UsageEntry]
+    source: Literal["reported", "measured"]
+    slots: list[SlotUsage] = Field(max_length=MAX_REPORT_SLOTS)
 
     @model_validator(mode="after")
-    def totals_agree(self):
-        if len({e.index for e in self.breakdown}) != len(self.breakdown):
-            raise ValueError("duplicate consumption index")
-        if self.complete and not math.isclose(sum(e.grams for e in self.breakdown), self.grams, rel_tol=0.001, abs_tol=0.05):
-            raise ValueError("complete breakdown does not add up to the total grams")
+    def unique_slots(self):
+        if len({s.slot for s in self.slots}) != len(self.slots):
+            raise ValueError("a slot appears more than once")
         return self
+
+    @property
+    def grams(self) -> float:
+        return sum(s.grams for s in self.slots)
+
+
+ENDINGS = ("complete", "failed", "cancelled", "requeued")
 
 
 @dataclass
 class Allocation:
-    by_slot: dict[int, float] = field(default_factory=dict)
-    source: str = "estimated"
+    """What one attempt used: `slots` = [(the loaded-slot dict it fed from, grams)], with the source and any note."""
+    slots: list[tuple[dict, float]] = field(default_factory=list)
+    source: str = "estimated"           # reported | measured | estimated | none
     reason: str | None = None
 
+    @property
+    def grams(self) -> float:
+        return sum(g for _, g in self.slots)
 
-def allocate(context: dict, grams: float | None, breakdown: list | None, report: dict | None = None) -> Allocation:
-    """Normalize a final report or the sliced estimate using the immutable print-start route.
 
-    A present but unusable report blocks fallback: partial telemetry / a rollover must not
-    silently charge the starting spool for consumption that cannot be attributed.
-    """
-    basis = context["basis"]
-    source = "estimated"
+def _slot_by_id(loaded: list | None, slot_id: int) -> dict | None:
+    for s in loaded or []:
+        if isinstance(s, dict) and s.get("slot") == slot_id and not s.get("empty"):
+            return s
+    return None
+
+
+def allocate(context: dict, *, ended: str, report: dict | None, end_loaded: list | None,
+             estimate_grams: float | None, estimate_breakdown: list | None) -> Allocation:
+    """The attempt's usage per loaded slot. A report for this attempt wins; each of its slots is the one loaded at the attempt's start
+    (else at its end: a spool loaded mid-print). Without one, only a completed print falls back to the slicer estimate."""
     if report is not None:
         try:
             parsed = UsageReport.model_validate(report)
         except ValidationError:
-            return Allocation(reason="Invalid printer filament usage report; reconcile spool usage")
-        source = parsed.source
-        if parsed.attempt_id != context["attempt_id"]:
-            return Allocation(source=source, reason="Filament usage report belongs to another print attempt")
-        if not parsed.final or not parsed.complete:
-            return Allocation(source=source, reason="Printer filament usage is partial; reconcile spool usage")
-        if parsed.rollover and (parsed.basis != "physical_slot" or source == "estimated"):
-            return Allocation(source=source, reason="Spool rollover was reported without attributable physical-slot consumption")
-        grams, basis = parsed.grams, parsed.basis
-        breakdown = [{"extruder_index": e.index, "grams": e.grams} for e in parsed.breakdown]
+            return Allocation(source="none", reason="The printer's filament usage report was invalid, so nothing was deducted")
+        if parsed.attempt_id == context["attempt_id"]:      # another attempt's report counts as none sent for this one
+            out, missing = [], []
+            for s in parsed.slots:
+                if s.grams == 0:
+                    continue
+                slot = _slot_by_id(context.get("loaded_filaments"), s.slot) or _slot_by_id(end_loaded, s.slot)
+                if slot is None:
+                    missing.append(str(s.slot))
+                else:
+                    out.append((slot, float(s.grams)))
+            reason = (f"The printer reported usage for slot {', '.join(missing)}, which held no filament on record, "
+                      "so that part was not deducted") if missing else None
+            return Allocation(out, parsed.source, reason)
+    if ended != "complete":
+        return Allocation(source="none", reason=f"The printer reported no filament usage for this {ended} print, so nothing was deducted")
+    return _estimate(context, estimate_grams, estimate_breakdown)
+
+
+def _estimate(context: dict, grams, breakdown: list | None) -> Allocation:
+    """The slicer estimate through the claim-time slot plan (slicer filament index N = model filament N+1)."""
     if type(grams) not in (int, float) or not math.isfinite(grams) or grams < 0:
-        return Allocation(source=source, reason="No valid filament consumption total was reported")
-    plan = context["slot_plan"]
+        return Allocation(source="none", reason="No filament usage was reported or estimated for this print")
+    loaded = list(context.get("loaded_filaments") or [])
+    plan = context.get("slot_plan") or []
     planned = list(dict.fromkeys(u["slot"] for u in plan))
-    if report is None and len(planned) == 1:
-        return Allocation({planned[0]: float(grams)}, source)
-    if grams == 0 and not breakdown:
-        return Allocation(source=source)
+    at = lambda i: loaded[i] if 0 <= i < len(loaded) and not loaded[i].get("empty") else None      # noqa: E731
+    if grams == 0:
+        return Allocation()
+    if len(planned) == 1:
+        slot = at(planned[0])
+        return Allocation([(slot, float(grams))]) if slot else Allocation(reason="The printed slot is no longer on record")
     if not breakdown:
-        return Allocation(source=source, reason="The filament used per slot was not reported, so no spool was tracked")
+        return Allocation(reason="The filament used per slot was not estimated, so no spool was tracked")
     routing = {int(u["model_filament"] or 1) - 1: u["slot"] for u in plan}
-    by_slot: dict[int, float] = {}
-    seen = set()
+    by_index: dict[int, float] = {}
     for entry in breakdown:
         index, used = entry.get("extruder_index"), entry.get("grams")
-        if (type(index) is not int or index < 0 or index in seen or type(used) not in (int, float)
-                or not math.isfinite(used) or used < 0):
-            return Allocation(source=source, reason="Invalid filament consumption breakdown")
-        seen.add(index)
+        if type(index) is not int or type(used) not in (int, float) or not math.isfinite(used) or used < 0:
+            return Allocation(reason="Invalid filament usage estimate")
         if used == 0:
             continue
-        slot = index if basis == "physical_slot" else routing.get(index)
-        if slot is None or not 0 <= slot < len(context["loaded_filaments"]) or context["loaded_filaments"][slot].get("empty"):
-            return Allocation(source=source, reason=f"Consumption index {index} has no saved physical-slot binding")
-        if report is None and slot not in planned:
-            return Allocation(source=source, reason=f"Consumption was reported for unplanned slot T{slot}")
-        by_slot[slot] = by_slot.get(slot, 0.0) + float(used)
-    if not math.isclose(sum(by_slot.values()), grams, rel_tol=0.001, abs_tol=0.05):
-        return Allocation(source=source, reason="Filament consumption breakdown is incomplete; reconcile spool usage")
-    return Allocation(by_slot, source)
+        target = routing.get(index)
+        if target is None or at(target) is None:
+            return Allocation(reason=f"Estimated filament {index + 1} has no planned slot")
+        by_index[target] = by_index.get(target, 0.0) + float(used)
+    return Allocation([(at(i), g) for i, g in by_index.items()])

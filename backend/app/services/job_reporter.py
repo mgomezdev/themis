@@ -19,6 +19,7 @@ from . import job_details
 from .filament_usage import UsageReport
 
 KINDS = ("started", "complete", "failed", "blocked")
+REPORT_FIELD = "filament_usage_report"     # the plugin's latest usage report for the current attempt (BIZ-366 v2)
 
 
 class JobReportError(Exception):
@@ -30,10 +31,10 @@ class JobReporter:
         self.plugin_id = plugin_id
 
     async def report_usage(self, job_id: int, report: Mapping[str, Any], *, printer_id: int | None = None) -> bool:
-        """Persist a cumulative per-slot/filament usage report for the current physical print.
+        """Persist the plugin's cumulative per-slot usage (contract v2, `filament_usage.UsageReport`) for the current physical print.
 
         Plugins read `filament_usage_context.attempt_id` through ctx.job_details, then send monotonically
-        increasing revisions. Duplicates/out-of-order revisions return False; a report after the print ended (the job is no
+        increasing revisions, and the last one before reporting `complete` / `failed` (Themis settles the attempt when it ends). Duplicates/out-of-order revisions return False; a report after the print ended (the job is no
         longer printing on this printer) raises JobReportError, so a late final summary is never mistaken for a duplicate.
         Reports do not deduct by themselves;
         successful completion freezes the chosen allocation and drives the inventory outbox.
@@ -57,10 +58,10 @@ class JobReporter:
             context = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
             if context is None or parsed.attempt_id != context["attempt_id"]:
                 raise JobReportError("filament usage report belongs to another or unknown print attempt")
-            current = (await job_details.get_details_in(session, job_id, ["filament_usage"], origin=self.plugin_id))["filament_usage"]["value"]
+            current = (await job_details.get_details_in(session, job_id, [REPORT_FIELD], origin=self.plugin_id))[REPORT_FIELD]["value"]
             if isinstance(current, dict) and current.get("attempt_id") == parsed.attempt_id and current.get("revision", -1) >= parsed.revision:
                 return False
-            await job_details.set_details(session, job_id, self.plugin_id, {"filament_usage": parsed.model_dump()})
+            await job_details.set_details(session, job_id, self.plugin_id, {REPORT_FIELD: parsed.model_dump()})
             await session.commit()
         return True
 
