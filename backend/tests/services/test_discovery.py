@@ -316,11 +316,12 @@ async def test_real_network_http_probes_are_not_starved_by_a_connection_pool():
         dead = [asyncio.ensure_future(net.http_get_json(f"{base}/dead", 3.0)) for _ in range(110)]   # more than 100
         await asyncio.sleep(0.3)                             # the sweep's dead probes are in flight first
         live = await net.http_get_json(f"{base}/server/info", 1.0)
+        assert live == (200, {"ok": True})
         await asyncio.gather(*dead)
     finally:
         await net.aclose()
         srv.shutdown()
-    assert live == (200, {"ok": True})
+        srv.server_close()
 
 
 async def test_real_network_listen_never_raises_without_multicast():
