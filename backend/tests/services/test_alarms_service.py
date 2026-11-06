@@ -1,5 +1,6 @@
 """Alarm reconcile rules, delivery filtering, and the tracker, against the real DB."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -238,6 +239,11 @@ async def test_purge_removes_only_old_resolved_alarms(session_factory, create_pr
 
 
 async def test_the_tracker_holds_a_standing_alarm_through_a_restart_then_resolves_it_on_the_recheck(session_factory, create_printer, monkeypatch):
+    # The grace window is measured on the alarm clock (`alarms.now`), so pin it: with real time, a slow run (coverage
+    # tracing) could spend longer than the grace between the two observes and resolve the alarm on the empty report.
+    # The re-check timer still runs on the event loop's clock (grace + 1 s), which the test waits out for real.
+    clock = [datetime.now(timezone.utc)]                                         # recent, so purge_old never treats it as old
+    monkeypatch.setattr(alarms, "now", lambda: clock[0].isoformat())
     monkeypatch.setattr(alarms, "RESOLVE_GRACE_S", 0.05)
     pid = await create_printer()
     sent = []
@@ -251,7 +257,9 @@ async def test_the_tracker_holds_a_standing_alarm_through_a_restart_then_resolve
     cleared = []
     await t2.observe(session_factory, pid, [], broadcast, refresh=lambda: cleared)
     assert (await rows(session_factory))[0].resolved_at is None                  # not resolved by the empty first report
-    await wait_until(lambda: _resolved(session_factory), timeout=3)              # the re-check resolves it once truly absent
+    assert pid in t2._timers                                                     # a re-check is scheduled
+    clock[0] += timedelta(seconds=1)                                             # by the time it fires, the grace has passed
+    await wait_until(lambda: _resolved(session_factory), timeout=5)              # the re-check resolves it once truly absent
     assert len(await rows(session_factory)) == 1
 
 
