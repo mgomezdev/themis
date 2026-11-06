@@ -67,6 +67,26 @@ describe('AuthGate', () => {
     expect(JSON.parse(init.body as string)).toEqual({ email: 'admin', password: 's3cret' });
   });
 
+  it('sign-in: a throttled login shows the server reason, not "unreachable"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/auth/login')
+        return new Response(JSON.stringify({ detail: 'Too many failed sign-ins; try again later' }), { status: 429 });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    }));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.type(await screen.findByPlaceholderText('Email or username'), 'admin');
+    await user.type(screen.getByPlaceholderText('Password'), 's3cret');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(screen.getByText('Too many failed sign-ins; try again later')).toBeTruthy());
+    expect(screen.queryByText('Server unreachable')).toBeNull();
+  });
+
   it('admin recovery: requests a log code, then sets a new password', async () => {
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url === '/api/v1/auth/recover')
@@ -135,6 +155,29 @@ describe('AuthGate', () => {
 
     await waitFor(() => expect(screen.getByText('Admin password must be at least 8 characters')).toBeTruthy());
     expect(screen.queryByText('Server unreachable')).toBeNull();
+  });
+
+  it.each([
+    [404, '<html>not found</html>', 'Request failed (404)'],
+    [502, '<html>bad gateway</html>', 'Server unreachable'],
+    [422, JSON.stringify({ detail: [{ msg: 'field required' }] }), 'Request failed (422)'],
+  ])('admin recovery: a %i without a string detail falls back by status', async (status, body, shown) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/auth/recover/confirm') return new Response(body, { status });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    }));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /forgot admin password/i }));
+    await user.type(screen.getByPlaceholderText('Recovery code'), 'ABCDE-FGHJK');
+    await user.type(screen.getByPlaceholderText('New admin password'), 'longenough');
+    await user.click(screen.getByRole('button', { name: /set admin password/i }));
+
+    await waitFor(() => expect(screen.getByText(shown)).toBeTruthy());
   });
 
   it('shows the manual-entry form when the session check fails', async () => {

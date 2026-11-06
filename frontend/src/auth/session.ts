@@ -28,7 +28,7 @@ export async function login(email: string, password: string): Promise<{ key: str
       body: JSON.stringify({ email, password }),
     });
     if (r.status === 401) return { error: 'Invalid email or password' };
-    if (!r.ok) return { error: 'Server unreachable' };
+    if (!r.ok) return { error: await errorFrom(r) };
     const data = await r.json();
     return typeof data?.key === 'string' ? { key: data.key } : { error: 'Server unreachable' };
   } catch {
@@ -56,11 +56,16 @@ export async function confirmRecovery(code: string, password: string): Promise<t
     });
     if (r.ok) return true;
     // 400 bad code, 422 password too short, 429 throttled: show the server's reason.
-    const detail = await r.json().then((d) => d?.detail, () => null);
-    if (typeof detail === 'string' && detail) return detail;
-    if (r.status === 400) return 'Invalid or expired recovery code';
-    return r.status >= 500 ? 'Server unreachable' : `Request failed (${r.status})`;
+    return await errorFrom(r, r.status === 400 ? 'Invalid or expired recovery code' : undefined);
   } catch {
     return 'Server unreachable';
   }
+}
+
+/** A failed auth response's message: the server's string `detail`, else `fallback`, else by status. */
+async function errorFrom(r: Response, fallback?: string): Promise<string> {
+  const detail = await r.json().then((d) => d?.detail, () => null);
+  if (typeof detail === 'string' && detail) return detail;
+  if (fallback) return fallback;
+  return r.status >= 500 ? 'Server unreachable' : `Request failed (${r.status})`;
 }
