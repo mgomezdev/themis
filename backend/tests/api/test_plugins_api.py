@@ -90,6 +90,18 @@ async def test_test_connection_uses_unsaved_settings_and_saved_secrets_without_e
     assert nourl.json() == {"ok": False, "message": "Spoolman URL is not set"}        # the provider refuses to build without one
 
 
+async def test_only_plugins_with_a_connection_of_their_own_offer_a_connection_test(client):
+    listed = {p["id"]: p for p in (await client.get("/api/v1/plugins")).json()["plugins"]}
+    for printer_plugin in ("bambu", "snapmaker", "elegoo_centauri", "moonraker", "mock"):   # each printer has its own connection
+        assert listed[printer_plugin]["can_test_connection"] is False, printer_plugin
+    for provider in ("spoolman", "laminus", "notify_ntfy"):
+        assert listed[provider]["can_test_connection"] is True, provider
+    assert (await client.get("/api/v1/plugins/bambu")).json()["can_test_connection"] is False
+
+    refused = await client.post("/api/v1/plugins/bambu/test", json={})
+    assert refused.status_code == 422 and "no connection to test" in refused.json()["detail"]
+
+
 async def old_route_gone(c):
     return (await c.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": None})).status_code
 
