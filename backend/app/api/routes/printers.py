@@ -459,6 +459,7 @@ class TestConnectionRequest(BaseModel):
 
 class DiscoverRequest(BaseModel):
     ranges: list[str] = Field(default_factory=list, max_length=8)   # CIDR / single IP; empty = this host's /24
+    plugin_id: str | None = None
 
 
 _discovery_lock = asyncio.Lock()
@@ -478,18 +479,25 @@ def _discovery_network():
 )
 async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depends(get_session)) -> dict:
     """Sweep `ranges` (e.g. `192.168.7.0/24` — printers on another VLAN need their range given explicitly) and list
-    what answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers
+    what answers to a vendor's documented discovery signature. Trailing x/* wildcards are accepted. Private ranges
+    only, at most 65,536 addresses total. Optional plugin_id limits probes to one enabled printer plug-in. Printers
     already added (same IP) are flagged. Secrets (access codes, API keys) are never discovered."""
     from ...services import discovery
     ranges = [r for r in body.ranges if r.strip()] or discovery.local_ranges()
     if not ranges:
         raise HTTPException(422, "Could not work out this host's network; pass a range such as 192.168.1.0/24")
+    classes = enabled_client_classes()
+    if body.plugin_id is not None:
+        plugin_ids = printer_type_plugins()
+        classes = {key: cls for key, cls in classes.items() if plugin_ids.get(key) == body.plugin_id}
+        if not classes:
+            raise HTTPException(422, "Choose an enabled printer plug-in")
     if _discovery_lock.locked():
         raise HTTPException(409, "A network scan is already running")       # each scan holds hundreds of sockets
     net = _discovery_network()
     try:
         async with _discovery_lock:
-            result = await discovery.scan(net, ranges, enabled_client_classes())
+            result = await discovery.scan(net, ranges, classes)
     except discovery.ScanRangeError as e:
         raise HTTPException(422, str(e))
     finally:

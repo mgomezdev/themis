@@ -416,10 +416,10 @@ export interface DiscoveryResult {
 }
 
 /** Sweep the given IP ranges (empty = the server's own /24) for printers answering a vendor's discovery signature. */
-export function discoverPrinters(ranges: string[]): Promise<DiscoveryResult> {
+export function discoverPrinters(ranges: string[], pluginId?: string): Promise<DiscoveryResult> {
   return request(`${BASE}/discover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ranges }),
+    body: JSON.stringify({ ranges, ...(pluginId ? { plugin_id: pluginId } : {}) }),
   });
 }

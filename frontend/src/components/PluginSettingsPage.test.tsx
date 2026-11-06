@@ -5,6 +5,7 @@ import { PluginSettingsPage } from './PluginSettingsPage';
 import { Reply, stubFetch } from '../test/fetchStub';
 import { mkPlugin, mkStatus, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore, type PluginDetail } from '../api/plugins';
+import { printerType, IP_FIELD } from '../test/printerTypes';
 
 const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
   ...mkPlugin({ id: 'demo_inv', name: 'Demo inventory', ...(over.active === false ? { active: false } : {}) }),
@@ -38,6 +39,44 @@ const routes = (d = detail(), over: Record<string, unknown> = {}) => ({
 describe('PluginSettingsPage', () => {
   beforeEach(() => resetPluginStore());
   afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  it('scans only this printer plug-in from settings and prefills the add wizard without persisting discovery', async () => {
+    window.localStorage.clear();
+    const d = detail({ id: 'snapmaker', name: 'Snapmaker', provides: [], settings: {}, secret_fields: [],
+      settings_schema: {}, printer_discovery: true });
+    const found = { plugin_id: 'snapmaker', printer_type: 'snapmaker_extended', display_name: 'Snapmaker',
+      ip: '192.168.7.30', model: 'Moonraker / Klipper', name: 'Test printer', serial: null, model_uuid: null,
+      connection_config: { ip_address: '192.168.7.30', port: 7125 }, note: null, already_added: false };
+    const api = stubFetch({
+      'GET /api/v1/plugins': pluginsBody(d), 'GET /api/v1/plugins/snapmaker': d,
+      'POST /api/v1/printers/discover': { ranges: ['192.168.x.x'], scanned: 65534, truncated: false, found: [found] },
+      'GET /api/v1/printers/types': [printerType({ plugin_id: 'snapmaker', display_name: 'U1', connection_fields: [IP_FIELD] })],
+      'GET /api/v1/printers/orca-machine-catalog': [],
+    });
+    render(<PluginSettingsPage pluginId="snapmaker" />);
+    const range = await screen.findByLabelText('Network ranges');
+    expect((range as HTMLInputElement).value).toBe('192.168.x.x');
+    await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use 192.168.7.30' }));
+    expect(api.to('POST', '/api/v1/printers/discover')[0].body).toEqual({ ranges: ['192.168.x.x'], plugin_id: 'snapmaker' });
+    expect(await screen.findByText(/could not tell which model/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    expect(screen.getByText('IP Address').parentElement!.querySelector('input')!.value).toBe('192.168.7.30');
+    expect(window.localStorage.getItem('themis.discovery.ranges')).toBeNull();
+    expect(api.to('POST', '/api/v1/printers')).toHaveLength(0);
+  });
+
+  it('does not show discovery for disabled or non-discovering plug-ins', async () => {
+    stubFetch(routes(detail({ printer_discovery: false })));
+    const first = render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByRole('heading', { name: 'Demo inventory' });
+    expect(screen.queryByLabelText('Network ranges')).toBeNull();
+    first.unmount();
+    stubFetch(routes(detail({ printer_discovery: true, enabled: false })));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByRole('heading', { name: 'Demo inventory' });
+    expect(screen.queryByLabelText('Network ranges')).toBeNull();
+  });
 
   it('shows the header facts and builds the form from the settings schema (required marked, secret fields separate)', async () => {
     stubFetch(routes());

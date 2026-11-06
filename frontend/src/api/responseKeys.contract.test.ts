@@ -18,7 +18,7 @@ import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, 
 import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch, QueuePool } from './queue';
 import type { ModelSlicerProfile, ProfileCandidate, ProfileSuggestions, ProfileVariantOption } from './slicerProfiles';
 import type { CapabilityInfo } from './capabilities';
-import type { PluginConnectionResult, PluginProvides, PluginSummary } from './plugins';
+import type { PluginConnectionResult, PluginDetail, PluginProvides, PluginSummary } from './plugins';
 
 const contract = JSON.parse(contractRaw) as Record<string, string[]>;
 const sorted = (keys: string[]) => [...new Set(keys)].sort();
@@ -168,6 +168,7 @@ const PLUGIN_SUMMARY = {
 } satisfies Record<keyof PluginSummary, 1>;
 const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
 const PLUGIN_CONNECTION_RESULT = { ok: 1, state: 1 } satisfies Record<keyof PluginConnectionResult, 1>;
+const PLUGIN_DISCOVERY = { printer_discovery: 1 } satisfies Record<keyof Pick<PluginDetail, 'printer_discovery'>, 1>;
 const CAPABILITY_INFO = {
   id: 1, version: 1, label: 1, description: 1, definer: 1, features: 1, required_methods: 1, selected: 1, explicit: 1, status: 1,
   waiting_on: 1, error: 1, providers: 1, requires_by: 1, mode: 1, dormant_default: 1,
@@ -221,6 +222,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['plugin summary', contract.plugin_summary, keysOf(PLUGIN_SUMMARY)],
     ['plugin provides entry', contract.plugin_provides, keysOf(PLUGIN_PROVIDES)],
     ['plugin connection result', contract.plugin_connection_result, keysOf(PLUGIN_CONNECTION_RESULT)],
+    ['plugin discovery', contract.plugin_discovery, keysOf(PLUGIN_DISCOVERY)],
     ['capability info', contract.capability_info, keysOf(CAPABILITY_INFO)],
   ];
 
@@ -237,7 +239,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
       'printer_model_slicer_profile', 'slicer_profile_suggestions', 'slicer_profile_candidate', 'slicer_profile_variant', 'model_target',
-      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'capability_info', 'filament_match', 'slot_conflicts']);
+      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'plugin_discovery', 'capability_info', 'filament_match', 'slot_conflicts']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });
