@@ -247,6 +247,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .app[data-nav="collapsed"] .sidebar .nav-section-label,
 .app[data-nav="collapsed"] .sidebar .user-meta { display: none; }
 .app[data-nav="collapsed"] .sidebar .brand { justify-content: center; padding: 18px 10px 14px; }
+.app[data-nav="collapsed"] .sidebar-scroll { scrollbar-width: none; }   /* 64px wide: a scrollbar would push the icons off-centre */
 
 .sidebar-user {
   padding: 6px 10px 8px;

@@ -182,7 +182,7 @@ test.describe('short desktop window', () => {
     await page.mouse.wheel(0, 2000);                               // a user scroll, not a programmatic scrollIntoView
     await expect.poll(below).toBe(false);
     const toggle = await page.locator('.sidebar-toggle').boundingBox();
-    expect(toggle!.y + toggle!.height).toBeLessThanOrEqual(560);  // the collapse toggle stays pinned in view
+    expect(toggle!.y + toggle!.height).toBeLessThanOrEqual(page.viewportSize()!.height);  // the collapse toggle stays pinned in view
   });
 });
 
