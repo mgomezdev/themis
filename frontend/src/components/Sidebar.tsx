@@ -116,6 +116,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
         )}
       </div>
 
+      <div className="sidebar-scroll">
       <div className="nav-section">
         <div className="nav-section-label">Workshop</div>
         {items.map(it => (
@@ -155,6 +156,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
         )}
         <LaminusStatusChip />
         <InventoryStatusChip />
+      </div>
       </div>
 
       {!collapsed && build && (

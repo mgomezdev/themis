@@ -187,6 +187,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 .brand-name .dim { color: var(--text-3); font-weight: 400; margin-left: 2px; }
 
+/* The nav sections scroll between the fixed header and the toggle (the Settings sub-items can overflow). */
+.sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .nav-section { padding: 12px 8px 6px; }
 .nav-section-label {
   font-size: 10px;
