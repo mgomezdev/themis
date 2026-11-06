@@ -127,7 +127,7 @@ describe('ProjectDetailScreen - generating jobs', () => {
     await ready();
 
     expect(button('Generate…').hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('No parts — edit the project to add parts.')).toBeTruthy();
+    expect(screen.getByText('No parts — edit the project, or drop a .3mf / .stl file on this page, to add parts.')).toBeTruthy();
   });
 
   it('sends Any printer and model groups as their own generate fields (BIZ-357)', async () => {
