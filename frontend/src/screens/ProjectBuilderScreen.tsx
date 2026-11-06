@@ -1095,7 +1095,7 @@ export function ProjectBuilderScreen() {
   const queueBlocked = !projectId || isDraft || !review || reviewLoading || !!reviewError || reviewedSnap !== currentSnap
     || (open ?? 1) > 0 || items.length === 0;
   return (
-    <FileDropZone onUploaded={addFile} label="Drop to upload and add to the project">
+    <FileDropZone onUploaded={addFile} label="Drop to upload and add to the project" style={{ height: '100%' }}>
       <div className="col gap-3" style={{ height: '100%' }}>
         <div className="row between" style={{ alignItems: 'baseline' }}>
           <div style={{ fontSize: 18, fontWeight: 600 }}>{name || 'New project'}</div>
