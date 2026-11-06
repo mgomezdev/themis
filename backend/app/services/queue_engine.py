@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import time
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1237,7 +1236,6 @@ class QueueEngine:
             # Capture scalar values before session closes
             loaded = (printer.loaded_filaments if printer else None) or []
             plan = filament_matching.plan_for(config, loaded) if config else []
-            slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if plan else None
             plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
             cfg_tool_index = None   # set from the slice params below
             # AMS printers (Bambu) map the print's filament to the matched tray.
@@ -1651,7 +1649,6 @@ class QueueEngine:
         config = config_result.scalar_one_or_none()
         printer = await session.get(Printer, printer_id)
         loaded = (printer.loaded_filaments if printer else None) or []
-        slot = _slot_for_config(config, loaded) if config else None
         try:
             ams_tray_id = _ams_mapping(filament_matching.plan_for(config, loaded), loaded)
         except ValueError as exc:

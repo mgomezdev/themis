@@ -1,11 +1,10 @@
+import hashlib
 import io
-import json
 from tests.conftest import slice_info_xml
 import zipfile
-import pytest
-from pathlib import Path
 from unittest.mock import patch
-from app.services.three_mf_parser import PlateInfo
+
+from app.models import UploadedFile
 
 
 def _make_three_mf_bytes() -> bytes:
@@ -69,12 +68,11 @@ async def test_upload_stl_returns_single_plate(client, tmp_path):
     assert data["plate_count"] == 1
 
 
-async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path):
+async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path, session_factory):
     """Upload reads in chunks rather than loading the whole body into memory at
     once. Use a file larger than the chunk size so the streaming loop actually
     runs multiple iterations, and confirm the content lands intact with the
     right hash-derived dedup key, and no .part scratch file is left behind."""
-    import hashlib
     from app.services.artifact_store import CHUNK_SIZE
 
     big = (b"solid model\n" + b"x" * (CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
@@ -105,6 +103,11 @@ async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path)
         )
     assert dup.status_code == 201
     assert dup.json()["id"] == data["id"]
+
+    # The dedup key is the sha256 of the streamed bytes (not of some prefix/chunk).
+    async with session_factory() as session:
+        row = await session.get(UploadedFile, data["id"])
+    assert row.content_hash == expected_hash
 
 
 async def test_get_plates(client, tmp_path):
@@ -159,7 +162,6 @@ async def test_thumbnail_served(client, tmp_path):
     assert response.headers["content-type"].startswith("image/")
 
 
-import hashlib
 
 
 def _make_stl_bytes(seed: bytes = b"stl") -> bytes:

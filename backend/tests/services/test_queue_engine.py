@@ -482,7 +482,7 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
 
     qe = QueueEngine(db, mgr, mock_slicer)
     _install_fake_put(qe)
-    job_id = await _seed_job(db, printer_id=1)
+    await _seed_job(db, printer_id=1)
 
     # First cycle slices the job
     await qe._process_queue()
@@ -649,10 +649,11 @@ async def test_verify_slice_priority_lower_than_production_and_estimate(db):
 async def test_actual_values_captured_at_slice_time(db):
     """After a production slice, actual_filament_grams/actual_seconds/actual_filament_breakdown
     are persisted on the Job row in the same session block as GcodeFile creation."""
-    import tempfile, os
+    import tempfile
+    import os
     from pathlib import Path
     from unittest.mock import patch, MagicMock, AsyncMock
-    from app.models import Job, QueueConfig
+    from app.models import Job
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
@@ -705,7 +706,8 @@ async def test_run_slice_and_print_removes_gcode_when_cancelled_during_slice(db)
     post-slice status check, which returns before creating a GcodeFile row.
     The already-downloaded artifact must not be silently orphaned on disk —
     nothing else ever cleans it up since no GcodeFile row references it."""
-    import tempfile, os
+    import tempfile
+    import os
     from pathlib import Path
     from unittest.mock import patch, MagicMock, AsyncMock
     from app.models import Job
@@ -755,9 +757,10 @@ async def test_run_slice_and_print_removes_gcode_when_cancelled_during_slice(db)
 @pytest.mark.asyncio
 async def test_run_estimate_sets_done_with_fields(db):
     """run_estimate writes estimate fields when slice succeeds."""
-    import tempfile, os
+    import tempfile
+    import os
     from unittest.mock import patch, MagicMock
-    from app.models import Job, QueueConfig
+    from app.models import Job
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
@@ -812,7 +815,8 @@ async def test_run_estimate_sets_done_with_fields(db):
 async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(db):
     """The estimate on the job comes from FormatProvider.parse_estimates, not from a gcode parser baked into the
     queue: the artifact's own text says 10 g / 30 min, the fake provider says otherwise, and the fake wins."""
-    import tempfile, os
+    import tempfile
+    import os
     from unittest.mock import patch, MagicMock
     from app.models import Job
     from app.services.queue_engine import QueueEngine
@@ -926,7 +930,8 @@ async def test_run_estimate_fails_when_printer_missing(db):
 @pytest.mark.asyncio
 async def test_run_estimate_conditional_update_guards_against_cancel(db):
     """If estimate_status is cleared (cancellation) before write, results are discarded."""
-    import tempfile, os
+    import tempfile
+    import os
     from unittest.mock import patch, MagicMock
     from app.models import Job
     from app.services.queue_engine import QueueEngine
@@ -1027,7 +1032,8 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
     spawn_estimate's done-callback only discards the task and never retrieves
     the exception, so without run_estimate's own safety net this would leave
     estimate_status stuck on 'pending' forever."""
-    import tempfile, os
+    import tempfile
+    import os
     from unittest.mock import patch, MagicMock
     from app.models import Job
     from app.services.queue_engine import QueueEngine
@@ -1080,7 +1086,8 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
 @pytest.mark.asyncio
 async def test_run_estimate_discards_result_when_token_incremented(db):
     """If estimate_token is incremented (re-trigger) before the write, results are discarded."""
-    import tempfile, os
+    import tempfile
+    import os
     from unittest.mock import patch, MagicMock
     from app.models import Job
     from app.services.queue_engine import QueueEngine
@@ -1292,7 +1299,6 @@ async def test_completion_sets_the_spool_weight_through_the_inventory_provider(d
 @pytest.mark.asyncio
 @pytest.mark.parametrize("caps", [None, frozenset({"TRACKS_WEIGHT"}), frozenset({"WRITE_WEIGHT"})])   # None: no provider at all
 async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabilities_or_is_absent(db, caps):
-    from unittest.mock import AsyncMock, patch
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
 
@@ -1312,7 +1318,6 @@ async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabil
 
 @pytest.mark.asyncio
 async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
-    from unittest.mock import AsyncMock, patch
     from app.models import InventoryConfig
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
@@ -1336,7 +1341,6 @@ async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
 @pytest.mark.asyncio
 async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provider_is_active(db):
     """The slot's `spoolman_spool_id` is a Spoolman id: applying it to a different provider would hit an unrelated spool."""
-    from unittest.mock import AsyncMock, patch
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
 
@@ -1376,7 +1380,7 @@ async def test_a_failing_provider_never_breaks_completion(db):
 @pytest.mark.asyncio
 async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     """Deduction is skipped when actual_filament_grams is None."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
     from app.models import Job, GcodeFile
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
@@ -1418,7 +1422,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     observe status=='printing' for the same job before either commits. Only the
     caller that wins the conditional-UPDATE claim should deduct the Spoolman spool
     and bump lifetime counters; the loser must be a no-op."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
     from app.models import Job, GcodeFile
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
@@ -1513,7 +1517,7 @@ async def test_slice_worker_continues_after_exception(db):
 async def test_startup_resets_pending_estimates(db):
     """QueueEngine.start() resets all estimate_status='pending' to NULL."""
     from unittest.mock import patch, MagicMock
-    from app.models import Job, QueueConfig
+    from app.models import Job
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
@@ -1551,7 +1555,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
     """A user cancel that commits while _try_claim_for_printer awaits the Laminus
     health probe must not be silently overwritten with status='slicing' — that
     would let the printer start on a job the user believes was cancelled."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     mgr = _make_mock_printer_manager([1])
     qe = QueueEngine(db, mgr, MagicMock())
@@ -1589,7 +1593,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
     """Same race, but for the unreachable-Laminus block path: a user cancel that
     commits while the health probe is in flight must not be silently
     overwritten with status='blocked'."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     mgr = _make_mock_printer_manager([1])
     qe = QueueEngine(db, mgr, MagicMock())
@@ -1632,7 +1636,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
 async def test_an_unusable_slicing_provider_blocks_the_job_with_a_specific_reason(db, scenario, reason):
     """No provider / provider says not ready / provider unreachable → the job is blocked (not failed) with its own
     reason, and the health probe keeps its 2 s timeout."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
     from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
 
     qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())

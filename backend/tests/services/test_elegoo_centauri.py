@@ -1,5 +1,4 @@
 import json
-import time
 from unittest.mock import MagicMock
 import pytest
 from app.plugins.elegoo_centauri.client import ElegooCentauriClient, ElegooState, _CAMERA_PORT
@@ -221,7 +220,6 @@ def test_print_control_ack_parsed_from_inner_data():
     client = _connected_client()
     import threading
     rid_holder = {}
-    real_send = client._ws.send
     def capture(msg):
         rid_holder["rid"] = json.loads(msg)["Data"]["RequestID"]
     client._ws.send = capture

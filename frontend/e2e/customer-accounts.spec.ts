@@ -108,7 +108,7 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
         fake.projects.push(p);
         return send(201, portalProject(p));
       }
-      const own = (m = path.match(/^\/customer\/projects\/(\d+)(\/files)?$/))
+      const own = (m = path.match(/^\/customer\/projects\/(\d+)(\/files)?$/)) // eslint-disable-line no-cond-assign
         ? fake.projects.find(x => x.id === +m[1] && x.customer_id === customerId) : undefined;
       if (!own) return send(404, { detail: 'Project not found' });
       if (own.stage !== 'draft') return send(409, { detail: 'Only draft projects can be edited' });

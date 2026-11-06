@@ -151,7 +151,7 @@ async def test_a_start_snapshot_delivered_after_the_print_ended_is_not_taken(cli
     await _local_inventory_active(client)
     ref = await _spool(client, 500.0)
     printer_id = await _printer_with_slot(client, session_factory, ref)
-    job_id = await _queue_job(client, upload_3mf, printer_id)
+    await _queue_job(client, upload_3mf, printer_id)
     await run_cycle(farm.engine)
     printer_manager.get_client(printer_id).stop_print()
     await printer_manager.on_print_complete(printer_id, None)            # complete BEFORE the start event is delivered

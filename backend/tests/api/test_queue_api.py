@@ -1,6 +1,4 @@
 # backend/tests/api/test_queue_api.py
-import pytest
-from unittest.mock import AsyncMock, patch
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
 

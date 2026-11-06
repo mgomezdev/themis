@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
@@ -108,7 +107,7 @@ def test_ws_accepts_with_valid_key(tmp_path):
     _wire_app_to_db(db_path)
 
     client = TestClient(app)
-    with client.websocket_connect(f"/ws?key={raw}") as ws:
+    with client.websocket_connect(f"/ws?key={raw}"):
         assert len(connection_manager.active_connections) == 1
 
 

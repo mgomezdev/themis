@@ -17,7 +17,7 @@ function jsonResponse(data: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
 }
 
-const mockFetch = vi.fn((input: unknown) => {
+const mockFetch = vi.fn((input: unknown, _init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
   if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], selections: {} });
@@ -150,5 +150,28 @@ describe('ProjectBuilderScreen draft stage', () => {
     const btn = screen.getByRole('button', { name: 'Queue project' }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Promote to planning before creating jobs');
+  });
+});
+
+describe('ProjectBuilderScreen file drop', () => {
+  it('uploads a file dropped on the Builder and adds it as a part', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    const base = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((input: unknown, init?: RequestInit) =>
+      String(input) === '/api/v1/files/upload' && init?.method === 'POST'
+        ? jsonResponse({ ...FILES[0], id: 9, original_filename: 'Dropped.stl', relative_path: 'Dropped.stl', kind: 'stl' })
+        : base(input));
+    try {
+      render(<ProjectBuilderScreen />, { wrapper });
+      await toTab(/^Items/);
+      await screen.findByTitle('Add Bracket.stl');
+      fireEvent.drop(screen.getByTestId('file-drop-zone'),
+                     { dataTransfer: { files: [new File(['x'], 'Dropped.stl')], types: ['Files'] } });
+
+      await waitFor(() => expect(screen.getByLabelText('Quantity of Dropped.stl')).toHaveValue(1));
+      expect((mockFetch.mock.calls as unknown[][]).some(([u, i]) => u === '/api/v1/files/upload' && (i as RequestInit | undefined)?.method === 'POST')).toBe(true);
+    } finally {
+      mockFetch.mockImplementation(base);
+    }
   });
 });

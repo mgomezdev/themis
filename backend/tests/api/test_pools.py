@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.models import Job, JobPrinterConfig, Printer, ProjectGroup
+from app.models import Job, JobPrinterConfig, Printer
 from app.services.providers import contract as c
 from app.services.queue_engine import QueueEngine
 from tests.fake_providers import FakeProjectConstructor, FakeSlicingProvider

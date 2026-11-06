@@ -3,7 +3,7 @@ from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
 from app.services.providers.contract import OverrideInspection, SettingChange, SlotWarning
 from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from httpx import AsyncClient
 
@@ -149,7 +149,6 @@ def test_slice_raises_without_sidecar():
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
 
 import pytest
 

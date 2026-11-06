@@ -162,8 +162,10 @@ def test_the_plugin_instance_builds_the_constructor_and_none_while_unconfigured(
 
 # ---- plate manifest (BIZ-359): which request input each instance on each plate came from ---------------------------------
 
-def _pack_with(tmp_path, manifest) -> "Path":
-    import io, json, zipfile
+def _pack_with(tmp_path, manifest) -> "Path":  # noqa: F821
+    import io
+    import json
+    import zipfile
     p = tmp_path / "pack.3mf"
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

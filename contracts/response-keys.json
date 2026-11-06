@@ -420,6 +420,7 @@
   "plugin_summary": [
     "id",
     "name",
+    "can_test_connection",
     "version",
     "description",
     "docs_url",

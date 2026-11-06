@@ -192,6 +192,14 @@ describe('PluginSettingsPage', () => {
     expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toEqual([]);                          // nothing saved
   });
 
+  it('offers no Test connection for a plugin with no connection of its own (a printer plugin)', async () => {
+    stubFetch(routes(detail({ can_test_connection: false })));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByLabelText('Url');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull();
+  });
+
   it('reports a failed test and a rejected save', async () => {
     stubFetch(routes(detail(), {
       'POST /api/v1/plugins/demo_inv/test': { ok: false, message: 'connection refused' },

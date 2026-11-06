@@ -239,7 +239,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
       <div className="row gap-2" style={{ padding: '16px 0', alignItems: 'center' }}>
         <button className="btn primary sm" onClick={save} disabled={busy}>Save</button>
-        <button className="btn sm" onClick={test} disabled={busy}>Test connection</button>
+        {plugin.can_test_connection !== false && <button className="btn sm" onClick={test} disabled={busy}>Test connection</button>}
         {msg && <span role={msg.ok ? 'status' : 'alert'} className="small" style={{ color: msg.ok ? 'var(--ok)' : 'var(--err)' }}>{msg.text}</span>}
         {testMsg && <span data-testid="test-result" className="small" style={{ color: testMsg.ok ? 'var(--ok)' : 'var(--err)' }}>{testMsg.text}</span>}
       </div>
