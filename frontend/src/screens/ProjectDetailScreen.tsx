@@ -191,565 +191,565 @@ export function ProjectDetailScreen() {
 
   return (
     <FileDropZone onUploaded={addDroppedFile} label="Drop to upload and add to this project">
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 900 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 900 }}>
 
-      {/* ── Header card ─────────────────────────────────────────────────── */}
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-1)' }}>
-                {project.name}
-              </h2>
-              <span style={{
-                fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: 'var(--bg-3)', color: 'var(--text-4)',
-              }}>
-                #{project.id}
-              </span>
-              <span style={{
-                fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: project.stage === 'queued' ? 'rgba(34,197,94,0.15)' : 'rgba(239,160,0,0.15)',
-                color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
-                textTransform: 'uppercase', letterSpacing: '0.04em',
-              }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
-              {project.order_type === 'customer' && (
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: 'var(--bg-3)', color: 'var(--text-3)',
-                  textTransform: 'uppercase', letterSpacing: '0.04em',
-                }}>Customer</span>
-              )}
-              {project.on_hold && (
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
-                  textTransform: 'uppercase', letterSpacing: '0.04em',
-                }}>On hold</span>
-              )}
-              <span style={{
-                fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: project.payment_status === 'paid' ? 'rgba(34,197,94,0.15)'
-                  : project.payment_status === 'partial' ? 'rgba(239,160,0,0.15)' : 'var(--bg-3)',
-                color: project.payment_status === 'paid' ? 'var(--ok)'
-                  : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
-                textTransform: 'uppercase', letterSpacing: '0.04em',
-              }}>
-                {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
-              </span>
-            </div>
-            {project.customer_id != null && project.customer_name ? (
-              <div style={{ fontSize: 13, marginTop: 3 }}>
-                <Link to={`/customers/${project.customer_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-                  {project.customer_name}
-                </Link>
-              </div>
-            ) : project.customer && (
-              <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 3 }}>
-                {project.customer}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-4)', marginTop: 6 }}>
-              {dueStr && (
-                <span style={{ color: isOverdue ? 'var(--err)' : 'var(--text-3)' }}>
-                  Due {dueStr}
-                </span>
-              )}
-              {project.notes && <span>{project.notes}</span>}
-              {project.price != null && (
-                <span>
-                  Price: {fmtMoney(project.price)}
-                  {project.payment_status !== 'paid' && project.price > (project.amount_paid ?? 0) && (
-                    <span style={{ color: 'var(--warn)' }}>
-                      {' '}· {fmtMoney(project.price - (project.amount_paid ?? 0))} outstanding
-                    </span>
-                  )}
-                </span>
-              )}
-              {project.filament_cost_total != null && (
-                <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
-              )}
-              {project.customer_id != null && (
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                       title={project.price == null ? 'Set a price first' : 'Show the price, what has been paid and the balance in the customer portal'}>
-                  <input type="checkbox" checked={project.price_visible} disabled={project.price == null}
-                         onChange={e => handlePriceVisible(e.target.checked)} />
-                  Show price to customer
-                </label>
-              )}
-              {project.quote_accepted_at && (
-                <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
-              )}
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                Account
-                <select className="input" style={{ fontSize: 12, padding: '1px 4px' }}
-                        value={project.customer_id ?? ''}
-                        onFocus={loadCustomers}
-                        onChange={e => handleCustomerChange(e.target.value)}>
-                  <option value="">None</option>
-                  {project.customer_id != null && !customers?.some(c => c.id === project.customer_id) && (
-                    <option value={project.customer_id}>{project.customer_name ?? `Customer #${project.customer_id}`}</option>
-                  )}
-                  {customers?.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
-                </select>
-              </label>
-              {project.source_layout_id != null && (
-                <span title={`source_app: ${project.source_app ?? '?'}`}>
-                  {Icons.link}
-                  {' '}Ordinus layout #{project.source_layout_id}
-                  {project.source_user ? ` · ${project.source_user}` : ''}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            {NEXT_STAGE[project.stage] && (
-              <button className="btn sm" onClick={handlePromote}>
-                Promote to {STAGE_LABEL[NEXT_STAGE[project.stage]!]}
-              </button>
-            )}
-            <button className="btn sm" onClick={toggleShare}>
-              Share
-            </button>
-            <button className="btn sm" onClick={() => navigate(`/projects/${project.id}/edit`)}>
-              Edit
-            </button>
-            <button
-              className="btn primary sm"
-              onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
-              disabled={generating || project.items.length === 0 || project.stage === 'draft'}
-              title={project.stage === 'draft' ? 'Promote to planning before creating jobs' : undefined}
-            >
-              {generating ? 'Generating…' : 'Generate…'}
-            </button>
-          </div>
-        </div>
-
-        {stageError && (
-          <div style={{ marginTop: 8, fontSize: 13, color: 'var(--err)' }}>{stageError}</div>
-        )}
-
-        {/* Job progress bar */}
-        {project.jobs_total > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4,
-                          fontSize: 12, color: 'var(--text-3)' }}>
-              <span>{project.jobs_complete} / {project.jobs_total} jobs complete</span>
-              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end', fontSize: 11 }}>
-                <span style={{ color: 'var(--text-3)' }}>
-                  Est. total:{' '}
-                  {project.estimate_filament_grams_total != null
-                    ? `${project.estimate_filament_grams_total.toFixed(1)} g`
-                    : '—'}
-                  {' / '}
-                  {project.estimate_seconds_total != null
-                    ? fmtDuration(project.estimate_seconds_total)
-                    : '—'}
-                </span>
-                <span style={{ color: 'var(--text-3)' }}>
-                  Est. remaining:{' '}
-                  {project.estimate_filament_grams_remaining != null
-                    ? `${project.estimate_filament_grams_remaining.toFixed(1)} g`
-                    : '—'}
-                  {' / '}
-                  {project.estimate_seconds_remaining != null
-                    ? fmtDuration(project.estimate_seconds_remaining)
-                    : '—'}
-                </span>
-                <span style={{ color: 'var(--text-3)' }}>
-                  Actual:{' '}
-                  {project.actual_filament_grams != null
-                    ? `${project.actual_filament_grams.toFixed(1)} g`
-                    : '—'}
-                  {' / '}
-                  {project.actual_seconds != null
-                    ? fmtDuration(project.actual_seconds)
-                    : '—'}
-                </span>
-              </span>
-            </div>
-            <Progress
-              value={project.jobs_total > 0 ? (project.jobs_complete / project.jobs_total) * 100 : 0}
-              tone={project.jobs_complete === project.jobs_total ? 'ok' : undefined}
-            />
-          </div>
-        )}
-
-        {showPrinterPicker && !generating && (
-          <div style={{
-            marginTop: 14, padding: '14px 16px',
-            border: '1px solid var(--border)', borderRadius: 8,
-            background: 'var(--bg-2)',
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
-                          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-              Eligible printers
-            </div>
-            <div className="tiny muted" style={{ marginBottom: 8 }}>
-              For the Default Group when it has no printers of its own; groups with printers set below use those.
-            </div>
-            <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
-            <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
-            <div style={{ marginTop: 12 }}>
-              <ProcessPresetPicker printerIds={coveredPrinterIds(eligibleKeys, targetPrinters)} value={processPreset} onChange={setProcessPreset} />
-            </div>
-            <div className="col gap-2" style={{ marginTop: 12 }}>
-              <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
-                <input type="checkbox" checked={allowCached} onChange={e => setAllowCached(e.target.checked)} />
-                Use cached slices when available
-              </label>
-              <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
-                <input type="checkbox" checked={saveSlice} onChange={e => setSaveSlice(e.target.checked)} />
-                Save sliced gcode to library
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-              <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
-              <button
-                className={eligibleKeys.length === 0 ? 'btn sm' : 'btn primary sm'}
-                onClick={handleGenerate}
-                title={eligibleKeys.length === 0
-                  ? 'No printers selected — jobs will be created but not dispatched'
-                  : undefined}
-              >
-                {eligibleKeys.length === 0 ? 'Generate without dispatch' : 'Generate'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {generateResult && (
-          <div style={{
-            marginTop: 12, border: '1px solid var(--ok)', borderRadius: 8,
-            padding: '10px 14px', background: 'oklch(55% 0.15 142 / 0.06)',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <span style={{ color: 'var(--ok)' }}>{Icons.check}</span>
-            <span style={{ fontSize: 13, flex: 1 }}>
-              {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
-              {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
-                <span key={f.id} className="tiny muted" data-testid="generate-cache-info" style={{ display: 'block' }}>
-                  {f.original_filename}:{f.pack_reused ? ' reused previous pack' : ''}
-                  {f.pack_reused && f.cached_plates > 0 ? ',' : ''}
-                  {f.cached_plates > 0 ? ` ${f.cached_plates} plate${f.cached_plates === 1 ? ' has' : 's have'} cached versions` : ''}
-                </span>
-              ))}
-            </span>
-            <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
-          </div>
-        )}
-        {generateError && (
-          <div style={{
-            marginTop: 12, display: 'flex', alignItems: 'center', gap: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-            borderRadius: 6, padding: '10px 14px',
-          }}>
-            <span style={{ color: 'var(--err)' }}>{Icons.alert}</span>
-            <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
-          </div>
-        )}
-      </div>
-
-      {showShare && (
+        {/* ── Header card ─────────────────────────────────────────────────── */}
         <div className="card" style={{ padding: 20 }}>
-          {!share ? (
-            <p style={{ color: 'var(--text-3)', margin: 0 }}>Loading…</p>
-          ) : !share.enabled ? (
-            <div>
-              <p style={{ color: 'var(--text-3)', marginTop: 0 }}>
-                This project isn't shared. Anyone with the link can view its status - no login required.
-              </p>
-              <button className="btn primary sm" onClick={handleCreateOrRegenerateShare} disabled={shareBusy}>
-                {shareBusy ? 'Creating…' : 'Create share link'}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-1)' }}>
+                  {project.name}
+                </h2>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                  background: 'var(--bg-3)', color: 'var(--text-4)',
+                }}>
+                  #{project.id}
+                </span>
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                  background: project.stage === 'queued' ? 'rgba(34,197,94,0.15)' : 'rgba(239,160,0,0.15)',
+                  color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
+                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
+                {project.order_type === 'customer' && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                    background: 'var(--bg-3)', color: 'var(--text-3)',
+                    textTransform: 'uppercase', letterSpacing: '0.04em',
+                  }}>Customer</span>
+                )}
+                {project.on_hold && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                    background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
+                    textTransform: 'uppercase', letterSpacing: '0.04em',
+                  }}>On hold</span>
+                )}
+                <span style={{
+                  fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                  background: project.payment_status === 'paid' ? 'rgba(34,197,94,0.15)'
+                    : project.payment_status === 'partial' ? 'rgba(239,160,0,0.15)' : 'var(--bg-3)',
+                  color: project.payment_status === 'paid' ? 'var(--ok)'
+                    : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
+                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>
+                  {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
+                </span>
+              </div>
+              {project.customer_id != null && project.customer_name ? (
+                <div style={{ fontSize: 13, marginTop: 3 }}>
+                  <Link to={`/customers/${project.customer_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                    {project.customer_name}
+                  </Link>
+                </div>
+              ) : project.customer && (
+                <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 3 }}>
+                  {project.customer}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-4)', marginTop: 6 }}>
+                {dueStr && (
+                  <span style={{ color: isOverdue ? 'var(--err)' : 'var(--text-3)' }}>
+                    Due {dueStr}
+                  </span>
+                )}
+                {project.notes && <span>{project.notes}</span>}
+                {project.price != null && (
+                  <span>
+                    Price: {fmtMoney(project.price)}
+                    {project.payment_status !== 'paid' && project.price > (project.amount_paid ?? 0) && (
+                      <span style={{ color: 'var(--warn)' }}>
+                        {' '}· {fmtMoney(project.price - (project.amount_paid ?? 0))} outstanding
+                      </span>
+                    )}
+                  </span>
+                )}
+                {project.filament_cost_total != null && (
+                  <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
+                )}
+                {project.customer_id != null && (
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                         title={project.price == null ? 'Set a price first' : 'Show the price, what has been paid and the balance in the customer portal'}>
+                    <input type="checkbox" checked={project.price_visible} disabled={project.price == null}
+                           onChange={e => handlePriceVisible(e.target.checked)} />
+                    Show price to customer
+                  </label>
+                )}
+                {project.quote_accepted_at && (
+                  <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
+                )}
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  Account
+                  <select className="input" style={{ fontSize: 12, padding: '1px 4px' }}
+                          value={project.customer_id ?? ''}
+                          onFocus={loadCustomers}
+                          onChange={e => handleCustomerChange(e.target.value)}>
+                    <option value="">None</option>
+                    {project.customer_id != null && !customers?.some(c => c.id === project.customer_id) && (
+                      <option value={project.customer_id}>{project.customer_name ?? `Customer #${project.customer_id}`}</option>
+                    )}
+                    {customers?.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
+                  </select>
+                </label>
+                {project.source_layout_id != null && (
+                  <span title={`source_app: ${project.source_app ?? '?'}`}>
+                    {Icons.link}
+                    {' '}Ordinus layout #{project.source_layout_id}
+                    {project.source_user ? ` · ${project.source_user}` : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {NEXT_STAGE[project.stage] && (
+                <button className="btn sm" onClick={handlePromote}>
+                  Promote to {STAGE_LABEL[NEXT_STAGE[project.stage]!]}
+                </button>
+              )}
+              <button className="btn sm" onClick={toggleShare}>
+                Share
+              </button>
+              <button className="btn sm" onClick={() => navigate(`/projects/${project.id}/edit`)}>
+                Edit
+              </button>
+              <button
+                className="btn primary sm"
+                onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
+                disabled={generating || project.items.length === 0 || project.stage === 'draft'}
+                title={project.stage === 'draft' ? 'Promote to planning before creating jobs' : undefined}
+              >
+                {generating ? 'Generating…' : 'Generate…'}
               </button>
             </div>
-          ) : (
-            <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <input
-                  className="input"
-                  readOnly
-                  value={`${window.location.origin}/share/${share.token}`}
-                  style={{ flex: 1 }}
-                  onFocus={e => e.target.select()}
-                />
+          </div>
+
+          {stageError && (
+            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--err)' }}>{stageError}</div>
+          )}
+
+          {/* Job progress bar */}
+          {project.jobs_total > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4,
+                            fontSize: 12, color: 'var(--text-3)' }}>
+                <span>{project.jobs_complete} / {project.jobs_total} jobs complete</span>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end', fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-3)' }}>
+                    Est. total:{' '}
+                    {project.estimate_filament_grams_total != null
+                      ? `${project.estimate_filament_grams_total.toFixed(1)} g`
+                      : '—'}
+                    {' / '}
+                    {project.estimate_seconds_total != null
+                      ? fmtDuration(project.estimate_seconds_total)
+                      : '—'}
+                  </span>
+                  <span style={{ color: 'var(--text-3)' }}>
+                    Est. remaining:{' '}
+                    {project.estimate_filament_grams_remaining != null
+                      ? `${project.estimate_filament_grams_remaining.toFixed(1)} g`
+                      : '—'}
+                    {' / '}
+                    {project.estimate_seconds_remaining != null
+                      ? fmtDuration(project.estimate_seconds_remaining)
+                      : '—'}
+                  </span>
+                  <span style={{ color: 'var(--text-3)' }}>
+                    Actual:{' '}
+                    {project.actual_filament_grams != null
+                      ? `${project.actual_filament_grams.toFixed(1)} g`
+                      : '—'}
+                    {' / '}
+                    {project.actual_seconds != null
+                      ? fmtDuration(project.actual_seconds)
+                      : '—'}
+                  </span>
+                </span>
+              </div>
+              <Progress
+                value={project.jobs_total > 0 ? (project.jobs_complete / project.jobs_total) * 100 : 0}
+                tone={project.jobs_complete === project.jobs_total ? 'ok' : undefined}
+              />
+            </div>
+          )}
+
+          {showPrinterPicker && !generating && (
+            <div style={{
+              marginTop: 14, padding: '14px 16px',
+              border: '1px solid var(--border)', borderRadius: 8,
+              background: 'var(--bg-2)',
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
+                            textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Eligible printers
+              </div>
+              <div className="tiny muted" style={{ marginBottom: 8 }}>
+                For the Default Group when it has no printers of its own; groups with printers set below use those.
+              </div>
+              <PrinterTargetPicker printers={targetPrinters} selected={eligibleKeys} onToggle={k => setEligibleKeys(ks => toggleKey(ks, k))} />
+              <PackBedNote keys={eligibleKeys} printers={targetPrinters} />
+              <div style={{ marginTop: 12 }}>
+                <ProcessPresetPicker printerIds={coveredPrinterIds(eligibleKeys, targetPrinters)} value={processPreset} onChange={setProcessPreset} />
+              </div>
+              <div className="col gap-2" style={{ marginTop: 12 }}>
+                <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={allowCached} onChange={e => setAllowCached(e.target.checked)} />
+                  Use cached slices when available
+                </label>
+                <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={saveSlice} onChange={e => setSaveSlice(e.target.checked)} />
+                  Save sliced gcode to library
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
                 <button
-                  className="btn sm"
-                  onClick={() => navigator.clipboard.writeText(`${window.location.origin}/share/${share.token}`)}
+                  className={eligibleKeys.length === 0 ? 'btn sm' : 'btn primary sm'}
+                  onClick={handleGenerate}
+                  title={eligibleKeys.length === 0
+                    ? 'No printers selected — jobs will be created but not dispatched'
+                    : undefined}
                 >
-                  Copy
+                  {eligibleKeys.length === 0 ? 'Generate without dispatch' : 'Generate'}
                 </button>
               </div>
-              {share.created_at && (
-                <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 12 }}>
-                  Shared since {new Date(share.created_at).toLocaleString(undefined, {
-                    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
-                  })}
-                </div>
-              )}
-              {confirmAction === null ? (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn sm" onClick={() => setConfirmAction('regenerate')} disabled={shareBusy}>
-                    Regenerate
-                  </button>
-                  <button className="btn sm" onClick={() => setConfirmAction('revoke')} disabled={shareBusy}>
-                    Revoke
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, color: 'var(--warn)' }}>
-                    {confirmAction === 'regenerate'
-                      ? 'This invalidates the current link. Continue?'
-                      : 'This disables the current link. Continue?'}
+            </div>
+          )}
+
+          {generateResult && (
+            <div style={{
+              marginTop: 12, border: '1px solid var(--ok)', borderRadius: 8,
+              padding: '10px 14px', background: 'oklch(55% 0.15 142 / 0.06)',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ color: 'var(--ok)' }}>{Icons.check}</span>
+              <span style={{ fontSize: 13, flex: 1 }}>
+                {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
+                {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
+                  <span key={f.id} className="tiny muted" data-testid="generate-cache-info" style={{ display: 'block' }}>
+                    {f.original_filename}:{f.pack_reused ? ' reused previous pack' : ''}
+                    {f.pack_reused && f.cached_plates > 0 ? ',' : ''}
+                    {f.cached_plates > 0 ? ` ${f.cached_plates} plate${f.cached_plates === 1 ? ' has' : 's have'} cached versions` : ''}
                   </span>
-                  <button
-                    className="btn primary sm"
-                    disabled={shareBusy}
-                    onClick={confirmAction === 'regenerate' ? handleCreateOrRegenerateShare : handleRevokeShare}
-                  >
-                    Confirm
-                  </button>
-                  <button className="btn sm" onClick={() => setConfirmAction(null)} disabled={shareBusy}>
-                    Cancel
-                  </button>
-                </div>
-              )}
+                ))}
+              </span>
+              <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
+            </div>
+          )}
+          {generateError && (
+            <div style={{
+              marginTop: 12, display: 'flex', alignItems: 'center', gap: 8,
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+              borderRadius: 6, padding: '10px 14px',
+            }}>
+              <span style={{ color: 'var(--err)' }}>{Icons.alert}</span>
+              <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
             </div>
           )}
         </div>
-      )}
 
-      {/* ── Links ───────────────────────────────────────────────────────── */}
-      {project.links && project.links.length > 0 && (
-        <div className="card" style={{ padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
-            Links
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {project.links.map(link => (
-              <div key={link.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: 'var(--text-4)', fontSize: 13 }}>{Icons.link}</span>
-                <a
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}
-                  onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
-                  onMouseOut={e => (e.currentTarget.style.textDecoration = 'none')}
-                >
-                  {link.label || link.url}
-                </a>
-                {link.label && (
-                  <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{link.url}</span>
+        {showShare && (
+          <div className="card" style={{ padding: 20 }}>
+            {!share ? (
+              <p style={{ color: 'var(--text-3)', margin: 0 }}>Loading…</p>
+            ) : !share.enabled ? (
+              <div>
+                <p style={{ color: 'var(--text-3)', marginTop: 0 }}>
+                  This project isn't shared. Anyone with the link can view its status - no login required.
+                </p>
+                <button className="btn primary sm" onClick={handleCreateOrRegenerateShare} disabled={shareBusy}>
+                  {shareBusy ? 'Creating…' : 'Create share link'}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  <input
+                    className="input"
+                    readOnly
+                    value={`${window.location.origin}/share/${share.token}`}
+                    style={{ flex: 1 }}
+                    onFocus={e => e.target.select()}
+                  />
+                  <button
+                    className="btn sm"
+                    onClick={() => navigator.clipboard.writeText(`${window.location.origin}/share/${share.token}`)}
+                  >
+                    Copy
+                  </button>
+                </div>
+                {share.created_at && (
+                  <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 12 }}>
+                    Shared since {new Date(share.created_at).toLocaleString(undefined, {
+                      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+                    })}
+                  </div>
+                )}
+                {confirmAction === null ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn sm" onClick={() => setConfirmAction('regenerate')} disabled={shareBusy}>
+                      Regenerate
+                    </button>
+                    <button className="btn sm" onClick={() => setConfirmAction('revoke')} disabled={shareBusy}>
+                      Revoke
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 13, color: 'var(--warn)' }}>
+                      {confirmAction === 'regenerate'
+                        ? 'This invalidates the current link. Continue?'
+                        : 'This disables the current link. Continue?'}
+                    </span>
+                    <button
+                      className="btn primary sm"
+                      disabled={shareBusy}
+                      onClick={confirmAction === 'regenerate' ? handleCreateOrRegenerateShare : handleRevokeShare}
+                    >
+                      Confirm
+                    </button>
+                    <button className="btn sm" onClick={() => setConfirmAction(null)} disabled={shareBusy}>
+                      Cancel
+                    </button>
+                  </div>
                 )}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Parts ───────────────────────────────────────────────────────── */}
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
-          Parts ({project.items.length})
-        </div>
-        {project.items.length === 0 ? (
-          <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No parts — edit the project, or drop a .3mf / .stl file on this page, to add parts.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 50px 160px 110px',
-              gap: 8, padding: '0 4px 6px',
-              fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
-              textTransform: 'uppercase', letterSpacing: '0.05em',
-            }}>
-              <span>File</span><span>Qty</span><span>Filament</span><span>Progress</span>
+        {/* ── Links ───────────────────────────────────────────────────────── */}
+        {project.links && project.links.length > 0 && (
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+              Links
             </div>
-            {project.items.map(item => {
-              const filamentLabel = describeAsk(item);
-              const done = item.quantity_completed;
-              const failed = item.quantity_failed;
-              return (
-                <div key={item.id} style={{
-                  display: 'grid', gridTemplateColumns: '1fr 50px 160px 110px',
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {project.links.map(link => (
+                <div key={link.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--text-4)', fontSize: 13 }}>{Icons.link}</span>
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none' }}
+                    onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
+                    onMouseOut={e => (e.currentTarget.style.textDecoration = 'none')}
+                  >
+                    {link.label || link.url}
+                  </a>
+                  {link.label && (
+                    <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{link.url}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Parts ───────────────────────────────────────────────────────── */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
+            Parts ({project.items.length})
+          </div>
+          {project.items.length === 0 ? (
+            <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
+              No parts — edit the project, or drop a .3mf / .stl file on this page, to add parts.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 50px 160px 110px',
+                gap: 8, padding: '0 4px 6px',
+                fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+              }}>
+                <span>File</span><span>Qty</span><span>Filament</span><span>Progress</span>
+              </div>
+              {project.items.map(item => {
+                const filamentLabel = describeAsk(item);
+                const done = item.quantity_completed;
+                const failed = item.quantity_failed;
+                return (
+                  <div key={item.id} style={{
+                    display: 'grid', gridTemplateColumns: '1fr 50px 160px 110px',
+                    gap: 8, alignItems: 'center', padding: '7px 4px',
+                    borderTop: '1px solid var(--border)',
+                  }}>
+                    <span style={{
+                      fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap', color: 'var(--text-1)',
+                    }} title={item.file_name}>
+                      {item.file_name}
+                    </span>
+                    <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{item.quantity}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{filamentLabel}</span>
+                    <span style={{
+                      fontSize: 11,
+                      color: failed > 0 ? 'var(--err)' : done > 0 ? 'var(--ok)' : 'var(--text-4)',
+                    }}>
+                      {done > 0 || failed > 0
+                        ? `${done}/${item.quantity}${failed > 0 ? ` · ${failed} failed` : ''}`
+                        : '—'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Print groups (BIZ-360) ─────────────────────────────────────── */}
+        <PrintGroupsCard projectId={project.id} items={project.items} onChanged={reload} />
+
+        {/* ── Failures (BIZ-364) ─────────────────────────────────────────── */}
+        <FailureLogCard projectId={project.id} items={project.items} onChanged={reload} />
+
+        {/* ── Payments ───────────────────────────────────────────────────── */}
+        <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />
+
+        {/* ── Expenses (filament + machine + labour + parts) ─────────────── */}
+        {project.costs && <CostsCard projectId={project.id} costs={project.costs} onChanged={reload} />}
+
+        {/* ── Non-printed parts ──────────────────────────────────────────── */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
+            Non-printed parts ({project.parts.length})
+          </div>
+          {project.parts.length === 0 ? (
+            <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
+              No non-printed parts — edit the project to add hardware (magnets, screws, etc).
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 60px 90px',
+                gap: 8, padding: '0 4px 6px',
+                fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+              }}>
+                <span>Part</span><span>Qty</span><span>Allocated</span>
+              </div>
+              {project.parts.map(part => (
+                <div key={part.id} style={{
+                  display: 'grid', gridTemplateColumns: '1fr 60px 90px',
                   gap: 8, alignItems: 'center', padding: '7px 4px',
                   borderTop: '1px solid var(--border)',
                 }}>
                   <span style={{
                     fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap', color: 'var(--text-1)',
-                  }} title={item.file_name}>
-                    {item.file_name}
+                  }} title={part.name}>
+                    {part.name}
                   </span>
-                  <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{item.quantity}</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{filamentLabel}</span>
-                  <span style={{
-                    fontSize: 11,
-                    color: failed > 0 ? 'var(--err)' : done > 0 ? 'var(--ok)' : 'var(--text-4)',
-                  }}>
-                    {done > 0 || failed > 0
-                      ? `${done}/${item.quantity}${failed > 0 ? ` · ${failed} failed` : ''}`
-                      : '—'}
-                  </span>
+                  <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{part.quantity}</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={part.allocated}
+                      onChange={e => toggleAllocated(part.id, e.target.checked)}
+                    />
+                    <span style={{ fontSize: 12, color: part.allocated ? 'var(--ok)' : 'var(--text-4)' }}>
+                      {part.allocated ? 'Yes' : 'No'}
+                    </span>
+                  </label>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ── Print groups (BIZ-360) ─────────────────────────────────────── */}
-      <PrintGroupsCard projectId={project.id} items={project.items} onChanged={reload} />
-
-      {/* ── Failures (BIZ-364) ─────────────────────────────────────────── */}
-      <FailureLogCard projectId={project.id} items={project.items} onChanged={reload} />
-
-      {/* ── Payments ───────────────────────────────────────────────────── */}
-      <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />
-
-      {/* ── Expenses (filament + machine + labour + parts) ─────────────── */}
-      {project.costs && <CostsCard projectId={project.id} costs={project.costs} onChanged={reload} />}
-
-      {/* ── Non-printed parts ──────────────────────────────────────────── */}
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
-          Non-printed parts ({project.parts.length})
-        </div>
-        {project.parts.length === 0 ? (
-          <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No non-printed parts — edit the project to add hardware (magnets, screws, etc).
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 60px 90px',
-              gap: 8, padding: '0 4px 6px',
-              fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
-              textTransform: 'uppercase', letterSpacing: '0.05em',
-            }}>
-              <span>Part</span><span>Qty</span><span>Allocated</span>
+              ))}
             </div>
-            {project.parts.map(part => (
-              <div key={part.id} style={{
-                display: 'grid', gridTemplateColumns: '1fr 60px 90px',
-                gap: 8, alignItems: 'center', padding: '7px 4px',
-                borderTop: '1px solid var(--border)',
+          )}
+        </div>
+
+        {/* ── Jobs ────────────────────────────────────────────────────────── */}
+        <div className="card" style={{ padding: 20 }}>
+          <div className="row between" style={{ alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+              Jobs ({jobs.length})
+            </div>
+            <div className="row gap-2">
+              <button
+                className="btn sm"
+                onClick={() => setLinking(true)}
+                disabled={project.stage === 'draft'}
+                title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+              >
+                Link existing job
+              </button>
+              <button
+                className="btn sm"
+                onClick={() => navigate(`/queue/new?project=${project.id}`)}
+                disabled={project.stage === 'draft'}
+                title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+              >
+                {Icons.plus} Add job
+              </button>
+            </div>
+          </div>
+          {jobs.length === 0 ? (
+            <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
+              No jobs yet — click Generate to create print jobs, or add or link one by hand.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
+                gap: 8, padding: '0 4px 6px',
+                fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
               }}>
-                <span style={{
-                  fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap', color: 'var(--text-1)',
-                }} title={part.name}>
-                  {part.name}
-                </span>
-                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{part.quantity}</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={part.allocated}
-                    onChange={e => toggleAllocated(part.id, e.target.checked)}
-                  />
-                  <span style={{ fontSize: 12, color: part.allocated ? 'var(--ok)' : 'var(--text-4)' }}>
-                    {part.allocated ? 'Yes' : 'No'}
-                  </span>
-                </label>
+                <span>#</span><span>File</span><span>Status</span><span>Parts</span><span />
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Jobs ────────────────────────────────────────────────────────── */}
-      <div className="card" style={{ padding: 20 }}>
-        <div className="row between" style={{ alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-            Jobs ({jobs.length})
-          </div>
-          <div className="row gap-2">
-            <button
-              className="btn sm"
-              onClick={() => setLinking(true)}
-              disabled={project.stage === 'draft'}
-              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
-            >
-              Link existing job
-            </button>
-            <button
-              className="btn sm"
-              onClick={() => navigate(`/queue/new?project=${project.id}`)}
-              disabled={project.stage === 'draft'}
-              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
-            >
-              {Icons.plus} Add job
-            </button>
-          </div>
-        </div>
-        {jobs.length === 0 ? (
-          <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No jobs yet — click Generate to create print jobs, or add or link one by hand.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <div style={{
-              display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
-              gap: 8, padding: '0 4px 6px',
-              fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
-              textTransform: 'uppercase', letterSpacing: '0.05em',
-            }}>
-              <span>#</span><span>File</span><span>Status</span><span>Parts</span><span />
+              {jobs.map(job => {
+                const st = STATUS_META[job.status] ?? { label: job.status, color: 'var(--text-3)' };
+                // The queue engine starts a project's jobs only once the project itself is Queued.
+                const held = project.stage !== 'queued' && (job.status === 'queued' || job.status === 'blocked');
+                return (
+                  <div key={job.id} style={{
+                    display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
+                    gap: 8, alignItems: 'center', padding: '8px 4px',
+                    borderTop: '1px solid var(--border)',
+                  }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-4)' }}>#{job.id}</span>
+                    <span style={{
+                      fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      color: 'var(--text-1)',
+                    }} title={job.file_name ?? undefined}>
+                      {job.file_name ?? '—'}
+                      {' '}<span style={{ fontSize: 11, color: 'var(--text-4)' }}>p{job.plate_number}</span>
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}
+                          title={held ? `Held until ${project.name} is moved to Queued` : undefined}>
+                      {st.label}{held ? ' · held' : ''}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                      {job.total_parts > 0 ? `${job.total_parts}` : '—'}
+                    </span>
+                    <button
+                      className="btn ghost sm"
+                      style={{ fontSize: 11 }}
+                      onClick={() => navigate(`/jobs/${job.id}`)}
+                    >
+                      Details
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-            {jobs.map(job => {
-              const st = STATUS_META[job.status] ?? { label: job.status, color: 'var(--text-3)' };
-              // The queue engine starts a project's jobs only once the project itself is Queued.
-              const held = project.stage !== 'queued' && (job.status === 'queued' || job.status === 'blocked');
-              return (
-                <div key={job.id} style={{
-                  display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
-                  gap: 8, alignItems: 'center', padding: '8px 4px',
-                  borderTop: '1px solid var(--border)',
-                }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-4)' }}>#{job.id}</span>
-                  <span style={{
-                    fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    color: 'var(--text-1)',
-                  }} title={job.file_name ?? undefined}>
-                    {job.file_name ?? '—'}
-                    {' '}<span style={{ fontSize: 11, color: 'var(--text-4)' }}>p{job.plate_number}</span>
-                  </span>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}
-                        title={held ? `Held until ${project.name} is moved to Queued` : undefined}>
-                    {st.label}{held ? ' · held' : ''}
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                    {job.total_parts > 0 ? `${job.total_parts}` : '—'}
-                  </span>
-                  <button
-                    className="btn ghost sm"
-                    style={{ fontSize: 11 }}
-                    onClick={() => navigate(`/jobs/${job.id}`)}
-                  >
-                    Details
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          )}
+        </div>
+
+        {linking && (
+          <LinkJobsModal
+            projectId={project.id}
+            projectName={project.name}
+            projectStage={project.stage}
+            onClose={() => setLinking(false)}
+            onLinked={reload}
+          />
         )}
       </div>
-
-      {linking && (
-        <LinkJobsModal
-          projectId={project.id}
-          projectName={project.name}
-          projectStage={project.stage}
-          onClose={() => setLinking(false)}
-          onLinked={reload}
-        />
-      )}
-    </div>
     </FileDropZone>
   );
 }

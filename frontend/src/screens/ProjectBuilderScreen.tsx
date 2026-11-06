@@ -1096,74 +1096,74 @@ export function ProjectBuilderScreen() {
     || (open ?? 1) > 0 || items.length === 0;
   return (
     <FileDropZone onUploaded={addFile} label="Drop to upload and add to the project">
-    <div className="col gap-3" style={{ height: '100%' }}>
-      <div className="row between" style={{ alignItems: 'baseline' }}>
-        <div style={{ fontSize: 18, fontWeight: 600 }}>{name || 'New project'}</div>
-        <div className="row gap-2">
-          {isDraft && <span className="pill idle">Draft</span>}
-          <button className="btn ghost sm" onClick={handleSave} disabled={!canSave || !isDirty}>
-            {saving && !generating ? 'Saving…' : 'Save draft'}
-          </button>
-        </div>
-      </div>
-      <BuilderTabs tab={tab} onTab={setTab} counts={{ items: items.length, groups: groups.length, toFix: open }} />
-      {saveError && <div role="alert" style={{ color: 'var(--err)', fontSize: 13 }}>Save failed: {saveError}</div>}
-
-      <div className="card" style={{ padding: 20, overflow: 'auto', flex: 1 }}>
-        {tab === 'details' && detailsTab}
-        {tab === 'items' && itemsTab}
-        {tab === 'groups' && groupsTab}
-        {tab === 'review' && reviewTab}
-      </div>
-
-      {/* Back / Next */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-        <div className="row gap-2">
-          <button className="btn sm" onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')} disabled={saving || generating}>
-            Cancel
-          </button>
-          {at > 0 && <button className="btn ghost sm" onClick={() => setTab(ORDER[at - 1])}>← Back</button>}
-        </div>
-        <span className="tiny muted">{tab === 'review' && open ? `Fix ${open} issue${open === 1 ? '' : 's'} to queue` : ''}</span>
-        {tab !== 'review'
-          ? <button className="btn primary sm" onClick={() => setTab(ORDER[at + 1])}>Next →</button>
-          : (
-            <button className="btn primary sm" onClick={handleQueue} disabled={queueBlocked || !canSave}
-                    title={isDraft ? 'Promote to planning before creating jobs' : undefined}>
-              {generating ? 'Queueing…' : 'Queue project'}
+      <div className="col gap-3" style={{ height: '100%' }}>
+        <div className="row between" style={{ alignItems: 'baseline' }}>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>{name || 'New project'}</div>
+          <div className="row gap-2">
+            {isDraft && <span className="pill idle">Draft</span>}
+            <button className="btn ghost sm" onClick={handleSave} disabled={!canSave || !isDirty}>
+              {saving && !generating ? 'Saving…' : 'Save draft'}
             </button>
-          )}
+          </div>
+        </div>
+        <BuilderTabs tab={tab} onTab={setTab} counts={{ items: items.length, groups: groups.length, toFix: open }} />
+        {saveError && <div role="alert" style={{ color: 'var(--err)', fontSize: 13 }}>Save failed: {saveError}</div>}
+
+        <div className="card" style={{ padding: 20, overflow: 'auto', flex: 1 }}>
+          {tab === 'details' && detailsTab}
+          {tab === 'items' && itemsTab}
+          {tab === 'groups' && groupsTab}
+          {tab === 'review' && reviewTab}
+        </div>
+
+        {/* Back / Next */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="row gap-2">
+            <button className="btn sm" onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')} disabled={saving || generating}>
+              Cancel
+            </button>
+            {at > 0 && <button className="btn ghost sm" onClick={() => setTab(ORDER[at - 1])}>← Back</button>}
+          </div>
+          <span className="tiny muted">{tab === 'review' && open ? `Fix ${open} issue${open === 1 ? '' : 's'} to queue` : ''}</span>
+          {tab !== 'review'
+            ? <button className="btn primary sm" onClick={() => setTab(ORDER[at + 1])}>Next →</button>
+            : (
+              <button className="btn primary sm" onClick={handleQueue} disabled={queueBlocked || !canSave}
+                      title={isDraft ? 'Promote to planning before creating jobs' : undefined}>
+                {generating ? 'Queueing…' : 'Queue project'}
+              </button>
+            )}
+        </div>
+
+        {/* Saved toast */}
+        {saveOk && (
+          <div style={{
+            position: 'fixed', bottom: 24, right: 24, zIndex: 1000,
+            background: 'var(--ok)', color: '#fff',
+            padding: '10px 18px', borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: 14, fontWeight: 500,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+            pointerEvents: 'none',
+          }}>
+            {Icons.check} Saved
+          </div>
+        )}
+
+        {/* Undo-removal toast */}
+        {lastRemoved && (
+          <div style={{
+            position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
+            background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-1)',
+            padding: '10px 12px 10px 16px', borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 10,
+            fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+          }}>
+            <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
+            <button className="btn sm" onClick={undoRemove}>Undo</button>
+          </div>
+        )}
       </div>
-
-      {/* Saved toast */}
-      {saveOk && (
-        <div style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 1000,
-          background: 'var(--ok)', color: '#fff',
-          padding: '10px 18px', borderRadius: 8,
-          display: 'flex', alignItems: 'center', gap: 8,
-          fontSize: 14, fontWeight: 500,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-          pointerEvents: 'none',
-        }}>
-          {Icons.check} Saved
-        </div>
-      )}
-
-      {/* Undo-removal toast */}
-      {lastRemoved && (
-        <div style={{
-          position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
-          background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-1)',
-          padding: '10px 12px 10px 16px', borderRadius: 8,
-          display: 'flex', alignItems: 'center', gap: 10,
-          fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-        }}>
-          <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
-          <button className="btn sm" onClick={undoRemove}>Undo</button>
-        </div>
-      )}
-    </div>
     </FileDropZone>
   );
 }
