@@ -116,6 +116,27 @@ describe('AuthGate', () => {
     await waitFor(() => expect(screen.getByText('Invalid or expired recovery code')).toBeTruthy());
   });
 
+  it('admin recovery: shows the server reason for a rejected password, not "unreachable"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/auth/recover/confirm')
+        return new Response(JSON.stringify({ detail: 'Admin password must be at least 8 characters' }), { status: 422 });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    }));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /forgot admin password/i }));
+    await user.type(screen.getByPlaceholderText('Recovery code'), 'ABCDE-FGHJK');
+    await user.type(screen.getByPlaceholderText('New admin password'), 'short');
+    await user.click(screen.getByRole('button', { name: /set admin password/i }));
+
+    await waitFor(() => expect(screen.getByText('Admin password must be at least 8 characters')).toBeTruthy());
+    expect(screen.queryByText('Server unreachable')).toBeNull();
+  });
+
   it('shows the manual-entry form when the session check fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 })));

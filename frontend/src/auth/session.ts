@@ -55,8 +55,11 @@ export async function confirmRecovery(code: string, password: string): Promise<t
       body: JSON.stringify({ code, password }),
     });
     if (r.ok) return true;
+    // 400 bad code, 422 password too short, 429 throttled: show the server's reason.
+    const detail = await r.json().then((d) => d?.detail, () => null);
+    if (typeof detail === 'string' && detail) return detail;
     if (r.status === 400) return 'Invalid or expired recovery code';
-    return 'Server unreachable';
+    return r.status >= 500 ? 'Server unreachable' : `Request failed (${r.status})`;
   } catch {
     return 'Server unreachable';
   }
