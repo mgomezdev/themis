@@ -69,6 +69,77 @@ describe('DiscoverPrinters', () => {
     expect(onPick).toHaveBeenCalledWith(BAMBU);
   });
 
+  it('overrides announced model and serial, clears a stale model match, and preserves connection fields', async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    const announced = { ...BAMBU, plugin_id: 'bambu', model_uuid: 'uuid-p1s' };
+    stubFetch({ 'POST /api/v1/printers/discover': { ...RESULT, found: [announced] } });
+    render(<DiscoverPrinters pluginId="bambu" onPick={onPick} />);
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit details for 192.168.7.20' }));
+    expect((screen.getByLabelText('Model') as HTMLInputElement).value).toBe('P1S');
+    expect((screen.getByLabelText('Serial number') as HTMLInputElement).value).toBe(BAMBU.serial);
+    await user.clear(screen.getByLabelText('Model'));
+    await user.type(screen.getByLabelText('Model'), ' X1 Carbon ');
+    await user.clear(screen.getByLabelText('Serial number'));
+    await user.type(screen.getByLabelText('Serial number'), ' TEST-OVERRIDE ');
+    expect(screen.getByRole('button', { name: 'Use 192.168.7.20' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Apply details' }));
+    expect(screen.getByText('Serial: TEST-OVERRIDE')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenCalledWith({ ...announced, model: 'X1 Carbon', model_uuid: null, serial: 'TEST-OVERRIDE',
+      connection_config: { ...announced.connection_config, serial_number: 'TEST-OVERRIDE' } });
+    expect(window.localStorage.getItem('themis.discovery.ranges')).toBeNull();
+  });
+
+  it('supplements missing serial information without losing the discovered model match', async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    const announced = { ...BAMBU, model_uuid: 'uuid-p1s', serial: null, connection_config: { ip_address: BAMBU.ip, port: 8883 } };
+    stubFetch({ 'POST /api/v1/printers/discover': { ...RESULT, found: [announced] } });
+    render(<DiscoverPrinters pluginId="bambu" onPick={onPick} />);
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit details for 192.168.7.20' }));
+    await user.type(screen.getByLabelText('Serial number'), 'TEST-SUPPLEMENT');
+    await user.click(screen.getByRole('button', { name: 'Apply details' }));
+    await user.click(screen.getByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenCalledWith({ ...announced, serial: 'TEST-SUPPLEMENT',
+      connection_config: { ...announced.connection_config, serial_number: 'TEST-SUPPLEMENT' } });
+  });
+
+  it('cancels draft edits, resets overrides, and clears them on a new scan', async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    stubFetch({ 'POST /api/v1/printers/discover': RESULT });
+    render(<DiscoverPrinters pluginId="bambu" onPick={onPick} />);
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    const edit = async () => user.click(await screen.findByRole('button', { name: 'Edit details for 192.168.7.20' }));
+    await edit();
+    await user.clear(screen.getByLabelText('Model'));
+    await user.type(screen.getByLabelText('Model'), 'Draft');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenLastCalledWith(BAMBU);
+    await edit();
+    await user.clear(screen.getByLabelText('Model'));
+    await user.type(screen.getByLabelText('Model'), 'Override');
+    await user.click(screen.getByRole('button', { name: 'Apply details' }));
+    await edit();
+    expect((screen.getByLabelText('Model') as HTMLInputElement).value).toBe('Override');
+    await user.click(screen.getByRole('button', { name: 'Reset to discovered' }));
+    await user.click(screen.getByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenLastCalledWith(BAMBU);
+    await edit();
+    await user.clear(screen.getByLabelText('Serial number'));
+    await user.click(screen.getByRole('button', { name: 'Apply details' }));
+    await user.click(screen.getByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ serial: null,
+      connection_config: expect.objectContaining({ serial_number: '' }) }));
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    expect(onPick).toHaveBeenLastCalledWith(BAMBU);
+  });
+
   it('warns when the scan stopped early and shows a server rejection', async () => {
     const user = userEvent.setup();
     stubFetch({ 'POST /api/v1/printers/discover': { ...RESULT, truncated: true } });

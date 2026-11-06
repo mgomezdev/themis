@@ -201,6 +201,7 @@ async def test_plugin_and_capability_responses_carry_their_keys(client, monkeypa
     assert_carries("plugin_summary", spoolman)
     assert_carries("plugin_provides", spoolman["provides"][0])
     assert_carries("plugin_summary", (await client.get("/api/v1/plugins/spoolman")).json())
+    assert_carries("plugin_discovery", (await client.get("/api/v1/plugins/snapmaker")).json())
     for body in ({}, {"settings": {"url": "http://laminus.test:5000"}}):      # unconfigured / unavailable (nothing listens there)
         assert_carries("plugin_connection_result", (await client.post("/api/v1/plugins/laminus/test", json=body)).json())
     caps = (await client.get("/api/v1/capabilities")).json()["capabilities"]

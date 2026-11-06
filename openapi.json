@@ -1409,7 +1409,7 @@
           "printers"
         ],
         "summary": "Scan the network for printers",
-        "description": "Sweep `ranges` (e.g. `192.168.7.0/24` \u2014 printers on another VLAN need their range given explicitly) and list\nwhat answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers\nalready added (same IP) are flagged. Secrets (access codes, API keys) are never discovered.",
+        "description": "Sweep `ranges` (e.g. `192.168.7.0/24` \u2014 printers on another VLAN need their range given explicitly) and list\nwhat answers to a vendor's documented discovery signature. Trailing x/* wildcards are accepted. Private ranges\nonly, at most 65,536 addresses total. Optional plugin_id limits probes to one enabled printer plug-in. Printers\nalready added (same IP) are flagged. Secrets (access codes, API keys) are never discovered.",
         "operationId": "discover_printers_api_v1_printers_discover_post",
         "requestBody": {
           "content": {
@@ -12359,6 +12359,17 @@
             "type": "array",
             "maxItems": 8,
             "title": "Ranges"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
           }
         },
         "type": "object",

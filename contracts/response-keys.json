@@ -441,6 +441,7 @@
     "ok",
     "state"
   ],
+  "plugin_discovery": ["printer_discovery"],
   "plugin_provides": [
     "capability",
     "version",

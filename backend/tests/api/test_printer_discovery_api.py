@@ -49,7 +49,7 @@ async def test_no_ranges_means_the_hosts_own_network(client, lan):
         assert (await client.post("/api/v1/printers/discover", json={})).status_code == 422
 
 
-@pytest.mark.parametrize("ranges", [["8.8.8.0/24"], ["192.168.0.0/16"], ["banana"], ["192.168.7.0/24", "1.2.3.4"],
+@pytest.mark.parametrize("ranges", [["8.8.8.0/24"], ["10.0.0.0/15"], ["banana"], ["192.168.7.0/24", "1.2.3.4"],
                                     [f"10.0.{i}.0/24" for i in range(9)]])
 async def test_bad_ranges_are_rejected_without_scanning(client, lan, ranges):
     resp = await client.post("/api/v1/printers/discover", json={"ranges": ranges})
@@ -116,6 +116,55 @@ async def test_discovered_printers_name_the_plugin_that_serves_them(client, lan)
         "192.168.7.30": ("snapmaker_extended", "snapmaker"),      # the client's printer_type differs from its plugin's id
         "192.168.7.40": ("elegoo_centauri", "elegoo_centauri"),
     }
+
+
+async def test_plugin_scan_only_probes_selected_plugin_and_accepts_wildcards(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    response = await client.post('/api/v1/printers/discover', json={
+        'ranges': ['192.168.7.x'], 'plugin_id': 'snapmaker',
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['scanned'] == 254 and not body['truncated']
+    assert [(p['plugin_id'], p['ip']) for p in body['found']] == [('snapmaker', '192.168.7.30')]
+    assert all(p[0] == 'http' for p in lan.probes)
+
+
+@pytest.mark.parametrize('plugin_id', ['missing', 'laminus'])
+async def test_invalid_plugin_is_rejected_before_probing(client, lan, plugin_id):
+    response = await client.post('/api/v1/printers/discover', json={'ranges': ['192.168.7.x'], 'plugin_id': plugin_id})
+    assert response.status_code == 422
+    assert lan.probes == []
+
+
+async def test_bambu_settings_discovery_finds_p1s_without_probing_other_vendors(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    assert (await client.get('/api/v1/plugins/bambu')).json()['printer_discovery'] is True
+    response = await client.post('/api/v1/printers/discover', json={
+        'ranges': ['192.168.7.x'], 'plugin_id': 'bambu',
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['scanned'] == 254 and not body['truncated']
+    printer, = body['found']
+    assert (printer['plugin_id'], printer['model'], printer['ip']) == ('bambu', 'P1S', '192.168.7.20')
+    assert printer['model_uuid'] is not None
+    assert printer['connection_config'] == {'ip_address': '192.168.7.20', 'serial_number': '01P00A111111111'}
+    assert 'access_code' not in printer['connection_config']
+    assert not any(probe[0] == 'http' for probe in lan.probes)
+
+
+async def test_disabled_plugin_is_rejected_and_settings_advertise_discovery(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    assert (await client.get('/api/v1/plugins/snapmaker')).json()['printer_discovery'] is True
+    assert (await client.get('/api/v1/plugins/laminus')).json()['printer_discovery'] is False
+    await plugin_host.update_config('snapmaker', enabled=False)
+    response = await client.post('/api/v1/printers/discover', json={'ranges': ['192.168.7.x'], 'plugin_id': 'snapmaker'})
+    assert response.status_code == 422
+    assert lan.probes == []
 
 
 async def test_discovered_free_text_model_matches_the_registry_when_unambiguous_else_offers_the_custom_path(client, lan):

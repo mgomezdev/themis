@@ -11,8 +11,9 @@ from dataclasses import dataclass, field
 from .abstract_printer_client import DiscoveredPrinter
 from .discovery_net import Network
 
-MAX_HOSTS = 4096              # a /20
+MAX_HOSTS = 65536             # a /16, including the default 192.168.x.x
 DEFAULT_DEADLINE_S = 45.0
+BROAD_DEADLINE_S = 900.0
 _CONCURRENCY = 128
 
 
@@ -35,6 +36,13 @@ def parse_range(text: str) -> ipaddress.IPv4Network:
     """`192.168.7.0/24`, `192.168.7.20` (one host) or `192.168.7.0/255.255.255.0`. Only RFC 1918, link-local and CGNAT
     space (an explicit allowlist — NOT Python's `is_private`, which also admits loopback, 0.0.0.0/8, TEST-NETs and
     reserved space): this endpoint must not be usable to probe the server itself or arbitrary hosts."""
+    text = text.strip()
+    if "x" in text.lower() or "*" in text:
+        parts = text.lower().replace("*", "x").split(".")
+        first = next((i for i, p in enumerate(parts) if p == "x"), -1)
+        if len(parts) != 4 or first < 0 or any(p != "x" for p in parts[first:]):
+            raise ScanRangeError("Use trailing wildcard octets, e.g. 192.168.x.x or 192.168.7.x")
+        text = ".".join(parts[:first] + ["0"] * (4 - first)) + f"/{first * 8}"
     try:
         net = ipaddress.ip_network(text.strip(), strict=False)
     except ValueError as e:
@@ -43,8 +51,8 @@ def parse_range(text: str) -> ipaddress.IPv4Network:
         raise ScanRangeError("Only IPv4 ranges are supported")
     if not any(net.subnet_of(a) for a in _ALLOWED):
         raise ScanRangeError(f"{net} is not a private LAN network (allowed: 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10)")
-    if net.num_addresses > MAX_HOSTS + 2:
-        raise ScanRangeError(f"{net} has {net.num_addresses} addresses; the limit is a /20 ({MAX_HOSTS})")
+    if net.num_addresses > MAX_HOSTS:
+        raise ScanRangeError(f"{net} has {net.num_addresses} addresses; the limit is a /16 ({MAX_HOSTS})")
     return net  # type: ignore[return-value]
 
 
@@ -66,7 +74,7 @@ def _richer(a: DiscoveredPrinter, b: DiscoveredPrinter) -> DiscoveredPrinter:
 
 
 async def scan(
-    net: Network, ranges: list[str], registry: dict[str, type], *, deadline_s: float = DEFAULT_DEADLINE_S,
+    net: Network, ranges: list[str], registry: dict[str, type], *, deadline_s: float | None = None,
     listen_s: float = 3.0,
 ) -> ScanResult:
     networks = [parse_range(r) for r in ranges]
@@ -76,6 +84,8 @@ async def scan(
     hosts = list(dict.fromkeys(hosts))
     if len(hosts) > MAX_HOSTS:
         raise ScanRangeError(f"{len(hosts)} addresses across all ranges; the limit is {MAX_HOSTS} per scan")
+    if deadline_s is None:
+        deadline_s = BROAD_DEADLINE_S if len(hosts) > 4096 else DEFAULT_DEADLINE_S
 
     classes = [c for c in registry.values() if c.discover_host.__func__ is not _base_discover()]      # type: ignore[attr-defined]
     result = ScanResult(scanned=0)
@@ -113,12 +123,23 @@ async def scan(
             except Exception:
                 continue
 
-    tasks = [asyncio.ensure_future(probe(h)) for h in hosts] + [asyncio.ensure_future(listen())]
-    done, pending = await asyncio.wait(tasks, timeout=deadline_s)
-    for t in pending:
-        t.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    # A /16 must not create 65,000 waiting tasks. Workers share a synchronous iterator;
+    # next() runs without yielding, so each address is claimed exactly once.
+    remaining = iter(hosts)
+
+    async def worker() -> None:
+        for ip in remaining:
+            await probe(ip)
+
+    tasks = [asyncio.create_task(worker()) for _ in range(min(_CONCURRENCY, len(hosts)))]
+    tasks.append(asyncio.create_task(listen()))
+    try:
+        await asyncio.wait(tasks, timeout=deadline_s)
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     result.truncated = result.scanned < len(hosts)
     result.found = sorted(found.values(), key=lambda d: (ipaddress.ip_address(d.ip), d.printer_type))
     return result

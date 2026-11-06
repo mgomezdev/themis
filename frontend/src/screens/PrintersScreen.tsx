@@ -321,11 +321,13 @@ export function PrinterAddForm({
   onCancel,
   onCreated,
   backLabel = 'Printers',
+  discovered,
 }: {
   types: PrinterType[];
   onCancel: () => void;
   onCreated: () => void;
   backLabel?: string;
+  discovered?: DiscoveredPrinter;
 }) {
   const [step, setStep] = useState(1);
   const [modelUnconfirmed, setModelUnconfirmed] = useState(false);   // a discovered printer whose model we could not tell
@@ -379,6 +381,12 @@ export function PrinterAddForm({
     setModelUnconfirmed(!matched);
     setStep(matched ? 2 : 1);
   }
+
+  useEffect(() => {
+    if (discovered) applyDiscovered(discovered);
+    // Apply once when the settings panel opens the wizard. Model edits remain local after that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discovered]);
 
   async function handleFinish() {
     if (!data.printerType) return;
@@ -448,7 +456,7 @@ export function PrinterAddForm({
         {/* Step 1: Printer type */}
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
-            <DiscoverPrinters onPick={applyDiscovered} />
+            {!discovered && <DiscoverPrinters onPick={applyDiscovered} />}
             <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
             {modelUnconfirmed && (
               <div className="small" role="status" style={{ marginBottom: 12, color: 'var(--warn)' }}>
