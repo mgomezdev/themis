@@ -10,14 +10,16 @@ import { PackBedNote, PrinterTargetPicker, coveredPrinterIds, splitTargets, togg
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
 import {
-  getProject, getProjectJobs, generateProject, updateProjectPart, type GenerateOut,
+  getProject, getProjectJobs, generateProject, updateProjectPart, addProjectItem, type GenerateOut,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
 import { PaymentsCard } from '../components/PaymentsCard';
 import { LinkJobsModal } from '../components/LinkJobsModal';
 import { CostsCard } from '../components/CostsCard';
+import { FileDropZone } from '../components/FileDropZone';
 import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
+import type { LibraryFile } from '../data/types';
 
 const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
 
@@ -180,7 +182,15 @@ export function ProjectDetailScreen() {
   const dueStr = fmtDate(project.due_date);
   const isOverdue = project.due_date ? new Date(project.due_date) < new Date() : false;
 
+  // A file dropped on the page is uploaded to the library and added as an item (the Default Group, quantity 1).
+  async function addDroppedFile(f: LibraryFile) {
+    if (!projectId) return;
+    await addProjectItem(projectId, { file_id: f.id, quantity: 1 });
+    reload();
+  }
+
   return (
+    <FileDropZone onUploaded={addDroppedFile} label="Drop to upload and add to this project">
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 900 }}>
 
       {/* ── Header card ─────────────────────────────────────────────────── */}
@@ -547,7 +557,7 @@ export function ProjectDetailScreen() {
         </div>
         {project.items.length === 0 ? (
           <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No parts — edit the project to add parts.
+            No parts — edit the project, or drop a .3mf / .stl file on this page, to add parts.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -740,5 +750,6 @@ export function ProjectDetailScreen() {
         />
       )}
     </div>
+    </FileDropZone>
   );
 }

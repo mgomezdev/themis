@@ -9,6 +9,7 @@ import { GroupBanner, type BannerSelection } from '../components/builder/GroupBa
 import { ItemSections, type BulkAction } from '../components/builder/ItemSections';
 import { BuilderTabs, ReviewPanel, type BuilderTab } from '../components/builder/ReviewPanel';
 import { CustomerPicker } from '../components/CustomerPicker';
+import { FileDropZone } from '../components/FileDropZone';
 import { promoteProject } from '../api/customers';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
@@ -1094,6 +1095,7 @@ export function ProjectBuilderScreen() {
   const queueBlocked = !projectId || isDraft || !review || reviewLoading || !!reviewError || reviewedSnap !== currentSnap
     || (open ?? 1) > 0 || items.length === 0;
   return (
+    <FileDropZone onUploaded={addFile} label="Drop to upload and add to the project">
     <div className="col gap-3" style={{ height: '100%' }}>
       <div className="row between" style={{ alignItems: 'baseline' }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>{name || 'New project'}</div>
@@ -1162,5 +1164,6 @@ export function ProjectBuilderScreen() {
         </div>
       )}
     </div>
+    </FileDropZone>
   );
 }
