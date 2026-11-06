@@ -8,6 +8,7 @@ from app.models import Job, JobPrinterConfig, PartWaiver, Printer
 from app.services.queue_engine import QueueEngine
 from tests.fake_providers import FakeProjectConstructor
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager
+from tests.waiting import cancel_background_tasks
 
 STL = b"solid part\nendsolid\n"
 
@@ -80,6 +81,7 @@ async def _claim(session_factory, printer_id):
     with slicing_provider(FakeSlicingProvider()):
         async with session_factory() as s:
             await qe._try_claim_for_printer(s, printer_id, slice_only=True)
+        await cancel_background_tasks("slice-")             # only the claim is under test; its slice task must not outlive the loop
 
 
 async def test_a_waived_printer_skips_jobs_with_the_part_and_takes_other_work(
