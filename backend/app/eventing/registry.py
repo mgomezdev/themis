@@ -1,7 +1,7 @@
 """The event catalog: core events plus every registered plugin's `defines_events` (BIZ-249). Publication is validated against it."""
 from __future__ import annotations
 
-from .core_payloads import JobCompletePayload, JobStartedPayload, ProjectPayload
+from .core_payloads import JobAttemptEndedPayload, JobCompletePayload, JobStartedPayload, ProjectPayload
 from .definitions import EventDef
 from .envelope import EventEnvelope, EventError
 
@@ -15,6 +15,8 @@ CORE_EVENTS: dict[str, EventDef] = {d.name: d for d in (
              description="A printer began a job's physical print (published once per start)."),
     EventDef("job.complete", version=2, durability="durable", payload_model=JobCompletePayload,
              description="A job finished printing successfully (published once per job)."),
+    EventDef("job.attempt_ended", durability="durable", payload_model=JobAttemptEndedPayload,
+             description="A started physical print ended without completing: failed, cancelled or requeued (once per attempt)."),
     EventDef("job.failed", version=2, description="A job failed after slicing (upload or start error)."),
     EventDef("job.blocked", version=2, description="A job was blocked (slicing failure or no eligible printer)."),
     EventDef("printer.alarm", description="A printer raised or escalated an alarm."),

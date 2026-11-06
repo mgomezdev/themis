@@ -758,7 +758,11 @@ class QueueEngine:
                 return False                                   # a late completion won: nothing to requeue
             await self._cleanup_gcode(session, job_id, printer_id)
             await job_details.set_details(session, job_id, "core", {"last_failure": {"reason": reason, "printer_id": printer_id, "at": now}})
+            printer = await session.get(Printer, printer_id)
+            await completion_events.enqueue_attempt_ended(session, job_id, printer_id, result="requeued", origin="core",
+                                                          loaded_filaments=printer.loaded_filaments if printer else None)
             await session.commit()
+        event_hub.wake()
         await self._broadcast_job(job_id)
         await self._publish_job_event("job.failed", job_id, printer_id, "core", {"reason": reason, "phase": "print"},
                                       dedup=f"job.failed:{job_id}:{now}")
@@ -1776,15 +1780,9 @@ class QueueEngine:
                 job.updated_at = now
             printer = await self._hold_plate_gate(session, printer_id)
             await job_details.set_details(session, job_id, origin or "core", {"print_start_time": now, **(details or {})})
-            from .printer_client_factory import client_class
-            # The plugin's class says whether filament->tool routing is baked in at slice time; a start can be reported with no
-            # connected control client, and that must not change how its usage is read.
-            reporting_client = client_class(printer.plugin_id or printer.printer_type) if printer else None
             # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
             await completion_events.enqueue_job_started(session, job, printer_id, origin=origin or "core",
-                                                        loaded_filaments=(printer.loaded_filaments if printer else None),
-                                                        usage_basis="physical_slot" if getattr(reporting_client, "slice_tool_mapping", False) is True
-                                                        else "slicer_filament")
+                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
             await session.commit()
         event_hub.wake()
         return True
@@ -1823,16 +1821,7 @@ class QueueEngine:
                 reported["print_seconds"] = job.actual_seconds
             if job.actual_filament_grams is not None:
                 reported["filament_usage"] = {"grams": job.actual_filament_grams, "breakdown": job.actual_filament_breakdown}
-            existing_usage = (await job_details.get_details_in(session, job_id, ["filament_usage"], origin=origin or "core"))["filament_usage"]["value"]
-            extra = dict(details or {})
-            if isinstance(existing_usage, dict) and "version" in existing_usage:
-                reported["filament_usage"] = existing_usage  # retain partial/rollover reports too; never hide uncertainty with an estimate
-                # A legacy `details["filament_usage"]` on complete must not replace it either (it would drop the version and turn a
-                # partial / rollover report back into a full estimate deduction).
-                if "filament_usage" in extra:
-                    logger.info("job %s: ignored details.filament_usage on complete; a versioned usage report is on record", job_id)
-                    extra.pop("filament_usage")
-            await job_details.set_details(session, job_id, origin or "core", {**reported, **extra})
+            await job_details.set_details(session, job_id, origin or "core", {**reported, **(details or {})})
             await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
             await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", origin=origin or "core",
                                                          loaded_filaments=printer.loaded_filaments if printer else None)
@@ -1855,7 +1844,11 @@ class QueueEngine:
             await job_details.set_details(session, job_id, origin or "core",
                                           {"print_end_time": now, "result": "failure", "failure_reason": reason, **(details or {})})
             await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
+            printer = await session.get(Printer, printer_id)
+            await completion_events.enqueue_attempt_ended(session, job_id, printer_id, result="failed", origin=origin or "core",
+                                                          loaded_filaments=printer.loaded_filaments if printer else None)
             await session.commit()
+        event_hub.wake()
         logger.warning("Job %s → failed on printer %s: %s", job_id, printer_id, reason)
         await self._broadcast_job(job_id)
         await self._publish_job_event("job.failed", job_id, printer_id, origin, {"reason": reason, "phase": "print"}, dedup=f"job.failed:{job_id}:{now}")

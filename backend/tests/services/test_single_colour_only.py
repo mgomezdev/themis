@@ -9,6 +9,7 @@ from app.models import Job, JobPrinterConfig, Printer
 from app.services import filament_matching
 from app.services.queue_engine import QueueEngine
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager, _seed_job
+from tests.waiting import cancel_background_tasks
 
 SLOTS = [{"slot": 0, "type": "PLA", "color": "#FF0000", "filament_profile": "PLA"},
          {"slot": 1, "type": "PLA", "color": "#0000FF", "filament_profile": "PLA"}]
@@ -54,6 +55,7 @@ async def test_single_colour_printer_skips_multicolour_and_claims_the_job_behind
     _install_fake_put(qe)
     async with session_factory() as s:
         await qe._try_claim_for_printer(s, 1, slice_only=True)
+    await cancel_background_tasks("slice-")                 # only the claim is under test; its slice task must not outlive the loop
     async with session_factory() as s:
         assert (await s.get(Job, multi)).status == "queued"
         assert (await s.get(Job, single)).assigned_printer_id == 1

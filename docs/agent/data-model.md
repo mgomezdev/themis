@@ -580,4 +580,6 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
 
 
+Migration v066 (BIZ-366 v2) makes inventory per print attempt: `job_spool_snapshots.attempt_id` (NOT NULL, `''` for older rows; unique key (job_id, attempt_id, provider, spool_ref), table rebuilt) and nullable `inventory_pending_writes.attempt_id`. Job details: `filament_usage_context` (core, per attempt), `filament_usage_report` (the printer plugin's v2 report), `filament_accounting` (core: `{attempts: {attempt_id: {result, source, grams, slots, uses, notes, provider}}, total_grams}`).
+
 Migration v065 adds nullable JSON `jobs.unmatched_filaments`: a map from printer id to unmatched model filament numbers, captured with a fleet-wide filament block. `NULL` means no stored filament failure; the details API returns `{}`. Requeue, unblock and a successful claim clear this snapshot.

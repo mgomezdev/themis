@@ -49,19 +49,21 @@ async def read_pre_weight(factory: async_sessionmaker[AsyncSession], provider_id
     return None, "missing"
 
 
-async def take(factory: async_sessionmaker[AsyncSession], job_id: int, printer_id: int | None, spool_ref: str) -> None:
-    """Record the snapshot for (job, active provider, spool). Idempotent (unique per job/provider/spool)."""
+async def take(factory: async_sessionmaker[AsyncSession], job_id: int, printer_id: int | None, spool_ref: str,
+               attempt_id: str = "") -> None:
+    """Record the snapshot for (job, print attempt, active provider, spool). Idempotent (unique per job/attempt/provider/spool):
+    a reprint snapshots again, from the previous attempt's pending write."""
     pid = provider.provider_id()
     if pid is None:
         return
     async with factory() as session:
-        if await get(session, job_id, pid, spool_ref) is not None:
+        if await get(session, job_id, pid, spool_ref, attempt_id) is not None:
             return
     pre, source = await read_pre_weight(factory, pid, spool_ref)           # no session open during provider I/O
     async with factory() as session:
-        if await get(session, job_id, pid, spool_ref) is not None:         # a concurrent take won
+        if await get(session, job_id, pid, spool_ref, attempt_id) is not None:   # a concurrent take won
             return
-        session.add(JobSpoolSnapshot(job_id=job_id, printer_id=printer_id, provider=pid, spool_ref=spool_ref,
+        session.add(JobSpoolSnapshot(job_id=job_id, attempt_id=attempt_id, printer_id=printer_id, provider=pid, spool_ref=spool_ref,
                                      pre_weight_g=pre, source=source, taken_at=_now()))
         try:
             await session.commit()
@@ -69,7 +71,7 @@ async def take(factory: async_sessionmaker[AsyncSession], job_id: int, printer_i
             logger.info("Spool snapshot for job %s spool %s not stored (job gone or already taken)", job_id, spool_ref)
 
 
-async def get(session: AsyncSession, job_id: int, provider_id: str, spool_ref: str) -> JobSpoolSnapshot | None:
+async def get(session: AsyncSession, job_id: int, provider_id: str, spool_ref: str, attempt_id: str = "") -> JobSpoolSnapshot | None:
     return (await session.execute(select(JobSpoolSnapshot).where(
-        JobSpoolSnapshot.job_id == job_id, JobSpoolSnapshot.provider == provider_id,
+        JobSpoolSnapshot.job_id == job_id, JobSpoolSnapshot.attempt_id == attempt_id, JobSpoolSnapshot.provider == provider_id,
         JobSpoolSnapshot.spool_ref == spool_ref))).scalar_one_or_none()

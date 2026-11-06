@@ -824,12 +824,19 @@ async def cancel_job(
 
     if getattr(job, "estimate_status", None) == "pending":
         job.estimate_status = None
+    if job.status in ("printing", "paused"):
+        # A started print stopped mid-way still used filament: the attempt is settled from what the plugin reported (BIZ-366 v2).
+        from ...services import completion_events
+        printer = await session.get(Printer, job.assigned_printer_id) if job.assigned_printer_id is not None else None
+        await completion_events.enqueue_attempt_ended(session, job.id, job.assigned_printer_id, result="cancelled",
+                                                      loaded_filaments=printer.loaded_filaments if printer else None)
     job.status = "cancelled"
     job.completed_at = datetime.now(timezone.utc).isoformat()
     job.assigned_printer_id = None
     job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
+    event_hub.wake()                             # deliver a `job.attempt_ended` written above
     await session.refresh(job)
     queue_engine.cancel_slice(job_id=job_id)     # a slice in flight stops at its next poll (BIZ-295)
 

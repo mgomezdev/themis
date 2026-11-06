@@ -867,10 +867,12 @@ class JobSpoolSnapshot(Base):
     """A spool's weight when a job started printing (the base for the absolute `pre - spent` write at completion).
     `source` = live | pending | cached | missing (missing: no starting weight could be obtained -> tracking suspends)."""
     __tablename__ = "job_spool_snapshots"
-    __table_args__ = (UniqueConstraint("job_id", "provider", "spool_ref", name="ux_job_spool_snapshots"),)
+    __table_args__ = (UniqueConstraint("job_id", "attempt_id", "provider", "spool_ref", name="ux_job_spool_snapshots"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    # BIZ-366 v2: the physical print attempt (filament_usage_context.attempt_id); '' = written before attempts existed (v066).
+    attempt_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
     printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     provider: Mapped[str] = mapped_column(String(64))
     spool_ref: Mapped[str] = mapped_column(String(128))
@@ -898,6 +900,7 @@ class InventoryPendingWrite(Base):
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
     pre_weight_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)         # the weight `target_g` was computed from
+    attempt_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)       # the print attempt it settles (BIZ-366 v2)
     conflict_current_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # the provider's weight when a conflict was found
 
     __table_args__ = (Index("ix_inventory_pending_writes_spool", "provider", "spool_ref", "status"),)
