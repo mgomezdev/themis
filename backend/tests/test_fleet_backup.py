@@ -3,7 +3,6 @@
 The backup file lands in ~/Downloads and whatever syncs it, so printer LAN
 credentials (Bambu access_code, etc.) must not ride along by default.
 """
-import pytest
 
 
 async def _create_bambu_printer(client, access_code="00000000"):
@@ -63,7 +62,8 @@ async def test_import_of_redacted_backup_warns_about_missing_credentials(client)
 
 async def test_backup_carries_the_model_slicer_profile_mappings_and_the_nozzle_variant_and_import_restores_them(client):
     """BIZ-294: with profiles on the model, a restored fleet slices with the same profiles only if the mappings travel with it."""
-    import io, json
+    import io
+    import json
     printer = await _create_bambu_printer(client)
     model = printer["model_uuid"]
     for d, name, default in ((0.4, "P1S 0.4", True), (0.6, "P1S 0.6", False)):
@@ -93,7 +93,8 @@ async def test_backup_carries_the_model_slicer_profile_mappings_and_the_nozzle_v
 
 
 async def test_import_reads_an_old_backups_current_orca_printer_profile_as_the_raw_override(client):
-    import io, json
+    import io
+    import json
     backup = {"themis_backup_version": 1, "printers": [{
         "name": "Old", "printer_type": "bambu", "connection_config": {}, "orca_printer_profiles": ["Old Machine"],
         "current_orca_printer_profile": "Old Machine", "loaded_filaments": []}]}

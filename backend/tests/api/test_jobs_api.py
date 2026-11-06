@@ -1,5 +1,5 @@
 # backend/tests/api/test_jobs_api.py
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
 from app.models import Job
@@ -130,7 +130,6 @@ async def test_cancel_complete_job_fails(client, upload_3mf, create_printer):
 
 
 async def test_cancel_completed_job_is_rejected_and_leaves_it_complete(client, session_factory, create_job):
-    from app.models import Job
     job_id = await create_job()
     async with session_factory() as session:
         (await session.get(Job, job_id)).status = "complete"
@@ -162,7 +161,7 @@ async def test_get_slice_failures(client, upload_3mf, create_printer):
 async def test_unblock_clears_slice_failure_and_requeues(client, session_factory, upload_3mf, create_printer):
     """Unblocking must reset slice_failed so the job actually re-slices; otherwise
     the engine re-blocks it immediately with the stale error."""
-    from app.models import Job, JobPrinterConfig
+    from app.models import JobPrinterConfig
     from sqlalchemy import select
 
     file_id = await upload_3mf()
@@ -199,7 +198,6 @@ async def test_unblock_clears_slice_failure_and_requeues(client, session_factory
 async def test_cancel_running_job_stops_printer(client, session_factory, upload_3mf, create_printer):
     """Cancelling a job the printer is actively running must also stop the printer."""
     from unittest.mock import MagicMock
-    from app.models import Job
     from app.services.printer_manager import printer_manager
 
     file_id = await upload_3mf()
@@ -413,7 +411,6 @@ async def test_job_response_includes_estimate_fields(client, upload_3mf, create_
 async def test_cancel_job_clears_estimate_status(client, session_factory, upload_3mf, create_printer):
     """POST /jobs/{id}/cancel clears estimate_status when it is 'pending'."""
     from unittest.mock import MagicMock
-    from app.models import Job
 
     file_id = await upload_3mf()
     printer_id = await create_printer()
@@ -443,7 +440,7 @@ async def test_cancel_job_clears_estimate_status(client, session_factory, upload
 
 
 async def test_list_jobs_includes_materials_and_printers(client, session_factory):
-    from app.models import UploadedFile, Job, JobPrinterConfig, Printer
+    from app.models import UploadedFile, JobPrinterConfig, Printer
 
     # Build fixtures directly via the test session
     async with session_factory() as session:
@@ -501,7 +498,7 @@ async def test_job_details_returns_live_fields(client, upload_3mf, create_printe
 
 async def test_reorder_front_gives_lowest_position(client, session_factory):
     """POST /jobs/{id}/reorder with action='front' moves job ahead of all others."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -516,7 +513,7 @@ async def test_reorder_front_gives_lowest_position(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
@@ -530,7 +527,7 @@ async def test_reorder_front_gives_lowest_position(client, session_factory):
 
 async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
     """POST /jobs/{id}/reorder with action='promote' moves job one step up."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -545,7 +542,7 @@ async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
@@ -559,7 +556,7 @@ async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
 
 async def test_reorder_rejects_non_queued_job(client, session_factory):
     """POST /jobs/{id}/reorder returns 422 for jobs not in queued/blocked status."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -585,7 +582,7 @@ async def _seed_spool_warning_fixture(session_factory, estimate_grams):
     via the test session, wired so the job's JobPrinterConfig resolves (via
     _slot_for_config) to the printer's loaded_filaments[0] slot, which carries a
     spoolman_spool_id. Returns (job_id, printer_id)."""
-    from app.models import UploadedFile, Job, JobPrinterConfig, Printer
+    from app.models import UploadedFile, JobPrinterConfig, Printer
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",

@@ -20,7 +20,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 CAP_3MF_CONSTRUCT = "3mf.construct"
 CAP_GCODE_PRODUCE = "gcode.produce"
@@ -179,6 +178,11 @@ class SliceSettings:
             "tool_index": self.tool_index,
             "filament_map": [list(p) for p in self.filament_map] if self.filament_map else None,
         })
+
+
+def _sha(payload: dict) -> str:
+    """Stable digest of a JSON-able payload (key order irrelevant)."""
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 @dataclass(frozen=True)

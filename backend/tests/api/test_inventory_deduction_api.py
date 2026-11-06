@@ -2,13 +2,12 @@
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy import select
 
 from tests.webhook_helpers import destination
-from app.models import InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile
+from app.models import InventoryPendingWrite, InventorySpoolStatus, Job, Printer, UploadedFile
 from app.plugins.capabilities.filament_inventory import InventoryProviderError, TRACKS_WEIGHT
-from app.services.inventory import deduction, outbox, tasks
+from app.services.inventory import deduction, outbox
 from tests.api.test_inventory_api import _client_with
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider

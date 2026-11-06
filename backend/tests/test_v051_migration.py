@@ -1,6 +1,6 @@
 """v051 (BIZ-291): saved slices keep matching after the provider became part of every cache key."""
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.migrations import v051_slice_cache_provider_keys as mig

@@ -33,6 +33,11 @@ jobs:
 
       - run: pip install -e "backend[dev]"
 
+      # Rule set lives in backend/pyproject.toml ([tool.ruff.lint]).
+      - name: Lint backend
+        working-directory: backend
+        run: ruff check .
+
       # No services needed: backend/tests/conftest.py runs against a per-test SQLite
       # file over an ASGI transport, so there is no DB server, network or sidecar.
       # --cov enforces the `fail_under` floor in backend/pyproject.toml ([tool.coverage.report]).
@@ -74,9 +79,11 @@ jobs:
 
       - run: npm ci
 
-      # `npm run lint` is deliberately absent: package.json declares the script
-      # and the ESLint 9 dependencies, but there is no eslint.config.js, so it
-      # exits non-zero on any input. `tsc -b` inside the build is the type gate.
+      # Warnings (react-refresh, exhaustive-deps, `any` in app code) don't fail the job; errors do.
+      - name: Lint
+        run: npm run lint
+
+      # `tsc -b` inside the build is the type gate.
       - name: Type-check and build
         run: npm run build
 

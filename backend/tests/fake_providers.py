@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate
 from app.services.providers.format_provider import FormatProvider
 from app.plugins.capabilities.filament_inventory import (
-    ALL_CAPABILITIES,
     FilamentInventoryProvider,
     InventoryProviderError,
     InvMaterial,

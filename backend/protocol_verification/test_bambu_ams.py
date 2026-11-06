@@ -8,7 +8,9 @@ from app.plugins.bambu.client import BambuMQTTClient
 @pytest.fixture
 def live_trays(bambu_cfg):
     """Raw AMS trays from a real printer's `pushall` report (read-only)."""
-    import json, ssl, threading
+    import json
+    import ssl
+    import threading
     import paho.mqtt.client as mqtt
     serial = pytest.importorskip("os").environ.get("THEMIS_VERIFY_BAMBU_SERIAL")
     if not serial:

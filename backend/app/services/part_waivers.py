@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, PartWaiver, Printer, ProjectItem, QueueConfig, UploadedFile

@@ -1,7 +1,6 @@
 """Printer discovery over a virtual LAN: each vendor hook, the range sweep (private ranges only, other VLANs),
 passive SSDP merge, and the /printers/discover API."""
 import asyncio
-import asyncio
 import ipaddress
 
 import pytest
@@ -9,8 +8,6 @@ import pytest
 from app.services import discovery
 from app.services.abstract_printer_client import AbstractPrinterClient
 from app.plugins.bambu.client import BambuMQTTClient, parse_ssdp_headers
-from app.plugins.elegoo_centauri.client import ElegooCentauriClient
-from app.plugins.bambu.client import BambuMQTTClient
 from app.plugins.elegoo_centauri.client import ElegooCentauriClient
 from app.plugins.mock.client import MockPrinterClient
 from app.plugins.snapmaker.client import SnapmakerExtendedClient
@@ -284,6 +281,47 @@ async def test_real_network_http_get_json_reports_status_and_body_and_reuses_one
         await net.aclose()
         srv.shutdown()
     assert net._http is None
+
+
+async def test_real_network_http_probes_are_not_starved_by_a_connection_pool():
+    """A /24 sweep has hundreds of probes in flight, most to dead addresses that hold a connection until they time out.
+    A live printer's probe must not queue behind them for a pooled connection and time out (httpx's default pool is
+    100) — a Snapmaker at a real address was missed this way; the scan's own semaphore bounds concurrency."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from app.services.discovery_net import RealNetwork
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/dead":
+                time.sleep(1.5)                              # holds its connection like an address that never answers
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    class Srv(ThreadingHTTPServer):
+        request_queue_size = 512
+        daemon_threads = True
+    srv = Srv(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    net = RealNetwork()
+    try:
+        base = f"http://127.0.0.1:{srv.server_port}"
+        dead = [asyncio.ensure_future(net.http_get_json(f"{base}/dead", 3.0)) for _ in range(110)]   # more than 100
+        await asyncio.sleep(0.3)                             # the sweep's dead probes are in flight first
+        live = await net.http_get_json(f"{base}/server/info", 1.0)
+        assert live == (200, {"ok": True})
+        await asyncio.gather(*dead)
+    finally:
+        await net.aclose()
+        srv.shutdown()
+        srv.server_close()
 
 
 async def test_real_network_listen_never_raises_without_multicast():

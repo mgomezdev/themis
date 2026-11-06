@@ -1,12 +1,10 @@
 """The plugin data lifecycle (BIZ-302, docs/plugin-lifecycle.md): what disable, uninstall, reinstall, upgrade, failed upgrade and
 rollback do to plugin-owned data, and what they never touch (core-owned rows and tables)."""
-import types
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app import plugins
 from app.models import CapabilitySelection, InstalledPlugin, JobSpoolSnapshot, PluginConfig, Printer
 from app.plugins import _REGISTRY, installer, loader, migrations as plugin_migrations
 from app.plugins.manifest import PluginError

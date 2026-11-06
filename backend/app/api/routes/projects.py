@@ -31,7 +31,7 @@ from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_store import get_library_store
 from ...services.library_scanner import (
-    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
+    ACTIVE_JOB_STATUSES, fresh_content_hash, is_presliced_name, refresh_content_hash,
 )
 from ...services.providers.construction import get_project_constructor
 from ...services.providers.contract import (

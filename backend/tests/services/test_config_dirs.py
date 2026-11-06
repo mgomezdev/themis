@@ -1,6 +1,5 @@
 # backend/tests/services/test_config_dirs.py
 import importlib
-from pathlib import Path
 
 
 def test_library_dir_defaults_under_data_dir(monkeypatch, tmp_path):

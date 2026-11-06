@@ -5,7 +5,6 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,7 +24,6 @@ from ...services.three_mf_parser import source_has_project_settings
 from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import effective_process_profile, queue_engine, _slot_for_config, _slice_params, build_slice_request
-from ...services.providers.slicing import effective_provider_id, get_slicing_provider
 from ...services.slicer_service import SliceError, SliceRequest
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._filament_ask import AskFields, ask_columns, ask_out, type_labels

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, CuratedSetting, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode, GcodeProducer,
-    InputKind, ProduceRequest, Profile, ProviderError, ProviderIdentity, ProviderStatus, Readiness, TargetPrinter,
+    ProduceRequest, Profile, ProviderError, ProviderIdentity, ProviderStatus, Readiness, TargetPrinter,
 )
 from ..slicing import SliceSpec, SlicingProviderNotReady, SlicingProviderError, default_compatible_presets
 from . import overrides
