@@ -163,7 +163,7 @@ const PORTAL_QUOTE = { price: 1, paid: 1, balance: 1, accepted_at: 1, payments: 
 const PORTAL_PAYMENT = { id: 1, received_on: 1, amount: 1, method: 1 } satisfies Record<keyof PortalPayment, 1>;
 
 const PLUGIN_SUMMARY = {
-  id: 1, name: 1, version: 1, description: 1, docs_url: 1, source: 1, loaded: 1, install: 1, provides: 1, requires: 1, optional: 1,
+  id: 1, name: 1, can_test_connection: 1, version: 1, description: 1, docs_url: 1, source: 1, loaded: 1, install: 1, provides: 1, requires: 1, optional: 1,
   defines: 1, ui: 1, diagnostics: 1, enabled: 1, active: 1, error: 1,
 } satisfies Record<keyof PluginSummary, 1>;
 const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;

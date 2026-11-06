@@ -62,10 +62,17 @@ def _refs(reqs) -> list[dict]:
     return [{"capability": r.capability, "min_version": r.min_version} for r in reqs]
 
 
+def _can_test_connection(m: PluginManifest) -> bool:
+    """Does the plugin's provider have a connection of its own to test? A printer plugin's factory is its client class, whose
+    connection is per printer (no plugin-level `test_connection`). A non-class factory can't be inspected: assume it can."""
+    return not isinstance(m.factory, type) or callable(getattr(m.factory, "test_connection", None))
+
+
 def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
     provides = _provides(m)
     return {
         "id": m.id, "name": m.name, "version": m.version, "description": m.description,
+        "can_test_connection": _can_test_connection(m),
         "docs_url": m.docs_url, "source": row.source if row else "bundled", "loaded": True, "install": install_info(row),
         "provides": provides, "requires": _refs(m.requires), "optional": _refs(m.optional),
         "defines": [d.id for d in m.defines], "ui": _ui(m),
@@ -120,7 +127,7 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
     # Installed packages that are not running: staged for the next restart, or failed to load (shown with their error).
     for r in sorted(rows.values(), key=lambda r: r.plugin_id):
         if get_plugin(r.plugin_id) is None:
-            plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
+            plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version, "can_test_connection": False,
                             "description": "", "docs_url": None, "source": r.source, "loaded": False,
                             "install": install_info(r), "provides": [], "requires": [], "optional": [], "defines": [],
                             "diagnostics": [],
@@ -178,7 +185,8 @@ class PluginTest(BaseModel):
 @router.post("/plugins/{plugin_id}/test", summary="Test a connection with the saved or the supplied (unsaved) settings",
              dependencies=[Depends(require_scope("settings:write"))])
 async def test_plugin(plugin_id: str, body: PluginTest):
-    _get_or_404(plugin_id)
+    if not _can_test_connection(_get_or_404(plugin_id)):
+        raise HTTPException(status_code=422, detail=f"{plugin_id} has no connection to test (its printers each have their own)")
     try:
         instance = plugin_host.build_candidate(plugin_id, body.settings, body.secrets)
         info = await instance.test_connection()
