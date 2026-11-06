@@ -187,6 +187,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 .brand-name .dim { color: var(--text-3); font-weight: 400; margin-left: 2px; }
 
+/* The nav sections scroll between the fixed header and the toggle (the Settings sub-items can overflow). */
+.sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .nav-section { padding: 12px 8px 6px; }
 .nav-section-label {
   font-size: 10px;
@@ -245,6 +247,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .app[data-nav="collapsed"] .sidebar .nav-section-label,
 .app[data-nav="collapsed"] .sidebar .user-meta { display: none; }
 .app[data-nav="collapsed"] .sidebar .brand { justify-content: center; padding: 18px 10px 14px; }
+.app[data-nav="collapsed"] .sidebar-scroll { scrollbar-width: none; }   /* 64px wide: a scrollbar would push the icons off-centre */
 
 .sidebar-user {
   padding: 6px 10px 8px;
