@@ -245,14 +245,14 @@ describe('PrinterAddForm — model-specific form defaults and custom models (BIZ
                                                                    { ...IP_FIELD, name: 'timelapse', label: 'Timelapse', required: false, default: 0 }] });
     renderForm([bambu]);
     await run(user);
-    await user.clear(field('Use AMS (optional)'));                                        // a field the user blanks stays blank
+    await user.clear(field('Use AMS (optional)'));                                        // a field the user blanks is omitted (BIZ-369)
     await user.click(screen.getByRole('button', { name: /^Next/ }));
     await user.click(screen.getByRole('button', { name: /^Next/ }));
     await user.click(screen.getByRole('button', { name: /Finish/i }));
 
     await waitFor(() => expect(to('POST', '/api/v1/printers')).toHaveLength(1));
     expect((to('POST', '/api/v1/printers')[0].body as Record<string, unknown>).connection_config)
-      .toEqual({ ip_address: '10.0.0.9', use_ams: '', timelapse: '0' });
+      .toEqual({ ip_address: '10.0.0.9', timelapse: '0' });
   });
 
   it('a declared (non-custom) model never shows the bed inputs', async () => {
@@ -278,7 +278,7 @@ describe('PrinterAddForm — discovery pre-fill by plugin', () => {
     await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
     await user.type(screen.getByLabelText('Network ranges'), '192.168.7.0/24');
     await user.click(screen.getByRole('button', { name: 'Scan' }));
-    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    await user.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.20' }));
   }
 
   it('selects the plugin entry whose display_name matches the discovered model (case-insensitive)', async () => {

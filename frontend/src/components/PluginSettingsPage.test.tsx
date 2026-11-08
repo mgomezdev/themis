@@ -46,7 +46,8 @@ describe('PluginSettingsPage', () => {
       settings_schema: {}, printer_discovery: true });
     const found = { plugin_id: 'snapmaker', printer_type: 'snapmaker_extended', display_name: 'Snapmaker',
       ip: '192.168.7.30', model: 'Moonraker / Klipper', name: 'Test printer', serial: null, model_uuid: null,
-      connection_config: { ip_address: '192.168.7.30', port: 7125 }, note: null, already_added: false };
+      connection_config: { ip_address: '192.168.7.30', port: 7125 }, note: null, already_added: false,
+      added_printer: null, ip_in_use_by: null };
     const api = stubFetch({
       'GET /api/v1/plugins': pluginsBody(d), 'GET /api/v1/plugins/snapmaker': d,
       'POST /api/v1/printers/discover': { ranges: ['192.168.x.x'], scanned: 65534, truncated: false, found: [found] },
@@ -57,7 +58,7 @@ describe('PluginSettingsPage', () => {
     const range = await screen.findByLabelText('Network ranges');
     expect((range as HTMLInputElement).value).toBe('192.168.x.x');
     await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Use 192.168.7.30' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.30' }));
     expect(api.to('POST', '/api/v1/printers/discover')[0].body).toEqual({ ranges: ['192.168.x.x'], plugin_id: 'snapmaker' });
     expect(await screen.findByText(/could not tell which model/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /next/i }));

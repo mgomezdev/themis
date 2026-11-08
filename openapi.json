@@ -1292,7 +1292,7 @@
           "printers"
         ],
         "summary": "Create printer",
-        "description": "Register a new printer and attempt an immediate connection. Connection failure\nis non-fatal \u2014 the printer is saved and will retry on next restart.",
+        "description": "Register a printer. Only its identity (model + `connection_config.ip_address`) is required; blank connection values are\ndropped. It is saved unconfigured and a connection test runs in the background: success makes it `configured` (only\nconfigured printers take queue work), failure records `config_error`. 409 when a printer of the same model already uses\nthat IP.",
         "operationId": "create_printer_api_v1_printers_post",
         "requestBody": {
           "content": {
@@ -1695,6 +1695,54 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Slot Conflicts Api V1 Printers  Printer Id  Slot Conflicts Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/test": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Test a saved printer's connection",
+        "description": "Connect the printer with its stored config. Success makes it `configured` (and leaves it connected); failure records why in\n`config_error`. A printer missing a required field is not contacted.",
+        "operationId": "test_saved_printer_api_v1_printers__printer_id__test_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Saved Printer Api V1 Printers  Printer Id  Test Post"
                 }
               }
             }
@@ -14513,7 +14561,14 @@
       "PrinterCreate": {
         "properties": {
           "name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Name"
           },
           "plugin_id": {
@@ -14701,7 +14756,6 @@
         },
         "type": "object",
         "required": [
-          "name",
           "connection_config"
         ],
         "title": "PrinterCreate"

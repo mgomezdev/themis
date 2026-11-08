@@ -1,5 +1,8 @@
 import type { ConnectionField, DiscoveredPrinter, PrinterType } from '../api/printers';
 
+/** How a scan row follows its new printer's connection test (it runs in the background after the create): ~20 s. */
+export const POLL = { intervalMs: 2000, tries: 10 };
+
 /** The inputs a scan row shows: the fields the printer's plugin marks `quick_add` (the IP comes from the scan). */
 export function quickAddFields(t: PrinterType): ConnectionField[] {
   return t.connection_fields.filter(f => f.quick_add);

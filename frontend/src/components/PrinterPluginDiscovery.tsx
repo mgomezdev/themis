@@ -3,7 +3,8 @@ import { fetchPrinterTypes, type DiscoveredPrinter, type PrinterType } from '../
 import { PrinterAddForm } from '../screens/PrintersScreen';
 import { DiscoverPrinters } from './DiscoverPrinters';
 
-/** Keep discovery and its selected address in memory, within this plug-in's settings. */
+/** Discovery within this plug-in's settings: found printers are added in place; "More settings…" opens the full form, keeping
+ *  the scan results underneath. */
 export function PrinterPluginDiscovery({ pluginId }: { pluginId: string }) {
   const [picked, setPicked] = useState<DiscoveredPrinter | null>(null);
   const [types, setTypes] = useState<PrinterType[]>([]);
@@ -26,7 +27,7 @@ export function PrinterPluginDiscovery({ pluginId }: { pluginId: string }) {
     <h2 style={{ fontSize: 16 }}>Find printers</h2>
     {picked && <PrinterAddForm types={types} discovered={picked} backLabel="Scan results"
       onCancel={() => setPicked(null)} onCreated={() => { setPicked(null); setCreated(true); }} />}
-    <div hidden={!!picked}><DiscoverPrinters pluginId={pluginId} onPick={p => void pick(p)} /></div>
+    <div hidden={!!picked}><DiscoverPrinters pluginId={pluginId} onMoreSettings={p => void pick(p)} /></div>
     {loading && <div role="status" className="small muted">Loading printer models…</div>}
     {error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{error}</div>}
     {created && <div role="status" className="small">Printer added. It is now available in Printers.</div>}
