@@ -445,6 +445,7 @@
     "ok",
     "state"
   ],
+  "discovered_printer": ["model_uuid", "printer_type", "plugin_id", "display_name", "ip", "model", "name", "serial", "connection_config", "note", "already_added", "added_printer", "ip_in_use_by"],
   "plugin_discovery": ["printer_discovery"],
   "plugin_provides": [
     "capability",

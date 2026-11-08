@@ -532,30 +532,38 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
         close = getattr(net, "aclose", None)
         if close is not None:
             await close()
-    existing: set[str] = set()
-    for p in (await session.execute(select(Printer))).scalars().all():
-        cfg = p.connection_config or {}
-        for key in ("ip_address", "host"):
-            if cfg.get(key):
-                existing.add(str(cfg[key]).strip())
+    by_ip: dict[str, list[Printer]] = {}
+    for p in (await session.execute(select(Printer).order_by(Printer.id))).scalars().all():
+        if (ip := _ip_of(p)) is not None:
+            by_ip.setdefault(ip, []).append(p)
     names = printer_type_names()
     plugin_ids = printer_type_plugins()
     await registry.sync_registry(session)
     await session.commit()
-    # A discovered free-text model matches a registry entry only when exactly one enabled model fits; otherwise the UI offers
-    # the explicit custom/unmatched path (`model_uuid` is None).
-    matches = {d.ip: await registry.match_free_text(session, d.model, plugin_id=plugin_ids.get(d.printer_type))
-               for d in result.found}
-    return {
-        "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
-        "found": [{
-            "model_uuid": matches[d.ip],
-            "printer_type": d.printer_type, "plugin_id": plugin_ids.get(d.printer_type),
+    labels = {m["id"]: m["display_name"] for m in await registry.list_models(session)}
+    found = []
+    for d in result.found:
+        plugin_id = plugin_ids.get(d.printer_type)
+        # A discovered free-text model matches a registry entry only when exactly one enabled model fits; otherwise the UI offers
+        # the explicit custom/unmatched path (`model_uuid` is None).
+        model_uuid = await registry.match_free_text(session, d.model, plugin_id=plugin_id)
+        here = by_ip.get(d.ip, [])
+        # (IP, model) is the printer; with no matched model the same plugin at that IP is taken to be it (BIZ-369)
+        added = next((p for p in here if (p.model_uuid == model_uuid if model_uuid else p.plugin_id == plugin_id)), None)
+        other = next((p for p in here if p is not added), None) if added is None else None
+        found.append({
+            "model_uuid": model_uuid,
+            "printer_type": d.printer_type, "plugin_id": plugin_id,
             "display_name": names.get(d.printer_type, d.printer_type),
             "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
-            "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
-        } for d in result.found],
-    }
+            "connection_config": d.connection_config, "note": d.note,
+            "already_added": added is not None,
+            "added_printer": None if added is None else {"printer_id": added.id, "name": added.name,
+                                                         "configured": added.configured, "config_error": added.config_error},
+            "ip_in_use_by": None if other is None else {"printer_id": other.id, "name": other.name,
+                                                        "model": labels.get(other.model_uuid) or other.model_id},
+        })
+    return {"ranges": ranges, "scanned": result.scanned, "truncated": result.truncated, "found": found}
 
 
 @router.post(
