@@ -111,6 +111,8 @@ export interface ApiPrinter {
   model_label: string | null;                // "<manufacturer> <model>" of the printer's registry model
   enabled: boolean;
   queue_on: boolean;
+  configured: boolean;            // BIZ-369: a connection confirmed its setup; only configured printers take work
+  config_error: string | null;    // last test failure / missing-field reason
   connected: boolean;
   loaded_filaments: LoadedFilament[];
   build_plate_type: string | null;
@@ -130,7 +132,7 @@ export interface ApiPrinter {
 }
 
 export interface CreatePrinterBody {
-  name: string;
+  name?: string;                        // default: "<model> <last IP octet>"
   plugin_id: string;
   manufacturer_id: string;
   model_id: string;
@@ -242,6 +244,18 @@ export function testConnection(body: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+export interface SavedPrinterTest {
+  ok: boolean;
+  error: string | null;
+  configured: boolean;
+  config_error: string | null;
+}
+
+/** Test a saved printer with its stored config; success makes it configured (BIZ-369). */
+export function testSavedPrinter(id: number): Promise<SavedPrinterTest> {
+  return request(`${BASE}/${id}/test`, { method: 'POST' });
 }
 
 export function pausePrinter(id: string): Promise<void> {
@@ -406,7 +420,9 @@ export interface DiscoveredPrinter {
   serial: string | null;
   connection_config: Record<string, string | number>;
   note: string | null;
-  already_added: boolean;
+  already_added: boolean;          // a saved printer has this (IP, model)
+  added_printer: { printer_id: number; name: string; configured: boolean; config_error: string | null } | null;
+  ip_in_use_by: { printer_id: number; name: string; model: string | null } | null;   // the IP belongs to a printer of another model
 }
 
 export interface DiscoveryResult {

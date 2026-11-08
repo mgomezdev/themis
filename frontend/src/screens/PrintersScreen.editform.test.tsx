@@ -11,7 +11,7 @@ const PRINTER: ApiPrinter = {
   id: 7, name: 'Iris', printer_type: 'bambu', plugin_id: 'bambu', manufacturer_id: 'bambu', model_id: 'p1s', model_uuid: 'model-p1s', connection_config: {},
   awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null,
   nozzle_variant: null, machine_profile: 'Bambu Lab P1S 0.4 nozzle', machine_profile_reason: null, model_label: 'Bambu Lab P1S',
-  enabled: true, queue_on: true, connected: true,
+  enabled: true, queue_on: true, configured: true, config_error: null, connected: true,
   loaded_filaments: [{ slot: 0, filament_id: 'GFL99', name: 'PLA', type: 'PLA', color: '#fff' }],
   build_plate_type: null,
   no_snapshots_while_idle: false,

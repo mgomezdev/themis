@@ -12,7 +12,7 @@ import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
 import type { AlarmSummary, PrinterAlarm } from './alarms';
-import type { ApiPrinter, PartWaiver, PlateResults, SlotConflicts } from './printers';
+import type { ApiPrinter, DiscoveredPrinter, PartWaiver, PlateResults, SlotConflicts } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectFailure, ProjectGroup, ProjectItem, ProjectJob, ProjectLink, ProjectPart, ProjectReview, ReviewCheck } from './projects';
 import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch, QueuePool } from './queue';
@@ -26,14 +26,14 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 
 // `satisfies Record<keyof T, 1>` makes tsc reject a missing OR an extra key, so each literal tracks its interface.
 const FLEET = {
-  id: 1, name: 1, printer_type: 1, plugin_id: 1, dormant: 1, dormant_reason: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
+  id: 1, name: 1, printer_type: 1, plugin_id: 1, dormant: 1, dormant_reason: 1, enabled: 1, queue_on: 1, configured: 1, config_error: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
   capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1, waived_parts: 1, waiver_flag: 1, waiver_stopped: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
-  machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
+  machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, configured: 1, config_error: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
   no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
@@ -168,6 +168,10 @@ const PLUGIN_SUMMARY = {
 } satisfies Record<keyof PluginSummary, 1>;
 const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
 const PLUGIN_CONNECTION_RESULT = { ok: 1, state: 1 } satisfies Record<keyof PluginConnectionResult, 1>;
+const DISCOVERED_PRINTER = {
+  model_uuid: 1, printer_type: 1, plugin_id: 1, display_name: 1, ip: 1, model: 1, name: 1, serial: 1, connection_config: 1, note: 1,
+  already_added: 1, added_printer: 1, ip_in_use_by: 1,
+} satisfies Record<keyof DiscoveredPrinter, 1>;
 const PLUGIN_DISCOVERY = { printer_discovery: 1 } satisfies Record<keyof Pick<PluginDetail, 'printer_discovery'>, 1>;
 const CAPABILITY_INFO = {
   id: 1, version: 1, label: 1, description: 1, definer: 1, features: 1, required_methods: 1, selected: 1, explicit: 1, status: 1,
@@ -223,6 +227,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['plugin provides entry', contract.plugin_provides, keysOf(PLUGIN_PROVIDES)],
     ['plugin connection result', contract.plugin_connection_result, keysOf(PLUGIN_CONNECTION_RESULT)],
     ['plugin discovery', contract.plugin_discovery, keysOf(PLUGIN_DISCOVERY)],
+    ['discovered printer (POST /printers/discover found[])', contract.discovered_printer, keysOf(DISCOVERED_PRINTER)],
     ['capability info', contract.capability_info, keysOf(CAPABILITY_INFO)],
   ];
 
@@ -239,7 +244,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
       'printer_model_slicer_profile', 'slicer_profile_suggestions', 'slicer_profile_candidate', 'slicer_profile_variant', 'model_target',
-      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'plugin_discovery', 'capability_info', 'filament_match', 'slot_conflicts']);
+      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'plugin_discovery', 'discovered_printer', 'capability_info', 'filament_match', 'slot_conflicts']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

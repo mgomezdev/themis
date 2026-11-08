@@ -38,6 +38,10 @@ export interface Printer {
   fanBox: number;
   bedTempTarget: number;
   queueOn: boolean;
+  /** BIZ-369: false until a connection confirms its setup; such a printer takes no work. Absent = configured. */
+  configured?: boolean;
+  /** Why setup is incomplete (last test failure / missing field). */
+  configError?: string | null;
   awaitingPlateClear: boolean;
   noSnapshotsWhileIdle: boolean;
   alarmCount?: number;

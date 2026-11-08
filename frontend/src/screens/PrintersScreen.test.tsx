@@ -188,7 +188,7 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   machine_profile_reason: null,
   model_label: null,
   enabled: true,
-  queue_on: true,
+  queue_on: true, configured: true, config_error: null,
   connected: true,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
   build_plate_type: null,
