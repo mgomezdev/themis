@@ -157,6 +157,29 @@ async def test_unreachable_keeps_client_registered(session_factory, monkeypatch)
     assert (await _row(session_factory, pid)).config_error.startswith("Couldn't reach 10.0.0.9:8883")
 
 
+async def test_a_connection_that_comes_up_during_the_probe_counts(session_factory, monkeypatch):
+    pid = await _saved(session_factory, _FULL)
+    fake = _FakeClient(False, ("10.0.0.9", 8883))
+
+    def probe(host, port):
+        fake.connected = True                                           # the login completes while the port is probed
+        return True
+
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda p: fake)
+    monkeypatch.setattr(printer_setup, "TEST_CONNECT_POLL_S", 0.1)
+    monkeypatch.setattr(printer_setup, "_probe", probe)
+    out = await printer_setup.evaluate(pid, session_factory)
+    assert out.ok is True and (await _row(session_factory, pid)).configured is True
+
+
+def test_connection_changed_ignores_fields_that_do_not_connect():
+    fields = BambuMQTTClient.connection_fields()
+    base = {"ip_address": "a", "serial_number": "S", "access_code": "A", "timelapse": 0}
+    assert printer_setup.connection_changed(base, {**base, "timelapse": 1}, fields) is False
+    assert printer_setup.connection_changed(base, {**base, "timelapse": 1}) is True               # without fields: any change
+    assert printer_setup.connection_changed(base, {**base, "access_code": "B"}, fields) is True
+
+
 async def test_an_exception_is_recorded_not_raised(session_factory, monkeypatch):
     pid = await _saved(session_factory, _FULL)
 

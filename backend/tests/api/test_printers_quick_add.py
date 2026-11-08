@@ -95,6 +95,53 @@ async def test_patch_without_a_connection_change_keeps_configured(client, create
     assert scheduled_tests == [] and printer_manager.is_configured(pid) is True
 
 
+async def test_patch_print_option_is_stored_without_voiding_setup(client, create_printer, session_factory, scheduled_tests):
+    """A per-print option (`connects=False`, e.g. Bambu timelapse) lives in connection_config but is not how it connects."""
+    pid = await _configured_bambu(create_printer)
+    scheduled_tests.clear()
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {
+        "ip_address": "10.0.0.9", "serial_number": "S1", "access_code": "A1", "use_ams": 1, "timelapse": 1}})
+    assert r.status_code == 200 and r.json()["configured"] is True
+    row = await _row(session_factory, pid)
+    assert row.configured is True and row.connection_config["timelapse"] == 1
+    assert scheduled_tests == []
+
+
+async def test_patch_connection_change_drops_the_old_connection(client, create_printer, scheduled_tests):
+    """The old client must not keep claiming (or vouch for the new config) while the re-test is queued."""
+    pid = await _configured_bambu(create_printer)
+    old = _FakeClient(connected=True)
+    old.is_printing = False
+    printer_manager.register_client(pid, old)
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {
+        "ip_address": "10.0.0.10", "serial_number": "S1", "access_code": "A1"}})
+    assert r.status_code == 200
+    assert pid not in printer_manager._clients and old.disconnected is True
+
+
+async def test_patch_connection_change_is_refused_mid_print(client, create_printer, session_factory, scheduled_tests):
+    pid = await _configured_bambu(create_printer)
+    scheduled_tests.clear()
+    live = _FakeClient(connected=True)
+    live.is_printing = True
+    printer_manager.register_client(pid, live)
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {
+        "ip_address": "10.0.0.10", "serial_number": "S1", "access_code": "A1"}})
+    assert r.status_code == 409
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.connection_config["ip_address"]) == (True, "10.0.0.9")
+    assert printer_manager._clients[pid] is live and live.disconnected is False and scheduled_tests == []
+
+
+async def test_reconnect_refuses_a_printer_missing_a_required_field(client, create_printer, monkeypatch):
+    pid = await create_printer(configured=False, connection_config={"ip_address": "10.0.0.11"})
+    built = []
+    monkeypatch.setattr("app.api.routes.printers.create_client", lambda p: built.append(p))
+    r = await client.post(f"/api/v1/printers/{pid}/reconnect")
+    assert r.status_code == 409 and r.json()["detail"] == "Missing Serial Number, Access Code"
+    assert built == []
+
+
 class _FakeClient:
     def __init__(self, connected: bool, endpoint=None):
         self.connected, self._endpoint = connected, endpoint

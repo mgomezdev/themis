@@ -264,13 +264,13 @@ class BambuMQTTClient(AbstractPrinterClient):
             ConnectionField(name="serial_number", label="Serial Number", field_type="text", placeholder="01P00A...",
                             quick_add=True),
             ConnectionField(name="access_code", label="Access Code", field_type="password", quick_add=True),
-            ConnectionField(name="use_ams", label="Use AMS", field_type="number", default=1, required=False,
+            ConnectionField(name="use_ams", label="Use AMS", field_type="number", default=1, required=False, connects=False,
                             help_text="1 = print from the AMS (auto-detected filaments), 0 = external spool."),
-            ConnectionField(name="bed_leveling", label="Auto bed leveling", field_type="number", default=1, required=False,
+            ConnectionField(name="bed_leveling", label="Auto bed leveling", field_type="number", default=1, required=False, connects=False,
                             help_text="1 = run bed leveling before each print, 0 = skip."),
-            ConnectionField(name="flow_cali", label="Flow calibration", field_type="number", default=0, required=False,
+            ConnectionField(name="flow_cali", label="Flow calibration", field_type="number", default=0, required=False, connects=False,
                             help_text="1 = run dynamic flow calibration before printing, 0 = off."),
-            ConnectionField(name="timelapse", label="Timelapse", field_type="number", default=0, required=False,
+            ConnectionField(name="timelapse", label="Timelapse", field_type="number", default=0, required=False, connects=False,
                             help_text="1 = record a timelapse, 0 = off."),
         ]
 

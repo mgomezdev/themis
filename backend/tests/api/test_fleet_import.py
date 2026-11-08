@@ -166,6 +166,16 @@ async def test_imported_printer_lands_unconfigured_and_is_retested(client, sched
     assert all(not printer_manager.is_configured(p["id"]) for p in fleet)
 
 
+async def test_an_imported_printer_never_stores_a_blank_value(client, session_factory):
+    from app.models import Printer
+    resp = await _import(client, _backup({**_printer("D", "bambu"),
+                                          "connection_config": {"ip_address": "10.0.0.8", "serial_number": "S", "access_code": ""}}))
+    assert resp.json()["imported"] == 1
+    (p,) = [p for p in await _fleet(client) if p["name"] == "D"]
+    async with session_factory() as s:
+        assert (await s.get(Printer, p["id"])).connection_config == {"ip_address": "10.0.0.8", "serial_number": "S"}
+
+
 @pytest.mark.auto_test
 async def test_a_broken_client_during_the_imported_printers_test_does_not_fail_the_import(client, session_factory):
     from app.services import printer_setup

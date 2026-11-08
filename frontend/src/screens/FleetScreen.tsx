@@ -1077,6 +1077,11 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       ) : (
         <div className="tiny muted" style={{ minWidth: 80, textAlign: 'right' }}>—</div>
       )}
+      {p.configured === false && (
+        <div style={{ gridColumn: '1 / -1' }}>
+          <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
+        </div>
+      )}
     </div>
   );
 }

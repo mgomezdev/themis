@@ -549,7 +549,8 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
         model_uuid = await registry.match_free_text(session, d.model, plugin_id=plugin_id)
         here = by_ip.get(d.ip, [])
         # (IP, model) is the printer; with no matched model the same plugin at that IP is taken to be it (BIZ-369)
-        added = next((p for p in here if (p.model_uuid == model_uuid if model_uuid else p.plugin_id == plugin_id)), None)
+        added = next((p for p in here if (p.model_uuid == model_uuid if model_uuid and p.model_uuid
+                                          else p.plugin_id == plugin_id)), None)
         other = next((p for p in here if p is not added), None) if added is None else None
         found.append({
             "model_uuid": model_uuid,
@@ -688,11 +689,17 @@ async def update_printer(
         printer.model_uuid = new_uuid
     if body.name is not None:
         printer.name = body.name
-    retest = body.connection_config is not None and printer_setup.connection_changed(printer.connection_config,
-                                                                                    body.connection_config)
-    if retest:                        # only a real change to how it connects voids the confirmed setup (BIZ-369)
+    retest = False
+    if body.connection_config is not None and printer_setup.connection_changed(printer.connection_config, body.connection_config):
+        # only a real change to a field it connects with voids the confirmed setup; a per-print option is just stored (BIZ-369)
+        retest = printer_setup.connection_changed(printer.connection_config, body.connection_config,
+                                                  printer_setup.fields_for(printer))
+        live = printer_manager._clients.get(printer.id)
+        if retest and live is not None and getattr(live, "connected", False) is True and getattr(live, "is_printing", False) is True:
+            raise HTTPException(409, "The printer is printing: change how Themis connects to it once the print is done")
         printer.connection_config = printer_setup.strip_blank(body.connection_config)
-        printer.configured, printer.config_error = False, None
+        if retest:
+            printer.configured, printer.config_error = False, None
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
     # Use model_fields_set so an explicit null clears the preset (EditForm sends
@@ -740,6 +747,7 @@ async def update_printer(
     await session.refresh(printer)
     if retest:
         printer_manager.set_configured(printer.id, False)
+        printer_manager.disconnect_printer(printer.id)      # the old connection must not keep printing/claiming on stale settings
         printer_setup.schedule(printer.id, _factory_of(session))
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
@@ -1037,8 +1045,12 @@ async def reconnect_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Disconnect the current session and open a fresh connection."""
+    """Disconnect the current session and open a fresh connection. 409 while a required connection field is missing (nothing is
+    sent with a blank credential)."""
     printer = await _get_or_404(printer_id, session)
+    missing = printer_setup.missing_required(printer_setup.fields_for(printer), printer.connection_config or {})
+    if missing:
+        raise HTTPException(409, printer_setup.missing_reason(missing))
     printer_manager.disconnect_printer(printer_id)
     try:
         client = create_client(printer)

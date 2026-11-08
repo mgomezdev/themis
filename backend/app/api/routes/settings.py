@@ -412,7 +412,7 @@ async def fleet_import(
             plugin_id=identity[0],
             manufacturer_id=identity[1],
             model_id=identity[2],
-            connection_config=conn_cfg,
+            connection_config=printer_setup.strip_blank(conn_cfg),   # a redacted secret is absent, never ""
             orca_printer_profiles=orca_profiles,
             machine_profile_override=current_profile,
             nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()

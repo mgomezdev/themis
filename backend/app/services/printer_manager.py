@@ -106,6 +106,11 @@ class PrinterManager:
                 if printer is not None:
                     printer.configured, printer.config_error = True, None
                     await session.commit()
+        if self._on_connectivity is not None:
+            try:
+                await self._on_connectivity(printer_id, "configured", False)   # it may claim now: don't wait for the next tick
+            except Exception:
+                logger.exception("Connectivity handler failed for printer %s", printer_id)
         if broadcast and self._on_state_broadcast:
             await self._on_state_broadcast("printer_configured",
                                            {"printer_id": printer_id, "configured": True, "config_error": None})
@@ -124,7 +129,8 @@ class PrinterManager:
             for printer in printers:                  # no client (no login attempt) for a printer missing a required field
                 missing = printer_setup.missing_required(printer_setup.fields_for(printer), printer.connection_config or {})
                 if missing:
-                    printer.config_error = printer_setup.missing_reason(missing)
+                    printer.configured, printer.config_error = False, printer_setup.missing_reason(missing)
+                    self.set_configured(printer.id, False)
                     incomplete.add(printer.id)
             if incomplete:
                 await session.commit()
@@ -266,7 +272,11 @@ class PrinterManager:
             except Exception:
                 logger.exception("Connectivity handler failed for printer %s", printer_id)
         client = self._clients.get(printer_id)
-        if client is not None and printer_id in self._unconfigured and getattr(client, "connected", False):
+        from . import printer_setup
+        # The first live connection confirms setup — but not while a test is pending or running: after a connection change the
+        # old client may still report until the test replaces it, and that must not vouch for the new, untested config.
+        if client is not None and printer_id in self._unconfigured and getattr(client, "connected", False) \
+                and not printer_setup.is_pending(printer_id):
             try:
                 await self.mark_configured(printer_id)            # the first live connection confirms the setup (BIZ-369)
             except Exception:

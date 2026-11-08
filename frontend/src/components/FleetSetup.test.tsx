@@ -79,4 +79,16 @@ describe('Fleet: out-of-queue states (BIZ-369)', () => {
       ip_address: '10.0.0.4', serial_number: 'S4', use_ams: 1, access_code: 'ABCD1234' } });
     await waitFor(() => expect(refetch).toHaveBeenCalled());
   });
+
+  it('Save & connect with nothing changed re-tests instead of a no-op PATCH (the printer was asleep)', async () => {
+    const user = userEvent.setup();
+    const { to } = stubFetch({ 'GET /api/v1/printers/4': STORED, 'GET /api/v1/printers/types': [P1S],
+      'POST /api/v1/printers/4/test': { ok: true, error: null, configured: true, config_error: null } });
+    render(<SetupIncompleteCard printer={printer({ configured: false })} refetchFleet={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Finish setup' }));
+    await screen.findByLabelText('IP Address for Bay 4');
+    await user.click(screen.getByRole('button', { name: 'Save & connect' }));
+    await waitFor(() => expect(to('POST', '/api/v1/printers/4/test')).toHaveLength(1));
+    expect(to('PATCH', '/api/v1/printers/4')).toHaveLength(0);
+  });
 });

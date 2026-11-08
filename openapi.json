@@ -2115,7 +2115,7 @@
           "printers"
         ],
         "summary": "Reconnect printer",
-        "description": "Disconnect the current session and open a fresh connection.",
+        "description": "Disconnect the current session and open a fresh connection. 409 while a required connection field is missing (nothing is\nsent with a blank credential).",
         "operationId": "reconnect_printer_api_v1_printers__printer_id__reconnect_post",
         "parameters": [
           {

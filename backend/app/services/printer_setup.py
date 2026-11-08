@@ -52,10 +52,15 @@ def _normalised(cfg: dict | None) -> dict:
     return {k: str(v).strip() for k, v in strip_blank(cfg).items()}
 
 
-def connection_changed(old: dict | None, new: dict | None) -> bool:
-    """True only for a real difference: blanks and str/int spellings of the same value (`1` vs `"1"`) don't count, so
-    re-saving a form with untouched values never unconfigures a printer."""
-    return _normalised(old) != _normalised(new)
+def connection_changed(old: dict | None, new: dict | None, fields: list[ConnectionField] | None = None) -> bool:
+    """True only for a real difference in how the printer connects: blanks and str/int spellings of the same value (`1` vs
+    `"1"`) don't count, and with `fields` only the ones marked `connects` are compared (a per-print option is not a connection
+    change), so re-saving a form or toggling an option never unconfigures a printer."""
+    a, b = _normalised(old), _normalised(new)
+    if fields is not None:
+        keys = {f.name for f in fields if f.connects}
+        a, b = {k: v for k, v in a.items() if k in keys}, {k: v for k, v in b.items() if k in keys}
+    return a != b
 
 
 @dataclass(frozen=True)
@@ -110,6 +115,7 @@ AUTO_TEST_CONCURRENCY = 4
 _locks: dict[int, asyncio.Lock] = {}
 _semaphore: asyncio.Semaphore | None = None
 _tasks: set[asyncio.Task] = set()
+_pending: dict[int, int] = {}        # printer id -> tests scheduled or running for it
 
 
 def _reset() -> None:
@@ -118,6 +124,24 @@ def _reset() -> None:
     _locks.clear()
     _semaphore = None
     _tasks.clear()
+    _pending.clear()
+
+
+def is_pending(printer_id: int) -> bool:
+    """A connection test is scheduled or running for this printer (its live client must not vouch for the setup meanwhile)."""
+    return _pending.get(printer_id, 0) > 0
+
+
+def _begin(printer_id: int) -> None:
+    _pending[printer_id] = _pending.get(printer_id, 0) + 1
+
+
+def _end(printer_id: int) -> None:
+    left = _pending.get(printer_id, 0) - 1
+    if left > 0:
+        _pending[printer_id] = left
+    else:
+        _pending.pop(printer_id, None)
 
 
 async def _persist(session_factory, printer_id: int, configured: bool, error: str | None) -> None:
@@ -142,6 +166,14 @@ async def evaluate(printer_id: int, session_factory) -> TestOutcome:
     require) and success marks it configured. On failure: unreachable keeps the client registered so its reconnect can still produce
     the first live connection; reached-but-login-failed tears it down (no retry storm against the printer) until the fields change or
     the user tests again. Never raises; one test per printer at a time."""
+    _begin(printer_id)
+    try:
+        return await _evaluate_locked(printer_id, session_factory)
+    finally:
+        _end(printer_id)
+
+
+async def _evaluate_locked(printer_id: int, session_factory) -> TestOutcome:
     lock = _locks.setdefault(printer_id, asyncio.Lock())
     async with lock:
         try:
@@ -189,6 +221,9 @@ async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
         await printer_manager.mark_configured(printer_id, session_factory, broadcast=False)
         return TestOutcome(True, None, True)
     hint, reachable = await failure_hint(client)
+    if client.connected:                                    # it came up while the port was probed
+        await printer_manager.mark_configured(printer_id, session_factory, broadcast=False)
+        return TestOutcome(True, None, True)
     if reachable is True and printer_manager._clients.get(printer_id) is client:
         printer_manager.disconnect_printer(printer_id)      # login failed: don't let its reconnect loop hammer the printer
     printer_manager.set_configured(printer_id, False)
@@ -202,10 +237,14 @@ def schedule(printer_id: int, session_factory) -> None:
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(AUTO_TEST_CONCURRENCY)
     sem = _semaphore
+    _begin(printer_id)                       # pending from now, not only once a slot frees up
 
     async def run() -> None:
-        async with sem:
-            await evaluate(printer_id, session_factory)
+        try:
+            async with sem:
+                await evaluate(printer_id, session_factory)
+        finally:
+            _end(printer_id)
 
     task = asyncio.get_running_loop().create_task(run(), name=f"printer-test-{printer_id}")
     _tasks.add(task)

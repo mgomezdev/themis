@@ -75,21 +75,24 @@ async def test_patch_explicit_null_clears_the_active_preset_and_plate_type_but_o
     assert cleared.json()["name"] == "Renamed"
 
 
-async def test_patch_replaces_connection_config_wholesale_without_touching_the_live_client(client, printer):
-    """Pins current behavior: a new IP is saved but the running client keeps its old connection until the
-    operator hits Reconnect (there is no automatic reconnect on edit)."""
+async def test_patch_replaces_connection_config_wholesale_and_reconnects_through_a_test(client, printer, scheduled_tests):
+    """A new IP replaces the stored config wholesale; since BIZ-369 the old connection is dropped (it must not keep claiming on
+    the stale address) and a connection test re-establishes it with the new settings."""
     await client.patch(f"/api/v1/printers/{printer['id']}",
                        json={"connection_config": {"ip_address": "10.0.0.5", "stale_key": "old"}})
     live = MagicMock()
     live.connected = True
+    live.is_printing = False
     printer_manager._clients[printer["id"]] = live
+    scheduled_tests.clear()
 
     resp = await client.patch(f"/api/v1/printers/{printer['id']}", json={"connection_config": {"ip_address": "10.0.0.99"}})
 
     assert resp.json()["connection_config"] == {"ip_address": "10.0.0.99"}  # replaced, not merged
-    assert resp.json()["connected"] is True
-    assert printer_manager._clients[printer["id"]] is live
-    live.disconnect.assert_not_called()
+    assert (resp.json()["connected"], resp.json()["configured"]) == (False, False)
+    assert printer["id"] not in printer_manager._clients
+    live.disconnect.assert_called_once()
+    assert scheduled_tests == [printer["id"]]
 
 
 @pytest.mark.parametrize("body", [{"bed_x_mm": "wide"}, {"enabled": "maybe"}, {"loaded_filaments": "PLA"},

@@ -94,5 +94,40 @@ async def test_startup_skips_printer_missing_required_field(session_factory, cap
     assert not any(r.exc_info for r in caplog.records)
     async with session_factory() as s:
         row = await s.get(Printer, skipped)
-        assert row.config_error == "Missing Serial Number, Access Code"
-        assert row.configured is True                                   # the reason is recorded; status is left as it was
+        assert (row.configured, row.config_error) == (False, "Missing Serial Number, Access Code")   # Fleet shows Setup incomplete
+    assert mgr.is_configured(skipped) is False and mgr.is_configured(full) is True
+
+
+async def test_a_pending_test_keeps_the_live_client_from_vouching_for_setup(session_factory):
+    """After a connection change the old client may still report; only the test (or a live connection after it) configures."""
+    from app.services import printer_setup
+    pid = await _seed(session_factory, configured=False)
+    mgr = PrinterManager()
+    mgr.set_session_factory(session_factory)
+    mgr.set_configured(pid, False)
+    client = _make_mock_client()
+    mgr.register_client(pid, client)
+    printer_setup._begin(pid)
+    try:
+        await mgr.on_state_change(pid, client.state)
+        assert mgr.is_configured(pid) is False
+        async with session_factory() as s:
+            assert (await s.get(Printer, pid)).configured is False
+    finally:
+        printer_setup._end(pid)
+    await mgr.on_state_change(pid, client.state)
+    assert mgr.is_configured(pid) is True
+
+
+async def test_marking_configured_wakes_the_queue(session_factory):
+    pid = await _seed(session_factory, configured=False)
+    mgr = PrinterManager()
+    mgr.set_session_factory(session_factory)
+    edges = []
+
+    async def on_connectivity(printer_id, edge, was_dead):
+        edges.append((printer_id, edge))
+
+    mgr.set_connectivity_callback(on_connectivity)
+    await mgr.mark_configured(pid)
+    assert edges == [(pid, "configured")]

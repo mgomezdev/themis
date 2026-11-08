@@ -44,6 +44,7 @@ interface Row {
   status: RowStatus | null;            // null = derived (ready / missing)
   detail?: string;
   error?: string;                      // a create/save that failed for another reason
+  notice?: string;                     // what an IP-conflict save did to the other printer
   printerId?: number;                  // the saved printer (added here, or already in the fleet / using the IP)
   editing?: boolean;                   // a saved printer's fields reopened
 }
@@ -148,7 +149,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
       });
       patch(key, { printerId: created.id });
       onAdded?.();
-      await follow(key, created.id);
+      void follow(key, created.id);      // not awaited: a batch's pool slots go to creates, not to ~20 s of polling
     } catch (e) {
       if (statusOf(e) === 409) patch(key, { status: 'exists', detail: readable(e) });
       else patch(key, { status: null, error: readable(e), checked: true });
@@ -180,17 +181,22 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
     }
   }
 
-  /** Save the row's fields onto its saved printer (merged over what is stored, blanks keep the stored value), then follow the
-   *  re-test the change triggers. */
-  async function save(p: DiscoveredPrinter, printerId: number, changes: Record<string, unknown>) {
+  /** Save the row's fields onto a saved printer (merged over what is stored, blanks keep the stored value) and follow the re-test
+   *  the change triggers; with nothing changed, test it as it is (e.g. it was asleep). `own` = the printer is this row's (added
+   *  here or already in the fleet); an IP-conflict save moves *another* printer, so the row only notes it. */
+  async function save(p: DiscoveredPrinter, printerId: number, changes: Record<string, unknown>, own = true) {
     const key = keyOf(p);
-    patch(key, { status: 'adding', error: undefined });
+    patch(key, { status: own ? 'adding' : null, error: undefined, notice: undefined });
     try {
       const stored = await fetchPrinter(printerId);
-      await updatePrinter(printerId, { connection_config: { ...stored.connection_config, ...stripBlank(changes) } });
+      const merged = { ...stored.connection_config, ...stripBlank(changes) };
+      const same = JSON.stringify(stripBlank(stored.connection_config)) === JSON.stringify(stripBlank(merged));
+      if (same) await testSavedPrinter(printerId);
+      else await updatePrinter(printerId, { connection_config: merged });
       patch(key, { editing: false });
       onAdded?.();
-      await follow(key, printerId);
+      if (own) await follow(key, printerId);
+      else patch(key, { notice: `Saved — ${p.ip_in_use_by?.name ?? 'that printer'} is being re-tested at its new address.` });
     } catch (e) {
       patch(key, { status: null, error: readable(e) });
     }
@@ -207,7 +213,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
   const found = result?.found ?? [];
   const fresh = found.filter(p => !p.already_added);
   const fleet = found.filter(p => p.already_added);
-  const pending = (p: DiscoveredPrinter) => rows[keyOf(p)]?.printerId === undefined;
+  const pending = (p: DiscoveredPrinter) => rows[keyOf(p)]?.printerId === undefined && rows[keyOf(p)]?.status !== 'exists';
   const selected = fresh.filter(p => rows[keyOf(p)]?.checked && pending(p));
   const addableSel = selected.filter(p => typeOf(p, rows[keyOf(p)]));
   const incomplete = addableSel.filter(p => derived(p, rows[keyOf(p)]).status === 'missing');
@@ -264,7 +270,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
                       onAdd={() => void add(p)} onTest={() => void test(p)}
                       onSave={() => row.printerId !== undefined && void save(p, row.printerId, row.values)}
                       onEditConflict={() => patch(key, { editing: true })}
-                      onSaveConflict={ip => p.ip_in_use_by && void save(p, p.ip_in_use_by.printer_id, { ip_address: ip })}
+                      onSaveConflict={ip => p.ip_in_use_by && void save(p, p.ip_in_use_by.printer_id, { ip_address: ip }, false)}
                       onMoreSettings={onMoreSettings ? () => onMoreSettings({ ...p, name: row.nickname || p.name,
                         connection_config: { ...p.connection_config, ...stripBlank(row.values) } as Record<string, string | number> }) : undefined} />;
                   })}
@@ -406,6 +412,7 @@ function NewRow({ p, row, options, type, state, busy, patch, onAdd, onTest, onSa
             ) : <button className="btn ghost sm" onClick={onEditConflict}>Edit {p.ip_in_use_by.name}</button>}
           </div>
         )}
+        {row.notice && <div className="tiny" role="status" style={{ marginTop: 4 }}>{row.notice}</div>}
       </td>
       <td className="num small">{p.ip}</td>
       <td><QuickInputs ip={p.ip} fields={fields} row={row} patch={patch} /></td>

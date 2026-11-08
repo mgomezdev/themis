@@ -147,6 +147,24 @@ describe('DiscoverPrinters', () => {
     expect(onAdded).toHaveBeenCalledTimes(5);
     expect(screen.getByTestId('discover-printers')).toBeTruthy();                             // nothing navigated away
     expect(screen.getByRole('button', { name: 'Add 1 printer' })).toBeTruthy();              // the failed row can be retried
+    await user.click(screen.getByRole('button', { name: 'All new' }));
+    expect(screen.getByRole('button', { name: 'Add 1 printer' })).toBeTruthy();              // ...but not the "Already added" one
+  });
+
+  it('a batch\'s creates are not held back by the rows still waiting on their connection test', async () => {
+    const user = userEvent.setup();
+    const ips = ['192.168.7.51', '192.168.7.52', '192.168.7.53', '192.168.7.54', '192.168.7.55', '192.168.7.56'];
+    let n = 60;
+    const { calls } = stubFetch({
+      'POST /api/v1/printers/discover': result(...ips.map(ip => ELEGOO(ip))), 'GET /api/v1/printers/types': TYPES,
+      'POST /api/v1/printers': () => saved(++n, { configured: false }),
+      ...Object.fromEntries([61, 62, 63, 64, 65, 66].map(id => [`GET /api/v1/printers/${id}`, () => new Promise(() => {})])),
+    });
+    render(<DiscoverPrinters />);
+    await openAndScan(user);
+    await user.click(await screen.findByRole('button', { name: 'Add 6 printers' }));
+    await waitFor(() => expect(posts(calls)).toHaveLength(6));                                // polls never answer, creates still all go out
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Scan' })).toBeEnabled());
   });
 
   it('never sends a blank quick-add value', async () => {
@@ -193,6 +211,28 @@ describe('DiscoverPrinters', () => {
     await user.click(within(row).getByRole('button', { name: 'Save A1-Bay4' }));
     await waitFor(() => expect(calls.some(c => c.method === 'PATCH')).toBe(true));
     expect(calls.find(c => c.method === 'PATCH')!.body).toEqual({ connection_config: { ip_address: '192.168.7.99', access_code: 'secret' } });
+    expect((await within(row).findByRole('status')).textContent).toMatch(/A1-Bay4 is being re-tested at its new address/);
+    expect(within(row).getByTestId('row-status').textContent).not.toMatch(/^Added/);          // this row was not added
+    expect(within(row).getByRole('button', { name: 'Add 192.168.7.20' })).toBeTruthy();
+  });
+
+  it('saving an already-added printer with nothing changed tests it as it is instead', async () => {
+    const user = userEvent.setup();
+    const added = found({ ...BAMBU, already_added: true,
+      added_printer: { printer_id: 5, name: 'Bay 2', configured: false, config_error: "Couldn't reach 192.168.7.20:8883" } });
+    const { calls } = stubFetch({
+      'POST /api/v1/printers/discover': result(added), 'GET /api/v1/printers/types': TYPES,
+      'GET /api/v1/printers/5': saved(5, { connection_config: { ip_address: '192.168.7.20', serial_number: '01P00A111111111', access_code: 'X' } }),
+      'POST /api/v1/printers/5/test': { ok: true, error: null, configured: true, config_error: null },
+    });
+    render(<DiscoverPrinters />);
+    await openAndScan(user);
+    const section = await screen.findByRole('region', { name: 'Already in your fleet' });
+    await user.click(within(section).getByRole('button', { name: 'Edit Bay 2' }));
+    await user.click(within(section).getByRole('button', { name: 'Save 192.168.7.20' }));
+    await waitFor(() => expect(within(section).getByTestId('row-status').textContent).toBe('Added · configured'));
+    expect(calls.some(c => c.method === 'PATCH')).toBe(false);
+    expect(calls.filter(c => c.url === '/api/v1/printers/5/test')).toHaveLength(1);
   });
 
   it('an already-added printer sits in its own section and edits the saved printer by PATCH', async () => {

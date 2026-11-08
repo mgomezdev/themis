@@ -74,7 +74,14 @@ export function SetupIncompleteCard({ printer: p, refetchFleet }: { printer: Pri
       <div className="row gap-2" style={{ marginTop: 6 }}>
         {form ? (
           <button className="btn primary sm" disabled={busy} onClick={() => void run(async () => {
-            await updatePrinter(id, { connection_config: { ...form.printer.connection_config, ...stripBlank(values) } });
+            const stored = form.printer.connection_config;
+            const merged = { ...stored, ...stripBlank(values) };
+            if (JSON.stringify(stripBlank(stored)) === JSON.stringify(stripBlank(merged))) {
+              const out = await testSavedPrinter(id);          // nothing changed (e.g. it was asleep): just try again
+              if (!out.ok && out.error) setError(out.error);
+            } else {
+              await updatePrinter(id, { connection_config: merged });   // a real change re-tests on the server
+            }
             setForm(null);
           })}>Save &amp; connect</button>
         ) : <button className="btn sm" disabled={busy} onClick={() => void open()}>Finish setup</button>}
