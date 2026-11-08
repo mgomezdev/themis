@@ -261,8 +261,9 @@ class BambuMQTTClient(AbstractPrinterClient):
     def connection_fields(cls) -> list[ConnectionField]:
         return [
             ConnectionField(name="ip_address", label="IP Address", field_type="text", placeholder="192.168.1.x"),
-            ConnectionField(name="serial_number", label="Serial Number", field_type="text", placeholder="01P00A..."),
-            ConnectionField(name="access_code", label="Access Code", field_type="password"),
+            ConnectionField(name="serial_number", label="Serial Number", field_type="text", placeholder="01P00A...",
+                            quick_add=True),
+            ConnectionField(name="access_code", label="Access Code", field_type="password", quick_add=True),
             ConnectionField(name="use_ams", label="Use AMS", field_type="number", default=1, required=False,
                             help_text="1 = print from the AMS (auto-detected filaments), 0 = external spool."),
             ConnectionField(name="bed_leveling", label="Auto bed leveling", field_type="number", default=1, required=False,

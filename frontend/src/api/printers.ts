@@ -20,6 +20,7 @@ export interface ConnectionField {
   default: string | number | null;
   placeholder: string;
   help_text: string;
+  quick_add: boolean;   // an input on the scan's quick-add row (BIZ-369)
 }
 
 /** One printer model a plugin declares. The add-printer flow picks manufacturer -> model; the plugin serves the printer. */

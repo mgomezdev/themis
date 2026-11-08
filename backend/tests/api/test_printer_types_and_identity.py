@@ -55,6 +55,11 @@ async def test_types_lists_each_declared_model_with_the_contract_keys(client):
         assert set(e) == TYPE_KEYS
         assert isinstance(e["connection_fields"], list)
 
+    real = [f for e in resp.json() for f in e["connection_fields"]]
+    assert real and all(isinstance(f["quick_add"], bool) for f in real)          # BIZ-369: the scan renders inputs from it
+    bambu = next(e for e in resp.json() if e["plugin_id"] == "bambu")
+    assert [f["name"] for f in bambu["connection_fields"] if f["quick_add"]] == ["serial_number", "access_code"]
+
     a1 = next(e for e in entries if e["model_id"] == "a1")
     assert (a1["manufacturer_id"], a1["manufacturer_name"], a1["display_name"]) == ("acme", "Acme 3D", "Acme A1")
     assert (a1["bed_mm"], a1["toolheads"]) == ([220, 220], 1)

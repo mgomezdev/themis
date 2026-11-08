@@ -8,13 +8,13 @@ import { printerType } from '../test/printerTypes';
 
 const TYPES: PrinterType[] = [
   printerType({ plugin_id: 'elegoo_centauri', manufacturer_id: 'elegoo', manufacturer_name: 'Elegoo', model_id: 'centauri', display_name: 'Centauri Carbon', connection_fields: [
-    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'port', label: 'Port', field_type: 'number', required: false, default: 3030, placeholder: '', help_text: '' },
+    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'port', label: 'Port', field_type: 'number', required: false, default: 3030, placeholder: '', help_text: '', quick_add: false },
   ] }),
   printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S', connection_fields: [
-    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
+    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
   ] }),
 ];
 
