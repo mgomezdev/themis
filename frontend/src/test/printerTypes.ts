@@ -20,4 +20,5 @@ export function printerType(over: Partial<PrinterType> & Pick<PrinterType, 'plug
 
 export const IP_FIELD: ConnectionField = {
   name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '',
+  quick_add: false,
 };

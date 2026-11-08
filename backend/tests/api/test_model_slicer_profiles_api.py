@@ -1,5 +1,6 @@
 """Model -> slicer machine profile mapping (BIZ-294): CRUD, variant validation, default uniqueness, a printer's nozzle variant, the
 resolved profile on printers, and suggestions from the provider (stubbed to the Laminus profiles contract)."""
+from tests.printer_ips import ip_config
 from unittest.mock import patch
 
 import httpx
@@ -219,12 +220,12 @@ async def test_an_unmapped_variant_is_refused_and_a_printer_on_none_reports_why(
 async def test_creating_a_printer_with_an_unmapped_variant_is_refused(client, p1s):
     pid, model = p1s
     await add(client, model)
-    r = await client.post("/api/v1/printers", json={"name": "N", "printer_type": "bambu", "connection_config": {},
+    r = await client.post("/api/v1/printers", json={"name": "N", "printer_type": "bambu", "connection_config": ip_config(),
                                                     "nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}})
     assert r.status_code == 422
     ok = await add(client, model, P1S_06, d=0.6)
     assert ok.status_code == 201
-    r = await client.post("/api/v1/printers", json={"name": "N", "printer_type": "bambu", "connection_config": {},
+    r = await client.post("/api/v1/printers", json={"name": "N", "printer_type": "bambu", "connection_config": ip_config(),
                                                     "nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}})
     assert r.status_code == 201 and r.json()["nozzle_variant"] == {"diameter_mm": 0.6, "flow": "standard"}
 

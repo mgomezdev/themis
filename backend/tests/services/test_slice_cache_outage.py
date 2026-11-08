@@ -156,7 +156,7 @@ async def test_only_the_printer_with_a_version_claims_it(session_factory, tmp_pa
     job_id = await _seed_allowing(session_factory)
     async with session_factory() as s:
         (await s.get(Printer, 1)).machine_profile_override = "Some Other Machine"
-        s.add(Printer(id=2, name="P2", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(configured=True, id=2, name="P2", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override=MACHINE,
                       loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                          "filament_profile": "Generic PETG"}]))

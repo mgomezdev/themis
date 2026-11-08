@@ -101,7 +101,7 @@ async def test_a_printer_with_a_default_takes_the_job_a_printer_without_one_skip
     job_id = await _seed_job(session_factory, printer_id=1)
     await _set(session_factory, job_id, print_profile="", default=None)
     async with session_factory() as s:
-        s.add(Printer(id=2, name="Printer 2", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(configured=True, id=2, name="Printer 2", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="Test Machine Preset", default_process_profile="P-2"))
         await s.flush()
         s.add(JobPrinterConfig(job_id=job_id, printer_id=2, print_profile="", filament_profile="PLA"))

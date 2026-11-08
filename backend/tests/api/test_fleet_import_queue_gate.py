@@ -35,5 +35,7 @@ async def test_an_imported_printer_of_a_missing_plugin_is_never_ready_even_with_
 async def test_an_imported_printer_of_an_installed_plugin_is_ready(client):
     pid = await _import_one(client)                                                      # legacy entry -> bambu
     printer_manager.register_client(pid, MagicMock(connected=True, is_idle=True))
+    assert printer_manager.is_printer_ready(pid) is False                               # imported unconfigured (BIZ-369)
+    printer_manager.set_configured(pid, True)                                           # as its passed connection test does
 
     assert printer_manager.is_printer_ready(pid) is True

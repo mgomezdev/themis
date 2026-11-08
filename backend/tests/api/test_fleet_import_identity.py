@@ -1,4 +1,5 @@
 """Fleet backup carries each printer's plugin identity and import restores it (BIZ-251 review)."""
+from tests.printer_ips import ip_config
 import io
 import json
 
@@ -31,7 +32,7 @@ async def _identities(session_factory) -> list[tuple]:
 
 
 async def test_backup_entries_carry_the_identity_triple(client):
-    await client.post("/api/v1/printers", json={"name": "X", "printer_type": "bambu", "connection_config": {}})
+    await client.post("/api/v1/printers", json={"name": "X", "printer_type": "bambu", "connection_config": ip_config()})
 
     (entry,) = (await client.get("/api/v1/settings/fleet-backup")).json()["printers"]
 
@@ -40,7 +41,7 @@ async def test_backup_entries_carry_the_identity_triple(client):
 
 async def test_roundtrip_restores_the_identity_on_the_new_row(client, session_factory):
     created = (await client.post("/api/v1/printers", json={
-        "name": "Forge", "plugin_id": "bambu", "manufacturer_id": "bambu", "model_id": "p1s", "connection_config": {}})).json()
+        "name": "Forge", "plugin_id": "bambu", "manufacturer_id": "bambu", "model_id": "p1s", "connection_config": ip_config()})).json()
     backup = (await client.get("/api/v1/settings/fleet-backup")).json()
     await client.delete(f"/api/v1/printers/{created['id']}")
     assert await _identities(session_factory) == []

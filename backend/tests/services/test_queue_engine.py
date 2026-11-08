@@ -15,7 +15,7 @@ from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
-from tests.waiting import settle_background_tasks, settle_events, wait_until
+from tests.waiting import cancel_background_tasks, settle_background_tasks, settle_events, wait_until
 
 
 @pytest_asyncio.fixture
@@ -53,7 +53,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
     async with factory() as session:
         # Ensure the target printer exists (queue engine checks queue_on before claiming)
         if await session.get(Printer, printer_id) is None:
-            session.add(Printer(
+            session.add(Printer(configured=True,
                 id=printer_id,
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
@@ -148,6 +148,34 @@ async def test_queue_off_printer_does_not_claim(db):
     async with db() as session:
         job = await session.get(Job, job_id)
         assert job.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_printer_never_claims(db):
+    """BIZ-369: a printer no connection has confirmed claims nothing — not on the ready path, not slice-ahead — even though its
+    manager reports it ready and the job lists it; once configured it claims on the next cycle."""
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    job_id = await _seed_job(db, printer_id=1)
+    async with db() as session:
+        (await session.get(Printer, 1)).configured = False
+        await session.commit()
+
+    await qe._process_queue()
+    async with db() as session:
+        await qe._try_claim_for_printer(session, 1, slice_only=True)
+    await settle_background_tasks()
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.assigned_printer_id) == ("queued", None)
+
+    async with db() as session:
+        (await session.get(Printer, 1)).configured = True
+        await session.commit()
+    await qe._process_queue()
+    async with db() as session:
+        assert (await session.get(Job, job_id)).assigned_printer_id == 1
+    await cancel_background_tasks("slice-")
 
 
 @pytest.mark.asyncio

@@ -2,24 +2,29 @@
 
 **Printer plug-in → Settings → Find printers** scans with that enabled plug-in's discovery protocol. The default
 `192.168.x.x` covers `192.168.0.0/16`. Narrow it to e.g. `192.168.7.x` for a faster scan; CIDR, dotted subnet masks,
-single IPs, and trailing `*` octets also work. Ranges and results in plug-in settings stay in memory. Select **Use**
-to fill the Add Printer wizard, then confirm the model and connection before creating a printer. Moonraker firmware
-does not always identify the hardware model, so the wizard may ask you to choose it.
+single IPs, and trailing `*` octets also work. **Add printer → Scan network** does the same across every enabled
+printer plug-in.
 
-**Bambu Lab → Settings → Find printers** uses the same range controls with the Bambu plug-in's own discovery hook.
-Printers exposing both LAN MQTT (8883) and FTPS (990) are listed even when SSDP does not announce a model or serial.
-Treat these as candidates: confirm the model and enter the serial from the printer's screen, then supply its LAN access
-code in the add wizard. Discovery never retrieves the access code.
+Results stay on the page until the next scan, grouped by plug-in, and each printer is added **in place**:
 
-Choose **Edit details** beside a discovered IP to enter or replace its model and serial number. **Apply details**
-updates that result and the Add Printer prefill; **Cancel** discards the draft and **Reset to discovered** restores
-the original scan result. A model edit clears the previous automatic model match. Use a known model name (such as
-P1S) to select it in the wizard; unrecognized names still require a model choice. Overrides are local to the current
-scan and are cleared by rescanning or leaving the page. Nothing is saved as a printer until you finish the add wizard.
+- A row has a nickname (the scanned name, else e.g. "P1S 30"), a model picker (type to filter; only that plug-in's
+  enabled models; required when the scan couldn't tell the model — Moonraker firmware often can't), the IP, and only
+  the fields that plug-in asks for on the row (Bambu: serial number and access code; Elegoo and Snapmaker: nothing).
+  Values the scan supplied are tagged "from scan". **Test** checks the connection before you add.
+- **Add** saves one row; tick rows and **Add N printers** saves several at once (**All new / Complete only / None**
+  select quickly). Each row then shows *Added · configured* or *Added · not configured: <reason>*. A row left with
+  blank fields is still added — it stays out of the queue until its setup is finished (on the row, or from Fleet's
+  *Setup incomplete* card).
+- Printers you already have (same IP and model) are listed under **Already in your fleet** with their status;
+  **Edit** reopens their fields and saves to the existing printer.
+- If a found IP belongs to a printer of a different model, the row warns that the address may have changed, starts
+  unticked, and **Edit <name>** lets you move that printer to its new address.
+- **More settings…** opens the full add form pre-filled from the row.
 
-**Add printer → Scan network** sweeps one or more IP ranges and lists the printers that answer to their vendor's
-documented discovery signature. Choosing one pre-fills the add form (type, nickname, IP, serial / port); secrets such
-as Bambu access codes and Moonraker API keys are never discovered — you type those.
+A new printer is tested in the background as soon as it is saved; only a successful connection (that test, a **Test**
+press, or its first live connection) lets it take queue work. Secrets such as Bambu access codes and Moonraker API
+keys are never discovered — you type those. Bambu printers exposing LAN MQTT (8883) and FTPS (990) are listed even
+when SSDP announces no model or serial: pick the model and enter the serial from the printer's screen.
 
 ## How it finds printers
 

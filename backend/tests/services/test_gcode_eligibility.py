@@ -55,7 +55,7 @@ async def seed_file(factory, library, name="part.gcode", *, known_for: list[str]
 
 async def seed_printer(factory, pid: int, model_uuid: str | None) -> None:
     async with factory() as s:
-        s.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={}, model_uuid=model_uuid))
+        s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={}, model_uuid=model_uuid))
         await s.commit()
 
 

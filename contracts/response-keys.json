@@ -9,6 +9,8 @@
     "dormant_reason",
     "enabled",
     "queue_on",
+    "configured",
+    "config_error",
     "connected",
     "awaiting_plate_clear",
     "no_snapshots_while_idle",
@@ -50,6 +52,8 @@
     "model_label",
     "enabled",
     "queue_on",
+    "configured",
+    "config_error",
     "connected",
     "loaded_filaments",
     "build_plate_type",
@@ -441,6 +445,7 @@
     "ok",
     "state"
   ],
+  "discovered_printer": ["model_uuid", "printer_type", "plugin_id", "display_name", "ip", "model", "name", "serial", "connection_config", "note", "already_added", "added_printer", "ip_in_use_by"],
   "plugin_discovery": ["printer_discovery"],
   "plugin_provides": [
     "capability",

@@ -2,16 +2,21 @@
 client — with only the slicer faked: queue two jobs, the first prints, the printer is gated until the operator
 clears the plate, then the second job is claimed. API tests patch the engine and engine tests seed the DB
 directly, so this is the only place the seams between the layers are exercised together."""
+from tests.printer_ips import ip_config
 from tests.fake_providers import FakeSlicingProvider
 from tests.slicing_env import slicing_provider
 import asyncio
+import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest_asyncio
 
+from app.services import printer_setup
 from app.services.printer_manager import printer_manager
 from app.services.queue_engine import QueueEngine
+
+pytestmark = pytest.mark.auto_test
 
 GCODE = "; filament used [g] = 12.5\n; estimated printing time (normal mode) = 1h 5m 30s\nG28\n"
 
@@ -67,10 +72,11 @@ async def _queue(client) -> dict[int, str]:
 async def test_two_jobs_flow_from_queue_to_print_to_plate_clear_to_next_print(client, farm, upload_3mf):
     # ── set up: a mock printer, one uploaded plate, two queued jobs ──────────────────────────────
     created = await client.post("/api/v1/printers", json={
-        "name": "Mock", "printer_type": "mock", "connection_config": {},
+        "name": "Mock", "printer_type": "mock", "connection_config": ip_config(),
         "orca_printer_profiles": ["Mock Machine"], "machine_profile_override": "Mock Machine",
     })
     assert created.status_code == 201, created.text
+    await printer_setup.drain()                 # its connection test (mock: connects) makes it configured
     printer_id = created.json()["id"]
     mock_printer = printer_manager.get_client(printer_id)
     file_id = await upload_3mf()

@@ -140,6 +140,24 @@ describe('FleetScreen', () => {
     expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();       // and it did not add a printer either
   });
 
+  it('a printer whose setup is incomplete carries the setup badge and card; a live printer_configured event clears both (BIZ-369)', async () => {
+    mockFetch([{ ...PRINTER_1, configured: false, config_error: 'Missing Access Code' }, { ...PRINTER_1, id: 2, name: 'Held', queue_on: false }]);
+    render(<FleetScreen />);
+    await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
+    expect(screen.getAllByTestId('setup-badge')).toHaveLength(1);
+    expect(screen.getAllByTestId('queue-off-badge')).toHaveLength(1);
+    expect(screen.getByTestId('setup-card').textContent).toMatch(/Missing Access Code/);
+
+    act(() => {
+      MockWS.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'printer_configured', data: { printer_id: 1, configured: true, config_error: null } }),
+      });
+    });
+    expect(screen.queryByTestId('setup-badge')).toBeNull();
+    expect(screen.queryByTestId('setup-card')).toBeNull();
+    expect(screen.getAllByTestId('queue-off-badge')).toHaveLength(1);
+  });
+
   it('shows an alarm badge linking to that printer\'s alarms, only while it has unacknowledged alarms', async () => {
     mockFetch([{ ...PRINTER_1, alarm_count: 2, alarm_severity: 'error' }]);
     render(<FleetScreen />);

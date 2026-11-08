@@ -49,7 +49,7 @@ async def env(session_factory, listen):
 
 async def add_printer(env, factory, pid, loaded, *, connected=True, queue_on=True, enabled=True) -> MagicMock:
     async with factory() as s:
-        s.add(Printer(id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=loaded, machine_profile_override="Test Machine Preset",
+        s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=loaded, machine_profile_override="Test Machine Preset",
                       queue_on=queue_on, enabled=enabled))
         await s.commit()
     c = client(connected=connected)
@@ -140,7 +140,7 @@ async def test_a_queue_off_or_disabled_printer_still_counts_because_the_operator
 
 async def test_a_printer_with_no_client_yet_counts_so_a_restart_blocks_nothing(env, session_factory):
     async with session_factory() as s:                                                          # a row, but its client is not registered (just booted)
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF))
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF))
         await s.commit()
     job_id = await add_job(env, session_factory, [1])
 
@@ -188,7 +188,7 @@ async def test_a_printer_skipped_by_the_claim_loop_still_has_its_model_targets_m
     from app.models import JobModelTarget, PrinterModelRecord
     async with session_factory() as s:
         s.add(PrinterModelRecord(id="m1", plugin_id="bambu", manufacturer_id="bambu", model_id="m1", display_name="M1"))
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF,
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF,
                       model_uuid="m1", quiet_start="00:00", quiet_end="23:59"))             # quiet hours: the claim loop skips it
         await s.commit()
     env.mgr.register_client(1, client())

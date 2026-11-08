@@ -24,6 +24,7 @@ import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
+import { stripBlank } from '../components/quickAdd';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -322,12 +323,14 @@ export function PrinterAddForm({
   onCreated,
   backLabel = 'Printers',
   discovered,
+  onPrinterAdded,
 }: {
   types: PrinterType[];
   onCancel: () => void;
   onCreated: () => void;
   backLabel?: string;
   discovered?: DiscoveredPrinter;
+  onPrinterAdded?: () => void;      // a printer was added straight from the scan's quick-add rows
 }) {
   const [step, setStep] = useState(1);
   const [modelUnconfirmed, setModelUnconfirmed] = useState(false);   // a discovered printer whose model we could not tell
@@ -398,7 +401,7 @@ export function PrinterAddForm({
         plugin_id: data.printerType.plugin_id,
         manufacturer_id: data.printerType.manufacturer_id,
         model_id: data.printerType.model_id,
-        connection_config: withDefaults(data.printerType, data.connectionConfig),
+        connection_config: stripBlank(withDefaults(data.printerType, data.connectionConfig)),
         ...(data.printerType.custom ? {
           bed_x_mm: positive(data.bedX, data.printerType.bed_mm[0]),
           bed_y_mm: positive(data.bedY, data.printerType.bed_mm[1]),
@@ -456,7 +459,7 @@ export function PrinterAddForm({
         {/* Step 1: Printer type */}
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
-            {!discovered && <DiscoverPrinters onPick={applyDiscovered} />}
+            {!discovered && <DiscoverPrinters types={types} onMoreSettings={applyDiscovered} onAdded={onPrinterAdded} />}
             <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
             {modelUnconfirmed && (
               <div className="small" role="status" style={{ marginBottom: 12, color: 'var(--warn)' }}>
@@ -694,6 +697,7 @@ export function PrintersScreen() {
         types={types}
         onCancel={() => setAdding(false)}
         onCreated={() => { setAdding(false); load(); }}
+        onPrinterAdded={() => void load()}
       />
     );
   }

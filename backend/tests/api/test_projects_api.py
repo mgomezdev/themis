@@ -1,3 +1,4 @@
+from tests.printer_ips import ip_config
 import io
 from tests.fake_providers import fake_packer
 import zipfile
@@ -390,7 +391,7 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
 
     printer_resp = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
+        "connection_config": ip_config(),
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
         "machine_profile_override": "Bambu Lab P1S 0.4",
     })

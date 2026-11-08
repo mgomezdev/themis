@@ -11,7 +11,9 @@ The vendor-abstraction is the most-extended part of the codebase. Adding a print
 `resume_print()`, `send_gcode(gcode)`, `request_status_update()`.
 
 **Override as needed (have defaults):** `connection_fields()` (classmethod → add-printer form fields
-+ ctor kwargs the factory passes), `get_capabilities()` (`PrinterCapabilities` flags drive UI controls),
++ ctor kwargs the factory passes; `ConnectionField.quick_add=True` puts a field on the scan's quick-add row — Bambu:
+`serial_number`, `access_code`; `connects=False` marks a per-print option (Bambu `use_ams/bed_leveling/flow_cali/timelapse`,
+Elegoo `bed_type/bed_leveling/timelapse`, Moonraker `toolheads`) whose edit never voids setup; `required` fields missing from a saved config keep the printer unconfigured, no client built — BIZ-369), `get_capabilities()` (`PrinterCapabilities` flags drive UI controls),
 `is_idle`/`is_printing` (props), `file_upload_supported`, `upload_file(data, filename)`,
 `orca_export_args(file_base)` (slicing artifact — `[]` = raw `.gcode`; Bambu = `["--export-3mf", f"{base}.gcode.3mf"]`),
 `raw_gcode_supported` / `sliced_archive_supported` (which pre-sliced library files the vendor prints as-is — `.gcode` /

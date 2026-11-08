@@ -155,6 +155,19 @@ describe('useFleetData', () => {
     expect(result.current[0]).toHaveLength(2);
   });
 
+  it('a printer_configured frame updates that printer\'s setup status (BIZ-369)', async () => {
+    stubFetch({ 'GET /api/v1/fleet': [fleetPrinter(1, { configured: false, config_error: 'Missing Access Code' }), fleetPrinter(2)] });
+    const { result } = renderHook(() => useFleetData());
+    await waitFor(() => expect(result.current[0]).toHaveLength(2));
+    expect(result.current[0][0]).toMatchObject({ configured: false, configError: 'Missing Access Code' });
+    expect(result.current[0][1]).toMatchObject({ configured: true, configError: null });     // an older server omits it
+
+    act(() => sock().send({ type: 'printer_configured', data: { printer_id: 1, configured: true, config_error: null } }));
+
+    expect(result.current[0][0]).toMatchObject({ configured: true, configError: null, name: 'P1' });
+    expect(result.current[0][1]).toMatchObject({ configured: true });
+  });
+
   it('a state frame for a printer it has not loaded yet triggers one refetch instead of rendering the partial frame', async () => {
     // The live frame is the vendor serializer's output: no name, loaded_filaments or enabled. Rendering it
     // threw in toFleetPrinter (loaded_filaments[0]) and blanked the page right after "Add printer".

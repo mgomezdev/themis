@@ -92,7 +92,7 @@ def stores(tmp_path, monkeypatch):
 
 async def _seed(factory) -> int:
     async with factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="M"))
         f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
                          content_hash="srchash", plates=[{"plate_number": 1}], uploaded_at=_now(), size_bytes=5, mtime=1.0)
@@ -253,7 +253,7 @@ async def test_a_presliced_job_prints_from_a_store_with_no_local_library(session
     qe, slicer = _engine(session_factory, tmp_path)
     _install_fake_put(qe)
     async with session_factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}))
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={}))
         f = UploadedFile(original_filename="part.gcode", relative_path="part.gcode", folder="/", plates=[], uploaded_at=_now())
         s.add(f)
         await s.flush()
@@ -320,7 +320,7 @@ def test_slicing_a_model_missing_from_the_library_is_a_slice_error(tmp_path, mon
 async def test_the_dispatch_slice_request_names_the_library_key_not_a_path(session_factory, tmp_path):
     qe, _ = _engine(session_factory, tmp_path)
     async with session_factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="M"))
         f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
                          plates=[], uploaded_at=_now())
@@ -342,7 +342,7 @@ async def test_the_dispatch_slice_request_names_the_library_key_not_a_path(sessi
 def test_verify_and_manual_complete_slices_name_the_library_key_not_a_path():
     """jobs._build_slice_request (verify-slice, complete-manually) hands the slicer the library key."""
     from app.api.routes.jobs import _build_slice_request
-    printer = Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+    printer = Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="M", loaded_filaments=[])
     f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints", plates=[],
                      uploaded_at=_now())

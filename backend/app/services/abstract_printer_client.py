@@ -107,6 +107,8 @@ class ConnectionField:
     default: str | int | None = None
     placeholder: str = ""
     help_text: str = ""
+    quick_add: bool = False  # shown as an input on the scan's quick-add row (BIZ-369); the IP always comes from the scan
+    connects: bool = True    # used to connect; False = a per-print option (editing it never voids a confirmed setup)
 
 
 class AbstractPrinterClient(ABC):

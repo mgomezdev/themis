@@ -17,6 +17,7 @@ import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
+import { QueueStateBadges, SetupIncompleteCard } from '../components/FleetSetup';
 import { useMediaQuery } from '../components/useMediaQuery';
 import { ScanSpoolModal } from '../components/ScanSpoolModal';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
@@ -853,7 +854,6 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
 }
 
 // ── Shared printer-card affordances ───────────────────────────────────────────
-const QUEUE_OFF_COLOR = '#f59e0b';
 
 // Border/shadow that flags a card as needing attention (awaiting clear) or
 // manually held out of the queue.
@@ -861,8 +861,11 @@ function cardCueStyle(p: Printer): React.CSSProperties {
   if (p.awaitingPlateClear) {
     return { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' };
   }
+  if (p.configured === false) {                        // BIZ-369: the system holds it out until a connection confirms setup
+    return { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' };
+  }
   if (!p.queueOn) {
-    return { borderColor: QUEUE_OFF_COLOR, boxShadow: `0 0 0 1px rgba(245,158,11,0.35)` };
+    return { borderColor: 'var(--border-2, #475472)', boxShadow: '0 0 0 1px rgba(148,163,184,0.35)' };
   }
   return {};
 }
@@ -873,15 +876,6 @@ function DormantBadge({ reason }: { reason: string }) {
       padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
       background: 'rgba(148,163,184,0.18)', color: 'var(--text-dim, #94a3b8)', fontWeight: 600,
     }}>DORMANT</span>
-  );
-}
-
-function QueueOffBadge() {
-  return (
-    <span className="tiny" style={{
-      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'rgba(245,158,11,0.15)', color: QUEUE_OFF_COLOR, fontWeight: 600,
-    }}>QUEUE OFF</span>
   );
 }
 
@@ -959,12 +953,13 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
           {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
-          {!p.queueOn && <QueueOffBadge />}
+          <QueueStateBadges printer={p} />
           <AlarmBadge printer={p} />
             <WaiverBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>
+      <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
       <div style={{ padding: '0 14px' }}>
         <VideoTile
           live={p.status !== 'offline'}
@@ -1046,7 +1041,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
         <StatusPill status={p.status} />
         {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
-        {!p.queueOn && <QueueOffBadge />}
+        <QueueStateBadges printer={p} />
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
         <Swatch color={p.material.color} />
@@ -1081,6 +1076,11 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
         </div>
       ) : (
         <div className="tiny muted" style={{ minWidth: 80, textAlign: 'right' }}>—</div>
+      )}
+      {p.configured === false && (
+        <div style={{ gridColumn: '1 / -1' }}>
+          <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
+        </div>
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 """G-code machine eligibility over the API (BIZ-263): upload / file detail / filter, job creation per printer, target materialisation."""
+from tests.printer_ips import ip_config
 from unittest.mock import patch
 
 import pytest
@@ -38,7 +39,7 @@ async def model_ids(client) -> dict[str, str]:
 
 
 async def printer_on(client, models, model) -> int:
-    r = await client.post("/api/v1/printers", json={"name": f"on-{model}", "model_uuid": models[model], "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": f"on-{model}", "model_uuid": models[model], "connection_config": ip_config()})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 

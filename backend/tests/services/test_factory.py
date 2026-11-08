@@ -43,6 +43,12 @@ def test_bambu_fields():
     assert "access_code" in field_names
 
 
+def test_quick_add_fields_are_plugin_declared():
+    """BIZ-369: the scan's quick-add row shows only what the plugin asks for; the IP comes from the scan."""
+    quick = {pid: [f.name for f in client_class(pid).connection_fields() if f.quick_add] for pid in VENDORS}
+    assert quick == {"bambu": ["serial_number", "access_code"], "elegoo_centauri": [], "snapmaker": [], "mock": []}
+
+
 def test_elegoo_fields():
     field_names = [f.name for f in client_class("elegoo_centauri").connection_fields()]
     assert "ip_address" in field_names

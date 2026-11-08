@@ -703,7 +703,7 @@ class QueueEngine:
         """A printer that was offline is back. Nothing happens for a blip that healed before the cutoff, unless work is waiting for
         it: a job sliced for it while it was away (undead) is picked up by waking the queue, and the normal ready path uploads and
         starts it only if the printer is idle with a clear plate. A dead printer returning reopens what its absence blocked."""
-        if edge == "slots":                                  # what is loaded changed: a job may now have (or lose) a match
+        if edge in ("slots", "configured"):                  # what is loaded changed / setup just confirmed (BIZ-369): re-match
             self.wake()
             return
         if edge != "online":
@@ -948,8 +948,8 @@ class QueueEngine:
 
     async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int, slice_only: bool = False) -> None:
         printer = await session.get(Printer, printer_id)
-        if printer is None or not printer.queue_on:
-            return
+        if printer is None or not printer.queue_on or not printer.configured:
+            return                   # BIZ-369: only a printer a connection has confirmed takes work
         if printer_id in self._pool_busy.values():
             return                   # BIZ-362: its pool plate is being packed; it claims that plate next
 

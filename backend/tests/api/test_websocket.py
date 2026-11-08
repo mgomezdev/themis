@@ -34,6 +34,18 @@ async def test_broadcast_sends_to_connections():
     assert call_args["data"]["id"] == 1
 
 
+async def test_printer_configured_goes_only_to_fleet_readers():
+    """BIZ-369: the setup result carries connection hints (IPs), so it is scoped like printer telemetry."""
+    from unittest.mock import AsyncMock
+    from app.api.websocket import ConnectionManager
+    mgr = ConnectionManager()
+    reader, other = AsyncMock(), AsyncMock()
+    mgr.active_connections += [(reader, ["fleet:read"]), (other, ["jobs:read"])]
+    await mgr.broadcast("printer_configured", {"printer_id": 1, "configured": False, "config_error": "Couldn't reach 10.0.0.9"})
+    reader.send_json.assert_called_once()
+    other.send_json.assert_not_called()
+
+
 # --- /ws auth (Task 6) -------------------------------------------------------
 #
 # These use a *file-backed* sqlite db (not ":memory:") so that a separate

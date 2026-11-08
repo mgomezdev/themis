@@ -52,6 +52,10 @@ class Printer(Base):
     waiver_stop_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     test_print_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     test_print_waiver_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)       # the waiver that test print is for
+    # BIZ-369: set only by a successful connection (test or first live connection); only configured printers claim queue work.
+    # `config_error` is the last test failure / missing-field reason.
+    configured: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    config_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class PrinterModelRecord(Base):
