@@ -204,6 +204,8 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
+        "configured": p.configured,
+        "config_error": p.config_error,
         "loaded_filaments": p.loaded_filaments or [],
         "build_plate_type": p.build_plate_type,
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
