@@ -90,6 +90,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 `default_process_profile: str?`, `single_colour_only: bool` (v057, BIZ-358) — the process preset a "Printer default" config slices with (PATCH validates it against the machine profile's compatible presets; null clears), and a flag that keeps multicolour configs (filament_map of 2+) off the printer via `filament_matching.evaluate_for_printer` (skip, never block; the unmatched sweep blocks if no printer can take it).
 `preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
+`configured: bool` + `config_error: str?` (v067, BIZ-369 — set only by a passed connection test or the first live connection; only configured printers claim; a real `connection_config` change via PATCH clears it and re-tests; rows existing at v067 back-filled 1; the ORM default is False and create / fleet import store False then `printer_setup.schedule` the test),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
 `curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`
 (Fleet camera-polling toggle), `bed_x_mm: float=256.0, bed_y_mm: float=256.0` (bed footprint, shown in
@@ -98,7 +99,8 @@ the printer editor and used wherever bed size matters for the UI), `lifetime_job
 (accrued from `job.actual_seconds` in the same handler) — both feed `job_count`/`job_time` maintenance
 trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
-  keys passed to the client ctor). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
+  keys passed to the client ctor). Blank values are never stored (`printer_setup.strip_blank`); `ip_address` is required on create
+  and (IP, model) is unique (409, checked in the route since the IP lives in this JSON). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
 - `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, manufacturer:str|null, type, subtype, color:"#RRGGBB",
   filament_profile?:str|null, spoolman_spool_id?:str|null, inventory?, reported?:bool, ams_tray_id?, ams_unit?}`.

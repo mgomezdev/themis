@@ -11,7 +11,8 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   only by an upload/start error after slicing (`_fail_job_post_slice`), never by a slice failure. Never set
   `failed` for a recoverable filament/slice issue.
 - **awaiting_plate_clear**: set `True` the moment a print **starts** (`status=printing`), not when it
-  finishes. A printer is eligible only when `is_idle AND not awaiting_plate_clear AND queue_on`. Cleared
+  finishes. A printer is eligible only when `configured AND is_idle AND not awaiting_plate_clear AND queue_on`
+  (`configured`, BIZ-369: set only by a passed connection test or the first live connection; DB row + `PrinterManager._unconfigured`, checked by `is_printer_ready` and `_try_claim_for_printer` — keep both in sync). Cleared
   only by `POST /printers/{id}/plate-cleared` (the Fleet "Ready for new work" button). Lives in the DB
   row AND the `PrinterManager` set — keep both in sync.
 - **Versioned migrations, not `create_all` alone**: `init_db()` runs `Base.metadata.create_all` *then*
