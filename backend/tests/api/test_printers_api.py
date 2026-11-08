@@ -226,8 +226,8 @@ class _FakeConnClient:
 
 async def test_test_connection_success(client, monkeypatch):
     import app.api.routes.printers as pr
-    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.5)
-    monkeypatch.setattr(pr, "create_client_from_config", lambda *a, **k: _FakeConnClient(connects=True))
+    monkeypatch.setattr(pr.printer_setup, "TEST_CONNECT_POLL_S", 0.5)
+    monkeypatch.setattr(pr.printer_setup, "create_client_from_config", lambda *a, **k: _FakeConnClient(connects=True))
     r = await client.post("/api/v1/printers/test-connection",
                           json={"printer_type": "bambu", "connection_config": {}})
     assert r.status_code == 200
@@ -236,9 +236,9 @@ async def test_test_connection_success(client, monkeypatch):
 
 async def test_test_connection_unreachable_gives_hint(client, monkeypatch):
     import app.api.routes.printers as pr
-    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.3)
+    monkeypatch.setattr(pr.printer_setup, "TEST_CONNECT_POLL_S", 0.3)
     # 127.0.0.1:59999 is closed → the probe classifies it as unreachable.
-    monkeypatch.setattr(pr, "create_client_from_config",
+    monkeypatch.setattr(pr.printer_setup, "create_client_from_config",
                         lambda *a, **k: _FakeConnClient(connects=False, endpoint=("127.0.0.1", 59999)))
     r = await client.post("/api/v1/printers/test-connection",
                           json={"printer_type": "bambu", "connection_config": {}})

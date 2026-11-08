@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
 
 from typing import Literal, Optional
 
@@ -22,11 +21,11 @@ from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, default_compatible_presets, get_slicing_provider
 from ...services.printer_client_factory import (
-    client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
+    client_class, create_client, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
-from ...services import filament_matching, scheduling, slicer_profiles
+from ...services import filament_matching, printer_setup, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -532,36 +531,6 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
     }
 
 
-_TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
-
-
-async def _connect_failure_hint(client) -> str:
-    """Classify a failed test connection by probing the control port, so the UI
-    can say *why* (unreachable vs reached-but-login-failed) instead of a bare
-    'Could not connect'."""
-    try:
-        endpoint = client.control_endpoint()
-    except Exception:
-        endpoint = None
-    if not endpoint:
-        return "Could not connect."
-    host, port = endpoint
-
-    def _probe() -> bool:
-        try:
-            with socket.create_connection((host, port), timeout=3):
-                return True
-        except Exception:
-            return False
-
-    reachable = await asyncio.get_running_loop().run_in_executor(None, _probe)
-    if reachable:
-        return (f"Reached {host}:{port} but the login didn't complete — check the access code / "
-                f"serial number, or the printer's single LAN connection is busy.")
-    return (f"Couldn't reach {host}:{port}. The printer may be off or asleep, the IP may be wrong, "
-            f"or another app is holding the printer's single LAN connection (Bambu allows only one).")
-
-
 @router.post(
     "/test-connection",
     summary="Test printer connection",
@@ -575,24 +544,8 @@ async def test_connection(body: TestConnectionRequest) -> dict:
     `{ok: false, error: "..."}` with a human-readable hint about why it failed."""
     if client_class(body.printer_type) is None:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
-    client = None
-    try:
-        client = create_client_from_config(body.printer_type, body.connection_config)
-        client.connect()
-        deadline = asyncio.get_running_loop().time() + _TEST_CONNECT_POLL_S
-        while asyncio.get_running_loop().time() < deadline and not client.connected:
-            await asyncio.sleep(0.5)
-        if client.connected:
-            return {"ok": True}
-        return {"ok": False, "error": await _connect_failure_hint(client)}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-    finally:
-        if client is not None:
-            try:
-                client.disconnect()
-            except Exception:
-                pass
+    out = await printer_setup.test_unsaved(body.printer_type, body.connection_config)
+    return {"ok": True} if out.ok else {"ok": False, "error": out.error}
 
 
 @router.get(
