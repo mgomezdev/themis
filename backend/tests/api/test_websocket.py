@@ -36,6 +36,8 @@ async def test_broadcast_sends_to_connections():
 
 async def test_printer_configured_goes_only_to_fleet_readers():
     """BIZ-369: the setup result carries connection hints (IPs), so it is scoped like printer telemetry."""
+    from unittest.mock import AsyncMock
+    from app.api.websocket import ConnectionManager
     mgr = ConnectionManager()
     reader, other = AsyncMock(), AsyncMock()
     mgr.active_connections += [(reader, ["fleet:read"]), (other, ["jobs:read"])]
