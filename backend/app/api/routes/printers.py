@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from types import SimpleNamespace
 
 from typing import Literal, Optional
 
@@ -377,8 +378,6 @@ async def create_printer(
     configured printers take queue work), failure records `config_error`. 409 when a printer of the same model already uses
     that IP."""
     cfg = printer_setup.strip_blank(body.connection_config)
-    if not cfg.get("ip_address"):
-        raise HTTPException(422, "connection_config.ip_address is required")
     await registry.sync_registry(session)
     registered = await registry.get_model(session, body.model_uuid) if body.model_uuid else None
     try:
@@ -389,13 +388,19 @@ async def create_printer(
     record = await registry.get_model(session, model_uuid) if model_uuid else None
     if record is not None and not record.enabled and body.printer_type is None:
         raise HTTPException(422, f"Model {record.display_name!r} is disabled in the printer-model registry")
-    ip = str(cfg["ip_address"]).strip()
-    for other in (await session.execute(select(Printer))).scalars().all():
-        if _ip_of(other) == ip and _same_model(other, plugin_id, manufacturer_id, model_id, model_uuid):
-            raise HTTPException(409, f"{other.name} already uses {ip} as {record.display_name if record else model.name}")
+    model_name = record.display_name if record else model.name
+    identity = SimpleNamespace(plugin_id=plugin_id, printer_type=printer_type, manufacturer_id=manufacturer_id, model_id=model_id)
+    has_ip = any(f.name == "ip_address" for f in printer_setup.fields_for(identity))   # a plugin with no address (e.g. a mock) needs none
+    ip = str(cfg.get("ip_address") or "").strip()
+    if has_ip and not ip:
+        raise HTTPException(422, "connection_config.ip_address is required")
+    if ip:
+        for other in (await session.execute(select(Printer))).scalars().all():
+            if _ip_of(other) == ip and _same_model(other, plugin_id, manufacturer_id, model_id, model_uuid):
+                raise HTTPException(409, f"{other.name} already uses {ip} as {model_name}")
     printer = Printer(
         model_uuid=model_uuid,
-        name=body.name or printer_setup.default_name(record.display_name if record else model.name, ip),
+        name=body.name or (printer_setup.default_name(model_name, ip) if ip else model_name),
         configured=False,
         printer_type=printer_type,
         plugin_id=plugin_id,

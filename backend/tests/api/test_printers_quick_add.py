@@ -40,6 +40,14 @@ async def test_create_without_ip_is_422(client, session_factory):
         assert (await s.execute(text("SELECT COUNT(*) FROM printers"))).scalar() == 0
 
 
+async def test_a_plugin_without_an_address_field_needs_no_ip(client, session_factory, scheduled_tests):
+    """The IP rule follows the plugin's own form: a printer whose plugin declares no `ip_address` (the mock) is created as before."""
+    r = await _post(client, printer_type="mock", connection_config={})
+    assert r.status_code == 201, r.text
+    assert (r.json()["name"], r.json()["configured"]) == ("Mock Printer", False)     # the model's name
+    assert scheduled_tests == [r.json()["id"]]
+
+
 async def test_duplicate_ip_and_model_is_409(client, session_factory):
     assert (await _post(client, name="A", **ELEGOO, connection_config={"ip_address": "10.0.0.5"})).status_code == 201
     r = await _post(client, name="B", **ELEGOO, connection_config={"ip_address": " 10.0.0.5 "})

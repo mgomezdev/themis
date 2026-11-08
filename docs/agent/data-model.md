@@ -100,7 +100,7 @@ the printer editor and used wherever bed size matters for the UI), `lifetime_job
 trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
   keys passed to the client ctor). Blank values are never stored (`printer_setup.strip_blank`); `ip_address` is required on create
-  and (IP, model) is unique (409, checked in the route since the IP lives in this JSON). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
+  when the plugin's form declares it (the mock declares none) and (IP, model) is unique (409, checked in the route since the IP lives in this JSON). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
 - `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, manufacturer:str|null, type, subtype, color:"#RRGGBB",
   filament_profile?:str|null, spoolman_spool_id?:str|null, inventory?, reported?:bool, ams_tray_id?, ams_unit?}`.
