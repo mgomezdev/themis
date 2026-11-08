@@ -7,9 +7,27 @@ import socket
 from dataclasses import dataclass
 
 from .abstract_printer_client import ConnectionField
-from .printer_client_factory import create_client_from_config
+from .printer_client_factory import client_class, create_client_from_config
+from .printer_identity import IdentityError, declared_model
 
 TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
+
+
+def fields_for(printer) -> list[ConnectionField]:
+    """The connection form of `printer`'s plugin, tailored to its model when the client does that (`connection_fields_for`);
+    [] when no registered plugin serves it."""
+    cls = client_class(printer.plugin_id or printer.printer_type)
+    if cls is None:
+        return []
+    per_model = getattr(cls, "connection_fields_for", None)
+    if callable(per_model) and printer.plugin_id and printer.manufacturer_id and printer.model_id:
+        try:
+            _, model = declared_model(printer.plugin_id, printer.manufacturer_id, printer.model_id)
+        except IdentityError:
+            model = None
+        if model is not None:
+            return per_model(model)
+    return cls.connection_fields()
 
 
 def strip_blank(cfg: dict | None) -> dict:

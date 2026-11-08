@@ -124,6 +124,7 @@ async def lifespan(app: FastAPI):
     printer_manager.set_session_factory(SessionLocal)
     printer_manager.subscribe_events()
     await printer_manager.load_awaiting_plate_clear_from_db()
+    await printer_manager.load_configured_from_db()
     await printer_manager.connect_all_enabled_printers(SessionLocal)
 
     # Plugins first: the Laminus URL lives in plugin settings, so the queue must not run (and try to slice) before the host loads them.

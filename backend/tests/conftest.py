@@ -155,6 +155,7 @@ async def _isolate_printer_manager():
     def _clear():
         printer_manager._clients.clear()
         printer_manager._awaiting_plate_clear.clear()
+        printer_manager._unconfigured.clear()
 
     _clear()
     printer_manager.connect_printer = lambda printer_id, client: printer_manager.register_client(printer_id, client)  # type: ignore[method-assign]

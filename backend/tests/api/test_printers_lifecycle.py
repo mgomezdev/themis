@@ -8,7 +8,7 @@ from tests.catalog_helpers import patch_cached_catalog
 from app.services.printer_manager import printer_manager
 
 _PRINTER_KEYS = {"id", "name", "printer_type", "plugin_id", "manufacturer_id", "model_id", "model_uuid", "connection_config", "awaiting_plate_clear", "orca_printer_profiles",
-                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "model_label", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
+                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "model_label", "enabled", "queue_on", "configured", "config_error", "loaded_filaments", "build_plate_type",
                  "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "bed_z_mm", "machine_rate_per_hour", "preferred_slicer_plugin_id", "default_process_profile", "single_colour_only", "waiver_flag_at", "waiver_stop_at", "test_print_job_id", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
 
 
