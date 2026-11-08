@@ -1,4 +1,5 @@
 """POST /settings/fleet-import edge cases (the backup/redaction basics live in tests/test_fleet_backup.py)."""
+from tests.printer_ips import ip_config
 import io
 import json
 from unittest.mock import patch
@@ -44,7 +45,7 @@ async def _fleet(client) -> list[dict]:
     (json.dumps({"printers": [], "themis_backup_version": -3}).encode(), "Unsupported backup version: -3"),
 ])
 async def test_invalid_backups_are_400_and_leave_the_fleet_untouched(client, payload, detail):
-    await client.post("/api/v1/printers", json={"name": "Existing", "printer_type": "mock", "connection_config": {}})
+    await client.post("/api/v1/printers", json={"name": "Existing", "printer_type": "mock", "connection_config": ip_config()})
     before = await _fleet(client)
 
     resp = await _import(client, payload)
@@ -153,18 +154,29 @@ async def test_backup_then_import_round_trips_the_operator_facing_fields(client)
     assert (p["enabled"], p["queue_on"]) == (False, False)
 
 
-async def test_imported_printers_are_registered_with_the_manager_and_a_broken_client_does_not_fail_the_import(client):
-    resp = await _import(client, _backup(_printer("A"), _printer("B")))
+async def test_imported_printer_lands_unconfigured_and_is_retested(client, scheduled_tests):
+    """BIZ-369: a backup's printers are never trusted as configured — each is saved unconfigured and gets its own connection
+    test (in the background, so the import never waits on or fails with a printer)."""
+    resp = await _import(client, _backup({**_printer("A"), "configured": True}, _printer("B")))
     assert resp.json()["imported"] == 2
-    assert set(printer_manager._clients) == {p["id"] for p in await _fleet(client)}
+    fleet = await _fleet(client)
+    assert sorted(scheduled_tests) == sorted(p["id"] for p in fleet)
+    assert all(p["configured"] is False for p in fleet)
+    assert printer_manager._clients == {}                          # nothing connects inline; the test does
+    assert all(not printer_manager.is_configured(p["id"]) for p in fleet)
 
-    printer_manager._clients.clear()
-    with patch("app.api.routes.settings.create_client", side_effect=RuntimeError("bad config")):
-        resp = await _import(client, _backup(_printer("C")))
 
-    assert (resp.status_code, resp.json()["imported"]) == (200, 1)  # imported, just not connected
+@pytest.mark.auto_test
+async def test_a_broken_client_during_the_imported_printers_test_does_not_fail_the_import(client, session_factory):
+    from app.services import printer_setup
+    with patch("app.services.printer_client_factory.create_client", side_effect=RuntimeError("bad config")):
+        resp = await _import(client, _backup({**_printer("C"), "connection_config": {"ip_address": "10.0.0.7"}}))
+        await printer_setup.drain()
+
+    assert (resp.status_code, resp.json()["imported"]) == (200, 1)
+    (p,) = [p for p in await _fleet(client) if p["name"] == "C"]
     assert printer_manager._clients == {}
-    assert "C" in [p["name"] for p in await _fleet(client)]
+    assert (p["configured"], p["config_error"]) == (False, "bad config")
 
 
 async def test_a_backed_up_moonraker_printer_with_its_identity_imports_bound_to_that_provider(client):

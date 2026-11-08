@@ -29,6 +29,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "shipped_defaults: keep the real plugin defaults.toml (the suite blanks the Laminus URL default so slicing is unconfigured unless a test configures it)",
+    "auto_test: run the real background connection test a printer create/edit schedules (the suite records it instead)",
     "real_protocol: manual checks against a real printer (backend/protocol_verification); never part of the normal gates",
 ]
 

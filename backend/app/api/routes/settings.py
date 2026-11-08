@@ -8,16 +8,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
-from ...services import slicer_profiles, webhook_service
+from ...services import printer_setup, slicer_profiles, webhook_service
 from ...services import printer_model_registry as model_registry
 from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
-from ...services.printer_client_factory import client_class, create_client
+from ...services.printer_client_factory import client_class
 from ...services.printer_identity import IdentityError, LEGACY_IDENTITY, resolve_legacy
 from ...services.printer_manager import printer_manager
 
@@ -330,6 +330,7 @@ async def fleet_import(
 
     warnings: list[str] = []
     imported = 0
+    new_ids: list[int] = []
     skipped = 0
 
     await model_registry.sync_registry(session)
@@ -420,19 +421,19 @@ async def fleet_import(
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),
             queue_on=pr.get("queue_on", True),
+            configured=False,                   # BIZ-369: re-tested here, never trusted from the backup
         )
         session.add(printer)
         await session.flush()
         printer_manager.set_printer_plugin(printer.id, printer.plugin_id)
-
-        try:
-            client = create_client(printer)
-            printer_manager.connect_printer(printer.id, client)
-        except Exception:
-            pass
+        printer_manager.set_configured(printer.id, False)
+        new_ids.append(printer.id)
 
         imported += 1
 
     await session.commit()
+    factory = async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
+    for printer_id in new_ids:
+        printer_setup.schedule(printer_id, factory)
 
     return FleetImportReport(imported=imported, skipped=skipped, warnings=warnings)

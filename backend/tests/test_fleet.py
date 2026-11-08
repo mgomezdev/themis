@@ -1,4 +1,5 @@
 import logging
+from tests.printer_ips import ip_config
 from app.plugins.elegoo_centauri.client import serialize_elegoo
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -90,7 +91,7 @@ class _FakeElegoo:
 
 async def _add_printer(client: AsyncClient, name: str) -> int:
     resp = await client.post("/api/v1/printers", json={
-        "name": name, "printer_type": "elegoo_centauri", "connection_config": {"ip_address": "192.168.1.100"},
+        "name": name, "printer_type": "elegoo_centauri", "connection_config": ip_config(),
     })
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]

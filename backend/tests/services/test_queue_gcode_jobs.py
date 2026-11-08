@@ -24,7 +24,7 @@ async def _seed(factory, library, name="part.gcode") -> tuple[int, int]:
     library.mkdir(parents=True, exist_ok=True)
     (library / name).write_bytes(GCODE)
     async with factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}))   # no OrcaSlicer machine preset
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={}))   # no OrcaSlicer machine preset
         f = UploadedFile(original_filename=name, relative_path=name, folder="/", plates=[], uploaded_at=_now())
         s.add(f)
         await s.flush()
@@ -112,7 +112,7 @@ async def test_sliced_archive_job_prints_without_slicing_and_keeps_its_extension
     archive = make_sliced_archive()
     (library / "My Part.gcode.3mf").write_bytes(archive)
     async with session_factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}))
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}))
         f = UploadedFile(original_filename="My Part.gcode.3mf", relative_path="My Part.gcode.3mf", folder="/",
                          plates=[], uploaded_at=_now())
         s.add(f)

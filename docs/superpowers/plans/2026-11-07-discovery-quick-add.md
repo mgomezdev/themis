@@ -37,6 +37,11 @@ by plugin-declared `ConnectionField.quick_add` metadata.
 - The auto-test connects the printer's **real** managed client (`printer_manager.connect_printer`) and polls `client.connected`,
   instead of a throwaway test client then a second connection — one LAN connection, which Bambu requires. Unreachable → client
   stays registered (its reconnect produces the first live connection); reached-but-login-failed → `disconnect_printer`.
+- *(Changed during implementation)* Model-target materialization does **not** skip unconfigured printers: the no-match sweep
+  would otherwise block and announce every job whose only printer is mid-setup (the noise it already avoids for queue-off
+  printers). Both claim gates (`_try_claim_for_printer`, `is_printer_ready`) keep them from claiming.
+- `evaluate`/`schedule` take the session factory explicitly (routes pass one bound to the request's engine); the manager
+  singleton's factory is unset under test.
 - A per-printer `asyncio.Lock` serialises auto-test and `POST /printers/{id}/test` for the same printer.
 - `PATCH` cannot move a printer to another plugin today (identity edit validates against `printer.plugin_id`), so the spec's
   "different plugin" invalidation case does not arise; not built.

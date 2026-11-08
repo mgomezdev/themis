@@ -1,4 +1,5 @@
 """BIZ-358: a printer's default process profile (validated against its machine's compatible presets) and "single colour only"."""
+from tests.printer_ips import ip_config
 from unittest.mock import patch
 
 from tests.catalog_helpers import catalog_from_dict
@@ -16,7 +17,7 @@ _CAT = catalog_from_dict({
 
 async def _printer(client) -> int:
     r = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu", "connection_config": {}, "machine_profile_override": _MACHINE})
+        "name": "P1S", "printer_type": "bambu", "connection_config": ip_config(), "machine_profile_override": _MACHINE})
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["default_process_profile"] is None and body["single_colour_only"] is False
@@ -73,7 +74,7 @@ async def test_an_unrelated_edit_does_not_revalidate_the_stored_default(client):
 
 
 async def test_create_validates_the_default_too(client):
-    body = {"name": "P1S", "printer_type": "bambu", "connection_config": {}, "machine_profile_override": _MACHINE}
+    body = {"name": "P1S", "printer_type": "bambu", "connection_config": ip_config(), "machine_profile_override": _MACHINE}
     with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=_CAT):
         bad = await client.post("/api/v1/printers", json={**body, "default_process_profile": "0.12mm Fine @Other"})
         good = await client.post("/api/v1/printers", json={**body, "default_process_profile": "0.20mm Standard"})

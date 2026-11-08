@@ -3,12 +3,15 @@ connection test that makes a printer `configured`. Reads only the plugin's `Conn
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from dataclasses import dataclass
 
 from .abstract_printer_client import ConnectionField
 from .printer_client_factory import client_class, create_client_from_config
 from .printer_identity import IdentityError, declared_model
+
+logger = logging.getLogger(__name__)
 
 TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
 
@@ -94,6 +97,125 @@ async def wait_connected(client, timeout: float) -> bool:
     while asyncio.get_running_loop().time() < deadline and not client.connected:
         await asyncio.sleep(0.5)
     return bool(client.connected)
+
+
+def default_name(model_display_name: str, ip: str) -> str:
+    """A new printer's nickname when none is given: "<model> <last IP octet>" (e.g. "P1S 30")."""
+    return f"{model_display_name} {str(ip).strip().rsplit('.', 1)[-1]}"
+
+
+# --- the saved printer's test: what makes it `configured` ----------------------------------------------------------------
+
+AUTO_TEST_CONCURRENCY = 4
+_locks: dict[int, asyncio.Lock] = {}
+_semaphore: asyncio.Semaphore | None = None
+_tasks: set[asyncio.Task] = set()
+
+
+def _reset() -> None:
+    """Forget per-loop primitives (tests run each case on a fresh event loop)."""
+    global _semaphore
+    _locks.clear()
+    _semaphore = None
+    _tasks.clear()
+
+
+async def _persist(session_factory, printer_id: int, configured: bool, error: str | None) -> None:
+    from ..models import Printer
+    async with session_factory() as session:
+        printer = await session.get(Printer, printer_id)
+        if printer is not None:
+            printer.configured, printer.config_error = configured, error
+            await session.commit()
+
+
+async def _report(printer_id: int, outcome: TestOutcome) -> None:
+    from .printer_manager import printer_manager
+    if printer_manager._on_state_broadcast:
+        await printer_manager._on_state_broadcast(
+            "printer_configured", {"printer_id": printer_id, "configured": outcome.ok, "config_error": outcome.error})
+
+
+async def evaluate(printer_id: int, session_factory) -> TestOutcome:
+    """Test a saved printer with its stored config and record the result. Missing a required field: unconfigured with the reason,
+    no client built, nothing contacted. Otherwise the printer's own managed client connects (one LAN connection, which some printers
+    require) and success marks it configured. On failure: unreachable keeps the client registered so its reconnect can still produce
+    the first live connection; reached-but-login-failed tears it down (no retry storm against the printer) until the fields change or
+    the user tests again. Never raises; one test per printer at a time."""
+    lock = _locks.setdefault(printer_id, asyncio.Lock())
+    async with lock:
+        try:
+            outcome = await _evaluate(printer_id, session_factory)
+        except Exception as exc:
+            outcome = TestOutcome(False, str(exc) or type(exc).__name__, None)
+            try:
+                await _persist(session_factory, printer_id, False, outcome.error)
+            except Exception:
+                logger.exception("Recording the connection test of printer %s failed", printer_id)
+        try:
+            await _report(printer_id, outcome)
+        except Exception:
+            logger.exception("Broadcasting the connection test of printer %s failed", printer_id)
+        return outcome
+
+
+async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
+    from ..models import Printer
+    from .printer_client_factory import create_client
+    from .printer_manager import printer_manager
+    async with session_factory() as session:
+        printer = await session.get(Printer, printer_id)
+        if printer is None:
+            return TestOutcome(False, "Printer not found", None)
+        missing = missing_required(fields_for(printer), printer.connection_config or {})
+        if missing:
+            reason = missing_reason(missing)
+            printer.configured, printer.config_error = False, reason
+            await session.commit()
+            printer_manager.set_configured(printer_id, False)
+            printer_manager.disconnect_printer(printer_id)
+            return TestOutcome(False, reason, None)
+        if not printer.enabled:                       # a disabled printer stays unconnected: test it with a throwaway client
+            outcome = await test_unsaved(printer.plugin_id or printer.printer_type, printer.connection_config or {})
+            printer.configured, printer.config_error = outcome.ok, outcome.error
+            await session.commit()
+            printer_manager.set_configured(printer_id, outcome.ok)
+            return outcome
+        printer_manager.disconnect_printer(printer_id)
+        printer_manager.set_printer_plugin(printer_id, printer.plugin_id)
+        client = create_client(printer)
+    printer_manager.connect_printer(printer_id, client)
+    if await wait_connected(client, TEST_CONNECT_POLL_S):
+        await printer_manager.mark_configured(printer_id, session_factory, broadcast=False)
+        return TestOutcome(True, None, True)
+    hint, reachable = await failure_hint(client)
+    if reachable is True and printer_manager._clients.get(printer_id) is client:
+        printer_manager.disconnect_printer(printer_id)      # login failed: don't let its reconnect loop hammer the printer
+    printer_manager.set_configured(printer_id, False)
+    await _persist(session_factory, printer_id, False, hint)
+    return TestOutcome(False, hint, reachable)
+
+
+def schedule(printer_id: int, session_factory) -> None:
+    """Run `evaluate` in the background (at most AUTO_TEST_CONCURRENCY at once), off the request path."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(AUTO_TEST_CONCURRENCY)
+    sem = _semaphore
+
+    async def run() -> None:
+        async with sem:
+            await evaluate(printer_id, session_factory)
+
+    task = asyncio.get_running_loop().create_task(run(), name=f"printer-test-{printer_id}")
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def drain() -> None:
+    """Wait for every scheduled test to finish (shutdown, tests)."""
+    while _tasks:
+        await asyncio.gather(*list(_tasks), return_exceptions=True)
 
 
 async def test_unsaved(printer_type: str, cfg: dict) -> TestOutcome:

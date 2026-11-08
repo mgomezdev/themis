@@ -95,17 +95,18 @@ class PrinterManager:
     def is_configured(self, printer_id: int) -> bool:
         return printer_id not in self._unconfigured
 
-    async def mark_configured(self, printer_id: int) -> None:
+    async def mark_configured(self, printer_id: int, session_factory=None, *, broadcast: bool = True) -> None:
         """A connection succeeded: persist `configured`, clear the last error, and tell the UI."""
         self.set_configured(printer_id, True)
-        if self._session_factory:
-            async with self._session_factory() as session:
+        factory = session_factory or self._session_factory
+        if factory:
+            async with factory() as session:
                 from ..models import Printer
                 printer = await session.get(Printer, printer_id)
                 if printer is not None:
                     printer.configured, printer.config_error = True, None
                     await session.commit()
-        if self._on_state_broadcast:
+        if broadcast and self._on_state_broadcast:
             await self._on_state_broadcast("printer_configured",
                                            {"printer_id": printer_id, "configured": True, "config_error": None})
 

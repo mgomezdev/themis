@@ -4,6 +4,7 @@ Real routes, queue engine, printer manager and a virtual (mock-plugin) printer; 
 (no Spoolman, no Laminus). The queue and the printer never touch inventory: they publish `job.started` / `job.complete` and the
 inventory observer (`services/inventory/subscribers.py`) snapshots the bound spool at the start and writes `snapshot - spent` at the end.
 Fails if either subscriber is removed."""
+from tests.printer_ips import ip_config
 import pytest
 from sqlalchemy import select, text
 
@@ -12,9 +13,12 @@ from app.eventing.hub import hub
 from app.models import EventOutbox, Job, Printer
 from app.plugins.capabilities.filament_inventory import CAPABILITY
 from app.services.inventory import subscribers
+from app.services import printer_setup
 from app.services.printer_manager import printer_manager
 from tests.test_workflow_end_to_end import farm, run_cycle          # noqa: F401  (fixture)
 from tests.waiting import settle_events
+
+pytestmark = pytest.mark.auto_test
 
 INV = "/api/v1/inventory"
 
@@ -33,9 +37,10 @@ async def _spool(client, grams: float) -> str:
 
 async def _printer_with_slot(client, session_factory, spool_ref: str | None, binding: dict | None = None) -> int:
     created = await client.post("/api/v1/printers", json={
-        "name": "Mock", "printer_type": "mock", "connection_config": {},
+        "name": "Mock", "printer_type": "mock", "connection_config": ip_config(),
         "orca_printer_profiles": ["Mock Machine"], "machine_profile_override": "Mock Machine"})
     assert created.status_code == 201, created.text
+    await printer_setup.drain()                 # its connection test (mock: connects) makes it configured
     printer_id = created.json()["id"]
     async with session_factory() as s:                                    # the spool in slot 0, as the operator bound it on the Fleet page
         (await s.get(Printer, printer_id)).loaded_filaments = [{

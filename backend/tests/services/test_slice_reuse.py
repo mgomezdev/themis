@@ -353,7 +353,7 @@ async def test_a_hand_picked_version_blocks_on_a_printer_whose_profile_changed(s
     await _add_version(session_factory, env)
     qe, mgr = _engine(session_factory, tmp_path)
     async with session_factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="Some Other 0.6 nozzle"))
         cached = (await s.execute(select(UploadedFile).where(UploadedFile.original_filename == "Benchy cached.gcode"))).scalar_one()
         j = Job(uploaded_file_id=cached.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True,

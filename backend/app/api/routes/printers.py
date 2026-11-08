@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 from ...auth import require_scope
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
 
 class PrinterCreate(BaseModel):
-    name: str
+    name: str | None = None               # default: "<model> <last IP octet>"
     # Identity: either the plugin/manufacturer/model triple, or a legacy printer_type (mapped to the triple).
     plugin_id: str | None = None
     manufacturer_id: str | None = None
@@ -238,6 +238,26 @@ def _get_connected_client(printer_id: int):
     return client
 
 
+def _factory_of(session: AsyncSession) -> async_sessionmaker:
+    """Sessions on the request's database, for work that outlives the request (the background connection test)."""
+    return async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+def _ip_of(p: Printer) -> str | None:
+    cfg = p.connection_config or {}
+    for key in ("ip_address", "host"):
+        if cfg.get(key):
+            return str(cfg[key]).strip()
+    return None
+
+
+def _same_model(p: Printer, plugin_id, manufacturer_id, model_id, model_uuid) -> bool:
+    """A printer's model is its registry UUID when both sides have one, else its plugin/manufacturer/model triple."""
+    if p.model_uuid and model_uuid:
+        return p.model_uuid == model_uuid
+    return (p.plugin_id, p.manufacturer_id, p.model_id) == (plugin_id, manufacturer_id, model_id)
+
+
 def _identity_for_create(body: PrinterCreate, registered=None):
     """(plugin_id, manufacturer_id, model_id, stored printer_type, declared model). A legacy printer_type is mapped; an
     explicit triple must be declared by its plugin. Raises IdentityError (-> 422) before anything is stored."""
@@ -352,8 +372,13 @@ async def create_printer(
     body: PrinterCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Register a new printer and attempt an immediate connection. Connection failure
-    is non-fatal — the printer is saved and will retry on next restart."""
+    """Register a printer. Only its identity (model + `connection_config.ip_address`) is required; blank connection values are
+    dropped. It is saved unconfigured and a connection test runs in the background: success makes it `configured` (only
+    configured printers take queue work), failure records `config_error`. 409 when a printer of the same model already uses
+    that IP."""
+    cfg = printer_setup.strip_blank(body.connection_config)
+    if not cfg.get("ip_address"):
+        raise HTTPException(422, "connection_config.ip_address is required")
     await registry.sync_registry(session)
     registered = await registry.get_model(session, body.model_uuid) if body.model_uuid else None
     try:
@@ -364,14 +389,19 @@ async def create_printer(
     record = await registry.get_model(session, model_uuid) if model_uuid else None
     if record is not None and not record.enabled and body.printer_type is None:
         raise HTTPException(422, f"Model {record.display_name!r} is disabled in the printer-model registry")
+    ip = str(cfg["ip_address"]).strip()
+    for other in (await session.execute(select(Printer))).scalars().all():
+        if _ip_of(other) == ip and _same_model(other, plugin_id, manufacturer_id, model_id, model_uuid):
+            raise HTTPException(409, f"{other.name} already uses {ip} as {record.display_name if record else model.name}")
     printer = Printer(
         model_uuid=model_uuid,
-        name=body.name,
+        name=body.name or printer_setup.default_name(record.display_name if record else model.name, ip),
+        configured=False,
         printer_type=printer_type,
         plugin_id=plugin_id,
         manufacturer_id=manufacturer_id,
         model_id=model_id,
-        connection_config=body.connection_config,
+        connection_config=cfg,
         orca_printer_profiles=body.orca_printer_profiles,
         machine_profile_override=body.machine_profile_override,
         nozzle_variant=await _check_variant(session, model_uuid, body.nozzle_variant),
@@ -389,11 +419,8 @@ async def create_printer(
     await session.commit()
     await session.refresh(printer)
     printer_manager.set_printer_plugin(printer.id, plugin_id)
-    try:
-        client = create_client(printer)
-        printer_manager.connect_printer(printer.id, client)
-    except Exception:
-        pass  # non-fatal: printer saved, connection will retry on next restart
+    printer_manager.set_configured(printer.id, False)
+    printer_setup.schedule(printer.id, _factory_of(session))
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
@@ -653,8 +680,11 @@ async def update_printer(
         printer.model_uuid = new_uuid
     if body.name is not None:
         printer.name = body.name
-    if body.connection_config is not None:
-        printer.connection_config = body.connection_config
+    retest = body.connection_config is not None and printer_setup.connection_changed(printer.connection_config,
+                                                                                    body.connection_config)
+    if retest:                        # only a real change to how it connects voids the confirmed setup (BIZ-369)
+        printer.connection_config = printer_setup.strip_blank(body.connection_config)
+        printer.configured, printer.config_error = False, None
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
     # Use model_fields_set so an explicit null clears the preset (EditForm sends
@@ -700,8 +730,27 @@ async def update_printer(
         printer.waiver_stop_at = body.waiver_stop_at
     await session.commit()
     await session.refresh(printer)
+    if retest:
+        printer_manager.set_configured(printer.id, False)
+        printer_setup.schedule(printer.id, _factory_of(session))
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
+
+
+@router.post(
+    "/{printer_id}/test",
+    summary="Test a saved printer's connection",
+    responses={404: {"description": "Printer not found"}},
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def test_saved_printer(printer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """Connect the printer with its stored config. Success makes it `configured` (and leaves it connected); failure records why in
+    `config_error`. A printer missing a required field is not contacted."""
+    await _get_or_404(printer_id, session)
+    out = await printer_setup.evaluate(printer_id, _factory_of(session))
+    session.expire_all()
+    printer = await _get_or_404(printer_id, session)
+    return {"ok": out.ok, "error": out.error, "configured": printer.configured, "config_error": printer.config_error}
 
 
 @router.delete(

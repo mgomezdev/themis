@@ -948,8 +948,8 @@ class QueueEngine:
 
     async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int, slice_only: bool = False) -> None:
         printer = await session.get(Printer, printer_id)
-        if printer is None or not printer.queue_on:
-            return
+        if printer is None or not printer.queue_on or not printer.configured:
+            return                   # BIZ-369: only a printer a connection has confirmed takes work
         if printer_id in self._pool_busy.values():
             return                   # BIZ-362: its pool plate is being packed; it claims that plate next
 
