@@ -39,6 +39,8 @@ export function fmtClock(mins: number | null | undefined): string {
 
 /** Swatch shown when a filament or material has no known colour. */
 export const UNKNOWN_COLOR = '#475472';
+/** The same, for a small dot drawn straight on a panel, where UNKNOWN_COLOR is too dark to see. */
+export const UNKNOWN_DOT_COLOR = '#94a3b8';
 /** Colour a newly added filament slot starts with (it is saved, and the operator can change it). */
 export const NEW_SLOT_COLOR = '#888888';
 

@@ -5,7 +5,7 @@ import {
   type InvMaterial, type InvSpool,
 } from '../api/inventory';
 import { SUBTYPES } from '../lib/filamentAsk';
-import { UNKNOWN_COLOR } from '../data/helpers';
+import { UNKNOWN_DOT_COLOR } from '../data/helpers';
 
 /** The filament library: materials and spools of the active provider, for providers that own their library. Works only
  *  through the neutral inventory API and its capabilities (MANAGE_MATERIALS / MANAGE_SPOOLS / WRITE_WEIGHT). */
@@ -98,7 +98,7 @@ export function FilamentLibraryScreen() {
       .then(([m, s]) => { setMaterials(m.items); setSpools(s.items); setError(''); })
       .catch(e => setError(e instanceof Error ? e.message : String(e)));
   }, []);
-  useEffect(() => { if (canMaterials || canSpools) reload(); }, [inventory.id, canMaterials, canSpools, reload]);  
+  useEffect(() => { if (canMaterials || canSpools) reload(); }, [inventory.id, canMaterials, canSpools, reload]);
 
   async function act(fn: () => Promise<unknown>) {
     setError('');
@@ -141,7 +141,7 @@ export function FilamentLibraryScreen() {
               {visibleMaterials.length === 0 && <tr><td colSpan={5} className="muted small">No materials yet.</td></tr>}
               {visibleMaterials.map(m => (
                 <tr key={m.ref} data-testid={`material-${m.ref}`} style={{ opacity: m.archived ? 0.5 : 1 }}>
-                  <td><span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', background: m.color_hex || UNKNOWN_COLOR }} /></td>
+                  <td><span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', background: m.color_hex || UNKNOWN_DOT_COLOR }} /></td>
                   <td>{materialDisplayName(m)}{m.archived && <span className="tiny muted"> · archived</span>}</td>
                   <td>{m.material ?? '—'}</td>
                   <td style={{ textAlign: 'center' }}>{spoolCount(m.ref)}</td>

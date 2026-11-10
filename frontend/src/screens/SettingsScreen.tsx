@@ -921,7 +921,7 @@ function WebhookPage() {
         setEvents(cfg.events.length ? cfg.events : ALL_WEBHOOK_EVENTS);
       })
       .catch(console.error);
-  }, []);  
+  }, []);
 
   async function save() {
     setSaving(true);

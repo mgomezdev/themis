@@ -6,7 +6,7 @@ import { useSlotConflicts } from './useSlotConflicts';
 import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, slotIsLoaded, type FilamentAsk } from '../lib/filamentAsk';
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
-import { UNKNOWN_COLOR } from '../data/helpers';
+import { UNKNOWN_DOT_COLOR } from '../data/helpers';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -178,7 +178,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                     <div className="row gap-2" style={{ alignItems: 'center' }}>
                       <div style={{
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                        background: f.color || UNKNOWN_COLOR, border: '1px solid var(--border-2)',
+                        background: f.color || UNKNOWN_DOT_COLOR, border: '1px solid var(--border-2)',
                       }} />
                       <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
                         Filament {f.index}{f.type ? ` · ${f.type}` : ''}

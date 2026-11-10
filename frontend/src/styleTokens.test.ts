@@ -41,8 +41,10 @@ const PALETTE_FILES: Record<string, string> = {
   'screens/SettingsScreen.tsx': 'the swatch picker offered for a material type',
   'screens/FilesScreen.tsx': 'per-plate fallback colours for a file with no filament data',
 };
-// `'#1a73e8'` / `"#fff"` / `rgba(…)` / `oklch(…)` as a string in component code. `&#8203;` entities and `#123` ids in prose do not match.
-const LITERAL = /['"`]#[0-9a-f]{3,8}['"`]|rgba?\(\s*[\d$]|hsla?\(\s*\d|oklch\(\s*\d/gi;
+// A hex colour anywhere inside a quoted string (`'#fff'`, `'1px solid #333'`, a gradient) or `rgba(…)` / `hsl(…)` / `oklch(…)`.
+// Not matched: `&#8203;` entities, `#123` in JSX text (not in a string), `'#' + id`, and named colours (`'white'`): those
+// last ones are a known gap, as is anything in PALETTE_FILES, which is exempt as a whole file.
+const LITERAL = /['"`][^'"`\n<>{}]*?(?<![&\w])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3})\b|rgba?\(\s*[\d$]|hsla?\(\s*\d|oklch\(\s*\d/gi;
 const literalCount = (files: readonly (readonly [string, string])[]) =>
   files.filter(([path]) => !(path in PALETTE_FILES)).reduce((n, [, text]) => n + (text.match(LITERAL)?.length ?? 0), 0);
 
@@ -81,7 +83,8 @@ describe('style tokens', () => {
     const planted = [['x.tsx', `<div style={{ border: '1px solid var(--border)', color: 'var(--ok, #22c55e)', background: 'rgba(239,68,68,0.12)' }} />`]] as const;
     expect(undefinedVars(planted, ':root { --ok: green; }')).toEqual(['x.tsx: --border']);
     expect(literalFallbacks(planted)).toEqual(['x.tsx']);
-    expect(literalCount(planted)).toBe(1);
+    expect(literalCount(planted)).toBe(2);                                       // the fallback hex and the rgba()
+    expect(literalCount([['z.tsx', `border: '1px solid #333', background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)'`]])).toBe(2);
     // …and the things that must not trip it.
     const fine = [['y.tsx', `<div style={{ '--p': '40%', color: 'var(--ok)' } as React.CSSProperties}>Job #101 &#8203; {'#' + id}</div>`]] as const;
     expect(undefinedVars(fine, ':root { --ok: green; } .bar { width: var(--p, 0%); }')).toEqual([]);

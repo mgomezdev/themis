@@ -247,9 +247,11 @@ NO_MATCH_PREFIX = "no eligible printer"
 
 # _UNTRACKED_TASKS: three tasks below (slice-and-print, upload-and-print, notification delivery) are started without
 # keeping a reference, which ruff's RUF006 flags because the event loop only holds tasks weakly. They are left that way
-# on purpose for now: each is always awaiting executor work, database I/O or a timer, all of which hold the task, and
-# holding them on the engine as well changed when an abandoned task is torn down in the test suite (the engine outlives
-# a test's event loop), which broke unrelated tests. Tracking them needs a stop()/teardown that cancels and awaits them.
+# on purpose for now. In practice each is strongly held while it runs (by the executor future, database call, timer or
+# slice-queue entry it is waiting on). Holding them on the engine as well was tried and backed out: tests leave these
+# tasks pending when their event loop closes, the last-built engine outlives the test, and the retained tasks were then
+# torn down in the middle of a later test (GeneratorExit inside its database calls; reproducible under `pytest -n auto`).
+# Tracking them properly needs stop() to cancel and await them and the tests that start them to call it.
 
 class QueueEngine:
     def __init__(

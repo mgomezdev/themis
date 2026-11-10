@@ -1,9 +1,8 @@
 """The Local inventory plugin (BIZ-222): its tables and migration, the weight audit log, labels, and the plugin working as the
 ACTIVE provider through the neutral API, preflight, alerts and the deduction model — with core knowing nothing about it."""
 import pytest
-from sqlalchemy.exc import OperationalError
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.plugins import get_plugin

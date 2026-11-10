@@ -187,6 +187,8 @@ async def lifespan(app: FastAPI):
             await warm_task
         except asyncio.CancelledError:
             pass
+        except Exception:                       # a warm-up that dies while being cancelled must not skip the stops below
+            logging.getLogger("app").exception("Catalog warm-up failed during shutdown")
 
     await inventory_sync_loop.stop()
     await event_hub.stop()

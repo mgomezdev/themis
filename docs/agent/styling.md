@@ -7,7 +7,8 @@ don't introduce a framework or per-component CSS files.
 
 - **The stylesheet**: `frontend/src/styles/app.css`. Imported once (via `main.tsx`/`App`).
 - **The guard**: `frontend/src/styleTokens.test.ts` fails on a `var(--token)` that `app.css` does not define, on a
-  `var(--token, #hex)` fallback, and on a new colour literal in component code (a ratchet: `LITERAL_BUDGET` only goes down).
+  `var(--token, #hex)` fallback, and on a new hex / `rgba()` / `oklch()` literal in component code (a ratchet: `LITERAL_BUDGET` only goes down). It does not
+  see named colours (`'white'`) or the files listed in its `PALETTE_FILES`.
 - **Shared styled components**: `frontend/src/components/ui.tsx`. Use these before writing new markup.
 
 ## Design tokens (CSS variables, `:root` in app.css)
@@ -44,7 +45,7 @@ Reach for these before inventing classes. Composable via space-separated `classN
 |---|---|
 | `.pill` + tone `.ok/.warn/.err/.info/.idle/.accent` (with `.dot`) | status chip — **use `<StatusPill>`**, don't hand-roll |
 | `.progress` (+`.warn`/`.err`/`.lg`, inner `.bar`) | progress bar — **use `<Progress>`** |
-| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons; `:disabled` dims it — don't add an inline `opacity` |
+| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons; `:disabled` dims it, so new code needs no inline `opacity` (a few older call sites still set one, which wins) |
 | `.notice` + tone `.ok/.warn/.err/.info` | inline message box (failed save, warning above a form) |
 | `.card` (+`.flat`/`.raised`) | panel surface — **use `<Card>`** |
 | `.input`, `.textarea`, `.select`, `.label` | form controls |
