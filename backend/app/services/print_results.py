@@ -124,7 +124,10 @@ def _targets_of_job(configs: list[JobPrinterConfig], model_targets: list[JobMode
 async def requeue_parts(session: AsyncSession, source_job: Job, parts: dict[int, int]) -> list[int]:
     """Pack `parts` ({project_item_id: quantity}) anew in their print group and queue the jobs, eligible on what `source_job` was.
     Returns the new job ids. Caller commits (the pack step commits as it goes, like generation)."""
-    from ..api.routes.projects import _plan_group_packs, _queue_packs, get_project_constructor, resolve_construct, Reason
+    # Reached through the projects route module on purpose: requeueing repacks exactly as generation does, and the tests
+    # that fake the project builder / library replace them there (`app.api.routes.projects.get_project_constructor`).
+    from ..api.routes.projects import _plan_group_packs, _queue_packs, get_project_constructor
+    from .providers.contract import Reason, resolve_construct
 
     proj = await session.get(Project, source_job.project_id)
     if proj is None or source_job.pool_group_id is not None:
