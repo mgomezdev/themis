@@ -566,7 +566,7 @@ function PrintDefaultsPage() {
       {saveError && (
         <div role="alert" className="small" style={{
           padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)',
+          background: 'var(--err-bg)', border: '1px solid var(--err-border)', color: 'var(--err)',
         }}>
           {saveError}
         </div>
@@ -921,7 +921,7 @@ function WebhookPage() {
         setEvents(cfg.events.length ? cfg.events : ALL_WEBHOOK_EVENTS);
       })
       .catch(console.error);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);  
 
   async function save() {
     setSaving(true);
@@ -1280,7 +1280,7 @@ function CreateKeyModal({ onClose, onCreated, allScopes }: {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+      position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 1000,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
     }}>
       <div className="card" style={{
@@ -1348,7 +1348,7 @@ function RevealKeyDialog({ apiKey, onClose }: { apiKey: ApiKeyCreated; onClose: 
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1001,
+      position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 1001,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
     }}>
       <div className="card" style={{ width: 520, maxWidth: '95vw', padding: 28 }}>

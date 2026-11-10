@@ -112,14 +112,14 @@ export function AnalyticsScreen() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-3)' }}>
+                    <tr style={{ borderBottom: '1px solid var(--border-1)', textAlign: 'left', color: 'var(--text-3)' }}>
                       <th style={th}>Printer</th><th style={th}>Completed</th><th style={th}>Failed</th>
                       <th style={th}>Success</th><th style={th}>Print time</th><th style={{ ...th, minWidth: 140 }}>Utilization</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.printers.map(p => (
-                      <tr key={p.printer_id} data-testid={`printer-row-${p.printer_id}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <tr key={p.printer_id} data-testid={`printer-row-${p.printer_id}`} style={{ borderBottom: '1px solid var(--border-1)' }}>
                         <td style={{ ...td, color: 'var(--text-1)' }}>{p.name}</td>
                         <td style={td}>{p.completed}</td>
                         <td style={td}>{p.failed}</td>

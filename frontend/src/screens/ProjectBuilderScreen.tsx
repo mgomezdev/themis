@@ -700,7 +700,7 @@ export function ProjectBuilderScreen() {
     <div className="col gap-3">
         {isDraft && projectId && (
           <div className="row gap-3" role="status" style={{ alignItems: 'center', padding: '10px 14px', borderRadius: 6,
-                                                            border: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+                                                            border: '1px solid var(--border-1)', background: 'var(--bg-2)' }}>
             <span className="small" style={{ flex: 1 }}>This is a draft (a customer request). Promote it to planning to queue it.</span>
             <button className="btn sm" onClick={promote}>Promote to planning</button>
           </div>
@@ -934,7 +934,7 @@ export function ProjectBuilderScreen() {
         {!searchLower && (
           <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
         )}
-        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6 }}>
+        <div style={{ borderTop: '1px solid var(--border-1)', marginTop: 4, paddingTop: 6 }}>
           {folderFiles.length === 0 && (
             <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
               {searchLower ? 'No matching STL files' : 'No STL files here'}
@@ -982,7 +982,7 @@ export function ProjectBuilderScreen() {
         <ItemSections items={items} groups={groups} filter={bannerSel} onBulk={onBulk}
           emptyHint={(
             <div style={{
-              border: '1px dashed var(--border)', borderRadius: 6,
+              border: '1px dashed var(--border-1)', borderRadius: 6,
               padding: '24px 16px', textAlign: 'center',
               color: 'var(--text-4)', fontSize: 13,
             }}>
@@ -1080,7 +1080,7 @@ export function ProjectBuilderScreen() {
       {generateError && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          background: 'var(--err-bg)', border: '1px solid var(--err-border)',
           borderRadius: 6, padding: '10px 14px',
         }}>
           <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
@@ -1154,7 +1154,7 @@ export function ProjectBuilderScreen() {
         {lastRemoved && (
           <div style={{
             position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
-            background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-1)',
+            background: 'var(--bg-2)', border: '1px solid var(--border-1)', color: 'var(--text-1)',
             padding: '10px 12px 10px 16px', borderRadius: 8,
             display: 'flex', alignItems: 'center', gap: 10,
             fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',

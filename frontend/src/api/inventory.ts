@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './client';
 import { featuresOf, useCapabilityProvider, type PluginSummary } from './plugins';
 import { slotBinding, type LoadedFilament } from './printers';
+import { UNKNOWN_COLOR } from '../data/helpers';
 
 export const INVENTORY_CAPABILITY = 'inventory.filament';
 
@@ -168,7 +169,7 @@ export function spoolDisplayName(s: InvSpool): string {
 }
 
 export function spoolColor(s: InvSpool): string {
-  return s.material?.color_hex || '#94a3b8';
+  return s.material?.color_hex || UNKNOWN_COLOR;
 }
 
 /** `{preset: [profiles]}` of a material (empty when it has none). */

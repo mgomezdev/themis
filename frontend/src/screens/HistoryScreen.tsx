@@ -87,7 +87,7 @@ export function HistoryScreen() {
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-3)' }}>
+            <tr style={{ borderBottom: '1px solid var(--border-1)', textAlign: 'left', color: 'var(--text-3)' }}>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Date</th>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>File</th>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Printer</th>
@@ -102,7 +102,7 @@ export function HistoryScreen() {
           </thead>
           <tbody>
             {jobs.map(j => (
-              <tr key={j.id} style={{ borderBottom: '1px solid var(--border)' }}>
+              <tr key={j.id} style={{ borderBottom: '1px solid var(--border-1)' }}>
                 <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
                   {fmtDate(j.completed_at ?? j.updated_at)}
                 </td>

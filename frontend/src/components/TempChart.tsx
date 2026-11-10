@@ -1,9 +1,9 @@
 import type { TempSample } from '../lib/tempHistory';
 
 const SERIES: Array<{ key: 'nozzle' | 'bed' | 'chamber'; label: string; color: string }> = [
-  { key: 'nozzle', label: 'Nozzle', color: 'var(--err, #f87171)' },
-  { key: 'bed', label: 'Bed', color: 'var(--warn, #f59e0b)' },
-  { key: 'chamber', label: 'Chamber', color: 'var(--accent-hi, #22d3ee)' },
+  { key: 'nozzle', label: 'Nozzle', color: 'var(--err)' },
+  { key: 'bed', label: 'Bed', color: 'var(--warn)' },
+  { key: 'chamber', label: 'Chamber', color: 'var(--accent-hi)' },
 ];
 
 const W = 600, H = 160, PAD = 28;
@@ -25,8 +25,8 @@ export function TempChart({ history, windowMs }: { history: TempSample[]; window
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Temperature history" style={{ width: '100%', height: 'auto' }}>
         {[0, 0.5, 1].map(f => (
           <g key={f}>
-            <line x1={PAD} x2={W - 6} y1={y(max * f)} y2={y(max * f)} stroke="var(--border-1, #333)" strokeWidth="1" />
-            <text x={PAD - 4} y={y(max * f) + 3} textAnchor="end" fontSize="9" fill="var(--text-3, #888)">{Math.round(max * f)}</text>
+            <line x1={PAD} x2={W - 6} y1={y(max * f)} y2={y(max * f)} stroke="var(--border-1)" strokeWidth="1" />
+            <text x={PAD - 4} y={y(max * f) + 3} textAnchor="end" fontSize="9" fill="var(--text-3)">{Math.round(max * f)}</text>
           </g>
         ))}
         {shown.map(s => {

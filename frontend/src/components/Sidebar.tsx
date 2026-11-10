@@ -30,7 +30,7 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
     <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
       {active > 0 && (
         <span data-testid="badge-active" className="count num"
-              style={{ marginLeft: 0, background: 'var(--ok-bg)', color: 'var(--ok)', borderColor: 'rgba(34,197,94,0.25)' }}>
+              style={{ marginLeft: 0, background: 'var(--ok-bg)', color: 'var(--ok)', borderColor: 'var(--ok-border)' }}>
           {active}
         </span>
       )}
@@ -41,7 +41,7 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
       )}
       {blocked > 0 && (
         <span data-testid="badge-blocked" className="count num"
-              style={{ marginLeft: 0, background: 'rgba(239,68,68,0.12)', color: 'var(--err)', borderColor: 'rgba(239,68,68,0.3)' }}>
+              style={{ marginLeft: 0, background: 'var(--err-bg)', color: 'var(--err)', borderColor: 'var(--err-border)' }}>
           {blocked}
         </span>
       )}
@@ -127,7 +127,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
               {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
               {it.to === '/alarms' && alarmCount > 0 && (
                 <span data-testid="badge-alarms" className="count num" aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
-                      style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.3)',
+                      style={{ marginLeft: 'auto', background: 'var(--err-bg)', borderColor: 'var(--err-border)',
                                color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
                   {alarmCount}
                 </span>

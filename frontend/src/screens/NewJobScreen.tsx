@@ -192,7 +192,7 @@ function FileCard({ file, plateCount, selectedCount, onClear }: {
     }}>
       <div style={{
         width: 44, height: 44, borderRadius: 8,
-        background: 'linear-gradient(135deg, #1e3a8a, #3b82f6)',
+        background: 'var(--thumb-fallback)',
         color: 'white',
         display: 'grid', placeItems: 'center',
         fontWeight: 700, fontSize: 10.5,
@@ -337,7 +337,7 @@ function PlateThumbnail({
   return (
     <div style={{
       borderRadius: 8, flexShrink: 0,
-      background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
+      background: 'var(--thumb-fallback)',
       border: '1px solid var(--border-2)',
       display: 'grid', placeItems: 'center',
       overflow: 'hidden',
@@ -1042,7 +1042,7 @@ export function NewJobScreen() {
       {successMsg && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+          background: 'var(--ok-bg)', border: '1px solid var(--ok-border)',
           color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
         }}>
           {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
@@ -1051,7 +1051,7 @@ export function NewJobScreen() {
       {eligibilityPrompt && (
         <div role="alert" data-testid="eligibility-prompt" style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 13,
+          background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', fontSize: 13,
         }}>
           <div>{eligibilityPrompt}</div>
           <div className="row gap-2" style={{ marginTop: 8 }}>
@@ -1063,7 +1063,7 @@ export function NewJobScreen() {
       {error && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+          background: 'var(--err-bg)', border: '1px solid var(--err-border)',
           color: 'var(--err)', fontSize: 13,
         }}>
           {error}

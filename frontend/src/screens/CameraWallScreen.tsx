@@ -80,24 +80,24 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
                        intervalMs={SNAPSHOT_MS + (Number(p.id) % 10) * 130} />}   /* staggered so 40 tiles don't all tick at once */
         <div style={{ position: 'absolute', top: 6, left: 6, right: 6, display: 'flex', justifyContent: 'space-between',
                       gap: 6, zIndex: 4, pointerEvents: 'none' }}>
-          <span className="tiny" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: 4, padding: '1px 6px',
+          <span className="tiny" style={{ background: 'var(--scrim)', color: 'var(--text-1)', borderRadius: 4, padding: '1px 6px',
                                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {!!p.alarmCount && p.alarmSeverity && (
               <span data-testid="wall-alarm" title={`${p.alarmCount} unacknowledged alarm${p.alarmCount === 1 ? '' : 's'} (worst: ${p.alarmSeverity})`}
-                    style={{ background: 'rgba(0,0,0,0.6)', color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`,
+                    style={{ background: 'var(--scrim)', color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`,
                              borderRadius: 999, padding: '0 6px', fontSize: 11, fontWeight: 600 }}>{label}</span>
             )}
             {asLive && <StatusPill status={p.status} />}      {/* snapshot tiles get theirs from VideoTile */}
           </span>
         </div>
         <span className="tiny" data-testid={asLive ? 'wall-live' : 'wall-snapshot'}
-              style={{ position: 'absolute', bottom: 6, left: 6, zIndex: 4, background: 'rgba(0,0,0,0.6)', color: asLive ? '#f87171' : '#cbd5e1',
+              style={{ position: 'absolute', bottom: 6, left: 6, zIndex: 4, background: 'var(--scrim)', color: asLive ? 'var(--err)' : 'var(--text-2)',
                        borderRadius: 4, padding: '0 5px' }}>{asLive ? '● LIVE' : 'snapshot'}</span>
       </div>
     </>
   );
-  const style = { display: 'block', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', textDecoration: 'none', color: 'inherit' };
+  const style = { display: 'block', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-1)', textDecoration: 'none', color: 'inherit' };
   return inRouter
     ? <Link to={to} aria-label={`Open ${p.name} console`} style={style} data-testid="wall-tile">{body}</Link>
     : <a href={to} aria-label={`Open ${p.name} console`} style={style} data-testid="wall-tile">{body}</a>;

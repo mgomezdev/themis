@@ -26,7 +26,7 @@ export function SliceCacheMarkers({ job }: { job: MarkerJob }) {
   const chips: { key: string; label: string; tone: string; title?: string }[] = [];
   if (job.sliced_version_id != null) chips.push({ key: 'cached', label: 'Used cached gcode', tone: 'var(--accent-hi)' });
   if (save?.outcome === 'saved' || save?.outcome === 'duplicate') {
-    chips.push({ key: 'saved', label: 'Gcode saved to library', tone: 'var(--ok, #22c55e)' });
+    chips.push({ key: 'saved', label: 'Gcode saved to library', tone: 'var(--ok)' });
   } else if (save?.outcome === 'failed') {
     chips.push({ key: 'save-failed', label: 'Gcode save failed', tone: 'var(--err)', title: save.error ?? undefined });
   } else if (job.save_slice && job.sliced_version_id == null && !TERMINAL.has(job.status)) {

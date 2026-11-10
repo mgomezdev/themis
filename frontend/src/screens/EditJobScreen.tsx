@@ -163,7 +163,7 @@ export function EditJobScreen() {
     return (
       <div className="col gap-3">
         <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate(-1)}>{Icons.chevL} Back</button>
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{loadError}</div>
+        <div className="notice err">{loadError}</div>
       </div>
     );
   }
@@ -177,7 +177,7 @@ export function EditJobScreen() {
       </div>
 
       {saveError && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{saveError}</div>
+        <div className="notice err">{saveError}</div>
       )}
 
       {job && (
@@ -189,12 +189,12 @@ export function EditJobScreen() {
               {job.file && <span className="muted" style={{ fontWeight: 400 }}> · {job.file.original_filename}</span>}
             </span>
             {job.status === 'blocked' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(251,191,36,0.12)', color: 'var(--warn)', fontWeight: 500 }}>
+              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'var(--warn-bg)', color: 'var(--warn)', fontWeight: 500 }}>
                 BLOCKED
               </span>
             )}
             {job.status === 'failed' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.12)', color: 'var(--err)', fontWeight: 500 }}>
+              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'var(--err-bg)', color: 'var(--err)', fontWeight: 500 }}>
                 FAILED
               </span>
             )}
@@ -326,8 +326,8 @@ export function EditJobScreen() {
                 {verifyResult && (
                   <div style={{
                     padding: '10px 12px', borderRadius: 8,
-                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
+                    background: verifyResult.ok ? 'var(--ok-bg)' : 'var(--err-bg)',
+                    border: `1px solid ${verifyResult.ok ? 'var(--ok-border)' : 'var(--err-border)'}`,
                   }}>
                     <div className="tiny" style={{
                       fontWeight: 600,

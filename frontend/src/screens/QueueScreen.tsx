@@ -177,8 +177,8 @@ function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.55)' : isBlocked ? 'rgba(251,191,36,0.6)' : undefined,
-        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px rgba(239,68,68,0.15)' : isBlocked ? 'inset 0 0 0 1px rgba(251,191,36,0.12)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'var(--err-border-strong)' : isBlocked ? 'var(--warn-border-strong)' : undefined,
+        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px var(--err-bg)' : isBlocked ? 'inset 0 0 0 1px var(--warn-bg)' : undefined,
       }}
     >
       <div className="row gap-4" style={{ padding: 14 }}>
@@ -294,8 +294,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(251,191,36,0.3)',
-            background: 'rgba(251,191,36,0.09)',
+            borderTop: '1px solid var(--warn-border)',
+            background: 'var(--warn-bg)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -324,8 +324,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(239,68,68,0.3)',
-            background: 'rgba(239,68,68,0.09)',
+            borderTop: '1px solid var(--err-border)',
+            background: 'var(--err-bg)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -354,8 +354,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(251,191,36,0.3)',
-            background: 'rgba(251,191,36,0.09)',
+            borderTop: '1px solid var(--warn-border)',
+            background: 'var(--warn-bg)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -478,7 +478,7 @@ function JobDetailPanel({
           <div style={{
             position: 'absolute', bottom: 8, left: 8,
             padding: '3px 8px', borderRadius: 0,
-            background: 'rgba(239,68,68,0.85)', color: 'white',
+            background: 'var(--err)', color: 'white',
             fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
           }}>
             FAILED
@@ -547,7 +547,7 @@ function JobDetailPanel({
         {job.lowStockWarning && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'var(--warn-bg)', border: '1px solid var(--warn-border)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>
                 Low filament
               </div>
@@ -577,7 +577,7 @@ function JobDetailPanel({
         {(isBlocked || isFailed) && job.blockReason && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'rgba(239,68,68,0.08)' : 'rgba(251,191,36,0.1)', border: isFailed ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(251,191,36,0.3)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'var(--err-bg)' : 'var(--warn-bg)', border: isFailed ? '1px solid var(--err-border)' : '1px solid var(--warn-border)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: isFailed ? 'var(--err)' : 'var(--warn)', marginBottom: 4 }}>
                 {isFailed ? 'Failure Reason' : 'Blocked'}
               </div>
@@ -593,7 +593,7 @@ function JobDetailPanel({
             <div className="tag-key" style={{ marginBottom: 8 }}>Slice errors</div>
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {sliceFailures.map((f, i) => (
-                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'var(--err-bg)', border: '1px solid var(--err-border)' }}>
                   <div className="tiny" style={{ fontWeight: 600, color: 'var(--err)', marginBottom: 4 }}>
                     Printer {f.printer_id} · {f.print_profile}
                   </div>
@@ -648,8 +648,8 @@ function JobDetailPanel({
                 {verifyRunning && (
                   <div style={{
                     padding: '8px 12px', borderRadius: 0,
-                    background: 'rgba(245,158,11,0.08)',
-                    border: '1px solid rgba(245,158,11,0.25)',
+                    background: 'var(--warn-bg)',
+                    border: '1px solid var(--warn-border)',
                     animation: 'pulse-soft 1.5s ease-in-out infinite',
                   }}>
                     <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 500 }}>
@@ -660,12 +660,12 @@ function JobDetailPanel({
                 {verifyResult && (
                   <div style={{
                     padding: '10px 12px', borderRadius: 0,
-                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
+                    background: verifyResult.ok ? 'var(--ok-bg)' : 'var(--err-bg)',
+                    border: `1px solid ${verifyResult.ok ? 'var(--ok-border)' : 'var(--err-border)'}`,
                   }}>
                     <div className="tiny" style={{
                       fontWeight: 600,
-                      color: verifyResult.ok ? 'var(--ok, #22c55e)' : 'var(--err)',
+                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
                       marginBottom: verifyResult.error ? 4 : 0,
                     }}>
                       {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
@@ -941,7 +941,7 @@ export function QueueScreen() {
         {actionError && (
           <div role="alert" style={{
             padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+            background: 'var(--err-bg)', border: '1px solid var(--err-border)',
             color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
           }}>
             <span style={{ flex: 1 }}>{actionError}</span>
@@ -957,13 +957,13 @@ export function QueueScreen() {
             padding: '10px 14px',
             marginBottom: 14,
             borderRadius: 6,
-            background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.35)',
+            background: 'var(--warn-bg)',
+            border: '1px solid var(--warn-border)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
           }}>
-            <span style={{ color: 'var(--warn, #f59e0b)', fontSize: 15 }}>⚠</span>
+            <span style={{ color: 'var(--warn)', fontSize: 15 }}>⚠</span>
             <span className="small" style={{ color: 'var(--text-1)' }}>
               <strong>Laminus sidecar is unreachable.</strong> Slicing is paused — queued jobs will be blocked until the sidecar comes back online.
             </span>

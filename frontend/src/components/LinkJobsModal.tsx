@@ -41,7 +41,7 @@ export function LinkJobsModal({ projectId, projectName, projectStage, onClose, o
 
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, background: 'rgba(2,6,16,0.65)', backdropFilter: 'blur(4px)',
+      position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(4px)',
       zIndex: 100, display: 'grid', placeItems: 'center', padding: 24,
     }}>
       <div onClick={e => e.stopPropagation()} className="card" role="dialog" aria-label="Link existing jobs"

@@ -28,7 +28,7 @@ describe('AlarmsScreen', () => {
     expect(within(row).getByTestId('severity-error')).toBeTruthy();
     expect(within(row).getByText('Atlas')).toBeTruthy();
     expect(within(row).getByText('AMS reported HMS 0700_0100_0002_0001')).toBeTruthy();
-    expect(within(row).getByRole('link', { name: 'Bambu wiki' }).getAttribute('href')).toBe('https://wiki.example/hms/0700');
+    expect(within(row).getByRole('link', { name: 'Help' }).getAttribute('href')).toBe('https://wiki.example/hms/0700');
     const second = screen.getByTestId('alarm-2');
     expect(within(second).getByTestId('severity-fatal')).toBeTruthy();
     expect(within(second).queryByRole('link')).toBeNull();

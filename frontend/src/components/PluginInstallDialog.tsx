@@ -60,7 +60,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
   const existing = preview ? plugins.find(p => p.id === preview.id) : undefined;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
          onClick={e => { if (e.target === e.currentTarget) close(); }}>
       <div className="card" role="dialog" aria-label="Install plugin" style={{ width: 520, maxWidth: '92vw', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="row between" style={{ alignItems: 'center' }}>
@@ -114,7 +114,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
               <dt className="muted">SHA-256</dt><dd style={{ margin: 0, wordBreak: 'break-all', fontFamily: 'monospace', fontSize: 11 }}>{preview.archive_sha256}</dd>
             </dl>
             {existing && <div className="small" data-testid="install-replaces">Replaces the installed v{existing.install?.version ?? existing.version}; the old version is kept for rollback.</div>}
-            <div role="alert" className="small" style={{ border: '1px solid var(--warn, #c9a227)', borderRadius: 6, padding: 10 }}>
+            <div role="alert" className="small" style={{ border: '1px solid var(--warn)', borderRadius: 6, padding: 10 }}>
               <strong>This plugin gets full access to Themis.</strong> It runs inside the Themis process and can read your data, every
               secret and API key, and control your printers. Only install code you trust. It does not run until you restart Themis.
             </div>
@@ -124,7 +124,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
           </div>
         )}
 
-        {error && <div role="alert" className="small" style={{ color: 'var(--err, #d44)' }}>{error}</div>}
+        {error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{error}</div>}
 
         <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
           <button className="btn" disabled={busy} onClick={close}>Cancel</button>

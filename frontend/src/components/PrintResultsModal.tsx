@@ -42,7 +42,7 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
 
   return (
     <div className="modal-backdrop" role="dialog" aria-label="Print results" onClick={e => e.stopPropagation()}   // a stray click keeps the counts
-         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+         style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
       <div className="card" style={{ padding: 20, minWidth: 360, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Print results</div>
         <div className="tiny muted" style={{ marginBottom: 12 }}>

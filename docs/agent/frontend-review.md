@@ -69,6 +69,8 @@ one from memory.
 No CSS framework — compose from `app.css` tokens and the shared `components/ui.tsx` primitives
 (`Card`, `StatusPill`, `Progress`, ...). See `styling.md` for the full vocabulary and the `StatusKey`→
 pill-tone mapping. A new styled status needs an entry there, not an ad-hoc inline color.
+`src/styleTokens.test.ts` fails on an undefined `var(--token)`, a `var(--token, #hex)` fallback, and a new colour
+literal in component code; a diff that raises its `LITERAL_BUDGET` needs the same scrutiny as a lowered coverage floor.
 
 ## 8. Tests
 

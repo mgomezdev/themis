@@ -78,7 +78,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 200,
                                      display: 'grid', placeItems: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} className="card" role="dialog" aria-label="Scan spool"
            style={{ width: 'min(440px, 100%)', maxHeight: '90vh', overflowY: 'auto', padding: 20 }}>

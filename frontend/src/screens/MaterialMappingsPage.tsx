@@ -3,6 +3,7 @@ import { fetchPrinters, type ApiPrinter } from '../api/printers';
 import { getPrinterProfiles } from '../api/queue';
 import { CAP, fetchMaterials, materialDisplayName, profileLinks, setProfileLinks, useInventory, type InvMaterial } from '../api/inventory';
 import { FilamentProfileMultiSelect } from '../components/FilamentProfileMultiSelect';
+import { UNKNOWN_COLOR } from '../data/helpers';
 
 // Map from machine preset name → one printer ID that uses it (for profile lookup)
 function buildPresetPrinterMap(printers: ApiPrinter[]): Map<string, number> {
@@ -56,7 +57,7 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
     }
   }
 
-  const color = filament.color_hex || '#888';
+  const color = filament.color_hex || UNKNOWN_COLOR;
   const presets = Array.from(presetPrinterMap.keys());
 
   // Orphaned: presets in saved mapping not covered by any registered printer

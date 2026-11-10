@@ -5,7 +5,9 @@ Sass. Styling is a single global stylesheet of design tokens + hand-written util
 applied via `className` strings, with `style={{ '--token' }}`/inline `style` for one-offs. Match this —
 don't introduce a framework or per-component CSS files.
 
-- **The stylesheet**: `frontend/src/styles/app.css` (~650 lines). Imported once (via `main.tsx`/`App`).
+- **The stylesheet**: `frontend/src/styles/app.css`. Imported once (via `main.tsx`/`App`).
+- **The guard**: `frontend/src/styleTokens.test.ts` fails on a `var(--token)` that `app.css` does not define, on a
+  `var(--token, #hex)` fallback, and on a new colour literal in component code (a ratchet: `LITERAL_BUDGET` only goes down).
 - **Shared styled components**: `frontend/src/components/ui.tsx`. Use these before writing new markup.
 
 ## Design tokens (CSS variables, `:root` in app.css)
@@ -14,14 +16,15 @@ Everything references tokens — never hard-code a hex/px when a token exists.
 
 | Group | Tokens | Notes |
 |---|---|---|
-| Backgrounds | `--bg-0`…`--bg-4` | 0 = page (deepest navy) → 4 = hover/selected |
+| Backgrounds | `--bg-0`…`--bg-4` | 0 = page (near-black) → 4 = hover/selected |
 | Borders | `--border-1`…`--border-3` | low→high contrast |
 | Text | `--text-1`…`--text-4` | 1 = primary → 4 = dim |
-| Accent | `--accent`, `--accent-hi`, `--accent-lo`, `--accent-glow` | amber default; **themeable** (see below) |
-| Status | `--ok`/`--warn`/`--err`/`--idle`/`--info` (+ `*-bg` translucent fills) | drive `.pill`, `.progress` |
-| Type | `--font-sans` (Geist), `--font-mono` (Geist Mono) | base body 13.5px, `font-feature-settings 'ss01','cv11'` |
+| Accent | `--accent`, `--accent-hi`, `--accent-lo`, `--accent-glow` | chrome yellow default; **themeable** (see below) |
+| Status | `--ok`/`--warn`/`--err`/`--info` each with `*-bg` (fill) and `*-border` (outline); `--warn-border-strong`/`--err-border-strong`; `--idle` + `--idle-bg`; `--link` | drive `.pill`, `.progress`, `.notice`. A tinted box is `background: var(--err-bg); border: 1px solid var(--err-border)` — never an `rgba()` |
+| Overlay | `--scrim` (modal backdrop / plate behind text on a camera feed), `--thumb-fallback` (file with no thumbnail) | |
+| Type | `--font-sans` (IBM Plex Sans), `--font-mono` (IBM Plex Mono) | base body 13.5px |
 | Spacing | `--pad-1`…`--pad-6`, `--row-h`, `--card-pad`, `--gap-stack` | **density-dependent** (see below) |
-| Radii | `--r-1`(4px)…`--r-5`(24px) | |
+| Radii | `--r-1`(0)…`--r-5`(4px) | square-cornered look; read the values in `:root` |
 | Shadow | `--shadow-1` (subtle), `--shadow-2` (elevated/modal) | |
 | Sidebar | `--sb-collapsed` (64px), `--sb-expanded` (232px), runtime `--sb-w` | |
 
@@ -41,7 +44,8 @@ Reach for these before inventing classes. Composable via space-separated `classN
 |---|---|
 | `.pill` + tone `.ok/.warn/.err/.info/.idle/.accent` (with `.dot`) | status chip — **use `<StatusPill>`**, don't hand-roll |
 | `.progress` (+`.warn`/`.err`/`.lg`, inner `.bar`) | progress bar — **use `<Progress>`** |
-| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons |
+| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons; `:disabled` dims it — don't add an inline `opacity` |
+| `.notice` + tone `.ok/.warn/.err/.info` | inline message box (failed save, warning above a form) |
 | `.card` (+`.flat`/`.raised`) | panel surface — **use `<Card>`** |
 | `.input`, `.textarea`, `.select`, `.label` | form controls |
 | `.tbl` (`th`/`td`, `tr.selected`, hover) | data tables |
@@ -87,6 +91,9 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
 
 - **Style a new element** → compose existing utility/component classes + tokens; only add a new class in
   `app.css` if nothing fits. Use `<Card>`, `<StatusPill>`, `<Progress>`, `.btn`, `.row/.col/.gap-*`.
+- **Colours that are data, not chrome** (material palette, group colours, the unknown-filament swatch `UNKNOWN_COLOR` /
+  `NEW_SLOT_COLOR` in `data/helpers.ts`) live in the files listed in `PALETTE_FILES` in `styleTokens.test.ts`; import the
+  constant, don't retype the hex.
 - **Add a token** → define in `:root` in `app.css`; if it should react to density/accent, add the
   override under the matching `[data-density]`/`[data-accent]` block too.
 - **Add a styled status** → extend `StatusKey` (`data/types.ts`) + the `StatusPill` `map` (`ui.tsx`);
@@ -98,4 +105,4 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
 - No framework → no utility-class autocomplete/purge; class names are the ones in `app.css`, that's it.
 - One global stylesheet → class names are global; prefix domain-specific classes to avoid collisions.
 - Build/type-check is still `npm run build` (`tsc -b`); CSS isn't type-checked — a typo'd class name
-  silently no-ops. Verify against `app.css`.
+  silently no-ops (verify against `app.css`). A typo'd `var(--token)` is caught by `styleTokens.test.ts`.

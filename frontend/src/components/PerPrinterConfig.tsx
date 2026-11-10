@@ -6,6 +6,7 @@ import { useSlotConflicts } from './useSlotConflicts';
 import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, slotIsLoaded, type FilamentAsk } from '../lib/filamentAsk';
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
+import { UNKNOWN_COLOR } from '../data/helpers';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -66,8 +67,8 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
 }
 
 const CHIP = {
-  ok: { background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)', color: 'var(--ok)' },
-  warn: { background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)', color: 'var(--warn)' },
+  ok: { background: 'var(--ok-bg)', border: '1px solid var(--ok-border)', color: 'var(--ok)' },
+  warn: { background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', color: 'var(--warn)' },
 } as const;
 
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
@@ -177,7 +178,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                     <div className="row gap-2" style={{ alignItems: 'center' }}>
                       <div style={{
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                        background: f.color || '#888', border: '1px solid var(--border-2)',
+                        background: f.color || UNKNOWN_COLOR, border: '1px solid var(--border-2)',
                       }} />
                       <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
                         Filament {f.index}{f.type ? ` · ${f.type}` : ''}

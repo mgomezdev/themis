@@ -174,7 +174,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
         </div>
       )}
       {pool && group.pool_warning && (
-        <div className="tiny" role="alert" style={{ color: 'var(--warn, #f59e0b)', marginTop: 4 }}>{group.pool_warning}</div>
+        <div className="tiny" role="alert" style={{ color: 'var(--warn)', marginTop: 4 }}>{group.pool_warning}</div>
       )}
 
       {!pool && (

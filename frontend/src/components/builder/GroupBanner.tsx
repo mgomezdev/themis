@@ -70,7 +70,7 @@ export function GroupBanner({ groups, counts, selected, onSelect, showAll, onDro
   };
   const badge = (sel: boolean, colour: string, hot: boolean) => ({
     padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6,
-    border: `1px ${hot ? 'dashed' : 'solid'} ${sel || hot ? colour : 'var(--border)'}`,
+    border: `1px ${hot ? 'dashed' : 'solid'} ${sel || hot ? colour : 'var(--border-1)'}`,
     background: sel ? `${colour}22` : 'var(--bg-1)', color: 'var(--text-1)',
   });
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { useFleetData } from '../api/fleet';
-import { fmtTime } from '../data/helpers';
+import { fmtTime, NEW_SLOT_COLOR } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
@@ -199,7 +199,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0,
-      background: 'rgba(2,6,16,0.65)', backdropFilter: 'blur(4px)',
+      background: 'var(--scrim)', backdropFilter: 'blur(4px)',
       zIndex: 100, display: 'grid', placeItems: 'center', padding: 24,
     }}>
       <div onClick={e => e.stopPropagation()} className="card" style={{
@@ -433,7 +433,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   }, [printerId]);
 
   const addSlot = () =>
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: NEW_SLOT_COLOR }]);
   const removeSlot = (i: number) =>
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
   const updateSlot = (i: number, patch: Partial<LoadedFilament>) =>
@@ -556,7 +556,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0,
-      background: 'rgba(2,6,16,0.65)', backdropFilter: 'blur(4px)',
+      background: 'var(--scrim)', backdropFilter: 'blur(4px)',
       zIndex: 100, display: 'grid', placeItems: 'center', padding: 24,
     }}>
       <div onClick={e => e.stopPropagation()} className="card" style={{
@@ -865,7 +865,7 @@ function cardCueStyle(p: Printer): React.CSSProperties {
     return { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' };
   }
   if (!p.queueOn) {
-    return { borderColor: 'var(--border-2, #475472)', boxShadow: '0 0 0 1px rgba(148,163,184,0.35)' };
+    return { borderColor: 'var(--border-2)', boxShadow: '0 0 0 1px rgba(148,163,184,0.35)' };
   }
   return {};
 }
@@ -874,7 +874,7 @@ function DormantBadge({ reason }: { reason: string }) {
   return (
     <span className="tiny" title={reason} style={{
       padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'rgba(148,163,184,0.18)', color: 'var(--text-dim, #94a3b8)', fontWeight: 600,
+      background: 'var(--idle-bg)', color: 'var(--text-3)', fontWeight: 600,
     }}>DORMANT</span>
   );
 }

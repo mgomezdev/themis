@@ -25,6 +25,7 @@ import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
 import { stripBlank } from '../components/quickAdd';
+import { NEW_SLOT_COLOR } from '../data/helpers';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -161,7 +162,7 @@ export function EditForm({
   }, [printer.id, printer.machine_profile]);
 
   function addSlot() {
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: NEW_SLOT_COLOR }]);
   }
   function removeSlot(i: number) {
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));

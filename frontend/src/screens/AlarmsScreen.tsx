@@ -81,7 +81,7 @@ export function AlarmsScreen() {
                   <td>
                     <div>{a.message}</div>
                     <div className="tiny muted num">
-                      {a.code}{a.help_url && <> · <a href={a.help_url} target="_blank" rel="noreferrer">Bambu wiki</a></>}
+                      {a.code}{a.help_url && <> · <a href={a.help_url} target="_blank" rel="noreferrer">Help</a></>}
                     </div>
                   </td>
                   <td className="small num">{a.first_seen.slice(0, 16).replace('T', ' ')}</td>

@@ -27,7 +27,7 @@ export function QueuePools({ refreshKey, onPools }: { refreshKey: unknown; onPoo
             <span style={{ fontWeight: 600 }}>{p.name}</span>
             <Link className="tiny" to={`/projects/${p.project_id}`}>{p.project_name ?? `Project #${p.project_id}`}</Link>
             <span className="tiny muted" style={{ flex: 1 }}>{p.done} done · {p.printing} printing · {p.left} left</span>
-            {p.warning && <span className="tiny" role="alert" style={{ color: 'var(--warn, #f59e0b)' }}>{p.warning}</span>}
+            {p.warning && <span className="tiny" role="alert" style={{ color: 'var(--warn)' }}>{p.warning}</span>}
           </div>
         ))}
       </div>

@@ -24,17 +24,27 @@
   --accent-lo:   oklch(28% 0.055 80);
   --accent-glow: oklch(87% 0.185 95 / 0.22);
 
+  /* Status tones. Each has a solid (text, dots), a `-bg` fill and a `-border` outline; reach for these
+     three instead of an rgba() literal (src/styleTokens.test.ts fails on a new literal or an undefined var). */
   --ok:          oklch(71% 0.155 155);  /* scan teal-green */
   --ok-bg:       oklch(71% 0.155 155 / 0.12);
+  --ok-border:   oklch(71% 0.155 155 / 0.30);
   --warn:        oklch(87% 0.185 95);   /* chrome yellow */
   --warn-bg:     oklch(87% 0.185 95 / 0.12);
+  --warn-border: oklch(87% 0.185 95 / 0.30);
+  --warn-border-strong: oklch(87% 0.185 95 / 0.60);
   --err:         oklch(62% 0.225 20);   /* night city red-orange */
   --err-bg:      oklch(62% 0.225 20 / 0.12);
+  --err-border:  oklch(62% 0.225 20 / 0.35);
+  --err-border-strong: oklch(62% 0.225 20 / 0.60);
   --idle:        oklch(48% 0.022 250);  /* cool metal grey */
   --idle-bg:     oklch(48% 0.022 250 / 0.12);
   --link:        #00f0ff;              /* Night City electric cyan — cyberpunk.net footer */
   --info:        #00f0ff;             /* unified with --link */
   --info-bg:     oklch(88% 0.20 196 / 0.12);
+  --info-border: oklch(88% 0.20 196 / 0.30);
+  --thumb-fallback: linear-gradient(135deg, #1e3a6e, #3b82f6);   /* a file with no rendered thumbnail */
+  --scrim:       oklch(0% 0 0 / 0.6);   /* modal backdrop, and the dark plate behind text laid over a camera feed */
 
   /* Type */
   --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -362,6 +372,26 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .btn.ghost:hover { background: var(--bg-3); }
 .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: 0; }
 .btn.icon { padding: 7px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--bg-2); border-color: var(--border-2); filter: none; }
+.btn.primary:disabled:hover { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); border-color: var(--accent); }
+.btn.ghost:disabled:hover { background: transparent; border-color: transparent; }
+.btn:disabled:active { transform: none; }
+
+/* ---------- notice ---------- */
+/* Inline message box: an error after a failed save, a warning above a form. `.notice` + a tone (`ok`/`warn`/`err`/`info`). */
+.notice {
+  padding: 10px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-3);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 13px;
+}
+.notice.ok   { background: var(--ok-bg);   border-color: var(--ok-border);   color: var(--ok); }
+.notice.warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
+.notice.err  { background: var(--err-bg);  border-color: var(--err-border);  color: var(--err); }
+.notice.info { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
 
 /* ---------- card ---------- */
 .card {
@@ -393,17 +423,17 @@ input, textarea, select { font-family: inherit; color: inherit; }
   background: var(--text-3);
   box-shadow: 0 0 0 2px rgba(255,255,255,0.04);
 }
-.pill.ok    { background: var(--ok-bg);   color: var(--ok);   border-color: oklch(71% 0.155 155 / 0.30); }
+.pill.ok    { background: var(--ok-bg);   color: var(--ok);   border-color: var(--ok-border); }
 .pill.ok    .dot { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
-.pill.warn  { background: var(--warn-bg); color: var(--warn); border-color: oklch(87% 0.185 95 / 0.30); }
+.pill.warn  { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
 .pill.warn  .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.pill.err   { background: var(--err-bg);  color: var(--err);  border-color: oklch(62% 0.225 20 / 0.35); }
+.pill.err   { background: var(--err-bg);  color: var(--err);  border-color: var(--err-border); }
 .pill.err   .dot { background: var(--err);  box-shadow: 0 0 6px var(--err); }
-.pill.info  { background: var(--info-bg); color: var(--info); border-color: oklch(88% 0.20 196 / 0.30); }
+.pill.info  { background: var(--info-bg); color: var(--info); border-color: var(--info-border); }
 .pill.info  .dot { background: var(--info); box-shadow: 0 0 6px var(--info); }
 .pill.idle  { background: var(--idle-bg); color: var(--text-2); }
 .pill.idle  .dot { background: var(--idle); }
-.pill.accent { background: var(--accent-glow); color: var(--accent-hi); border-color: oklch(87% 0.185 95 / 0.30); }
+.pill.accent { background: var(--accent-glow); color: var(--accent-hi); border-color: var(--accent-glow); }
 .pill.accent .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 
 /* ---------- progress ---------- */

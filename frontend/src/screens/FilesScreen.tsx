@@ -606,7 +606,7 @@ function DeleteVersionsDialog({ file, versions, onChoose, onCancel }: {
   }, [onCancel]);
   return (
     <div role="dialog" aria-modal="true" aria-label="Delete model with sliced versions" style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 60,
+      position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 60,
       display: 'grid', placeItems: 'center', padding: 16,
     }}>
       <div className="card" style={{ width: 440, maxWidth: '100%', padding: 18 }}>
@@ -633,7 +633,7 @@ function DeleteVersionsDialog({ file, versions, onChoose, onCancel }: {
 // FolderPicker — modal to choose an existing destination folder (+ New folder)
 // -------------------------------------------------------------------------
 
-const NO_PICK = ' '; // sentinel: a path that matches no real folder
+const NO_PICK = '\u0000'; // sentinel: a path that matches no real folder
 
 function FolderPicker({ count, onPick, onClose }: {
   count: number;
@@ -671,7 +671,7 @@ function FolderPicker({ count, onPick, onClose }: {
 
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+      position: 'fixed', inset: 0, background: 'var(--scrim)',
       display: 'grid', placeItems: 'center', zIndex: 50,
     }}>
       <div onClick={e => e.stopPropagation()} className="card" style={{

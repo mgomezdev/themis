@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
 import { apiFetch, openLiveSocket } from './client';
+import { UNKNOWN_COLOR } from '../data/helpers';
 
 export interface FleetPrinter {
   id: number;
@@ -96,10 +97,10 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     bedTemp: p.temperatures?.bed ?? 0,
     chamberTemp: p.temperatures?.chamber ?? null,
     material: mat
-      ? { name: mat.name || '—', type: mat.type || '—', color: mat.color || '#475472' }
-      : { name: '—', type: '—', color: '#475472' },
+      ? { name: mat.name || '—', type: mat.type || '—', color: mat.color || UNKNOWN_COLOR }
+      : { name: '—', type: '—', color: UNKNOWN_COLOR },
     materials: p.loaded_filaments.map(m => ({
-      name: m.name || '—', type: m.type || '—', color: m.color || '#475472',
+      name: m.name || '—', type: m.type || '—', color: m.color || UNKNOWN_COLOR,
     })),
     currentJobId: p.current_print ?? null,
     accent: ACCENT[p.printer_type] ?? '#888888',
