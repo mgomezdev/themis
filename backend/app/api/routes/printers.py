@@ -6,8 +6,7 @@ from types import SimpleNamespace
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,17 +16,17 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
 from ...plugins import providers_of
-from ...services.library_scanner import is_presliced_name
-from ...services import camera_hub, catalog_service
+from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, default_compatible_presets, get_slicing_provider
 from ...services.printer_client_factory import (
-    client_class, create_client, enabled_client_classes, printer_type_names, printer_type_plugins,
+    client_class, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
 from ...services import filament_matching, printer_setup, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
+from ...services.printer_client_factory import create_client
 from ...services.queue_engine import queue_engine
 
 async def _fetch_sidecar_catalog() -> Catalog | None:
@@ -38,6 +37,11 @@ async def _fetch_sidecar_catalog() -> Catalog | None:
         import logging
         logging.getLogger(__name__).warning("Could not get catalog: %s", e)
         return None
+
+
+# Collaborators the modules imported at the bottom of this file call as `_printers.<name>` rather than importing
+# themselves: tests swap them out on THIS module, so this is the one place they are looked up.
+_PATCH_POINTS = (create_client, queue_engine, printer_manager)
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -856,784 +860,54 @@ async def delete_printer(
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
 
-@router.get("/{printer_id}/waivers", summary="Parts this printer is waived for (BIZ-365)",
-            responses={404: {"description": "Printer not found"}}, dependencies=[Depends(require_scope("printers:read"))])
-async def list_waivers(printer_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
-    """Each part this printer keeps failing and no longer gets: failures here, last failure, projects it failed in."""
-    from ...services import part_waivers
-    await _get_or_404(printer_id, session)
-    return await part_waivers.listing(session, printer_id)
-
-
-@router.delete("/{printer_id}/waivers", status_code=204, summary="Clear all of a printer's waivers (BIZ-365)",
-               responses={404: {"description": "Printer not found"}}, dependencies=[Depends(require_scope("printers:write"))])
-async def clear_all_waivers(printer_id: int, session: AsyncSession = Depends(get_session)) -> Response:
-    from ...services import part_waivers
-    await _get_or_404(printer_id, session)
-    await part_waivers.clear(session, printer_id)
-    await session.commit()
-    queue_engine.wake()
-    return Response(status_code=204)
-
-
-@router.delete("/{printer_id}/waivers/{waiver_id}", status_code=204, summary="Clear one waiver (BIZ-365)",
-               responses={404: {"description": "Printer or waiver not found"}},
-               dependencies=[Depends(require_scope("printers:write"))])
-async def clear_waiver(printer_id: int, waiver_id: int, session: AsyncSession = Depends(get_session)) -> Response:
-    from ...services import part_waivers
-    await _get_or_404(printer_id, session)
-    if not await part_waivers.clear(session, printer_id, waiver_id):
-        raise HTTPException(404, f"Waiver {waiver_id} not found on printer {printer_id}")
-    await session.commit()
-    queue_engine.wake()
-    return Response(status_code=204)
-
-
-@router.post("/{printer_id}/waivers/{waiver_id}/test-print", summary="Test-print a waived part on this printer (BIZ-365)",
-             description="One copy of the part, on this printer only (its default process profile + loaded filament). The printer "
-                         "claims nothing else until it has printed it; its plate-clear dialog then offers to clear the waiver.",
-             responses={404: {"description": "Printer or waiver not found"}, 409: {"description": "A test print is already pending"}},
-             dependencies=[Depends(require_scope("printers:control")), Depends(require_scope("jobs:write"))])
-async def test_print_waiver(printer_id: int, waiver_id: int, session: AsyncSession = Depends(get_session)) -> dict:
-    from ...models import JobModelTarget, JobPrinterConfig, PartWaiver
-    from ...services import part_waivers, print_results
-    from sqlalchemy import delete as _delete, select as _select
-    printer = await _get_or_404(printer_id, session)
-    waiver = await session.get(PartWaiver, waiver_id)
-    if waiver is None or waiver.printer_id != printer_id:
-        raise HTTPException(404, f"Waiver {waiver_id} not found on printer {printer_id}")
-    if printer.test_print_job_id is not None:
-        raise HTTPException(409, f"{printer.name} already has a test print pending")
-    source, item = await part_waivers.source_of(session, waiver)
-    if source is None or item is None:
-        raise HTTPException(409, "The part's project is gone: there is nothing left to test-print it from")
-    from ...models import Project
-    proj = await session.get(Project, source.project_id)
-    if proj is None or proj.stage != "queued":
-        raise HTTPException(409, "The part's project is not in the queue: queue it to test-print this part")
-    used = (await session.execute(_select(JobPrinterConfig.print_profile).where(
-        JobPrinterConfig.job_id == source.id, JobPrinterConfig.printer_id == printer_id))).scalar()
-    if not printer.default_process_profile and not used:
-        raise HTTPException(422, f"{printer.name} has no default process profile to test-print with: set one first")
-    (job_id, *_) = await print_results.requeue_parts(session, source, {item.id: 1}) or [None]
-    if job_id is None:
-        raise HTTPException(422, "The part could not be prepared for a test print")
-    # This printer only, with its own default process profile (else the profile it used for the failed job); the ask is the part's.
-    profile = "" if printer.default_process_profile else used
-    await session.execute(_delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
-    await session.execute(_delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
-    from ._filament_ask import tuple_columns, row_tuple
-    session.add(JobPrinterConfig(job_id=job_id, printer_id=printer_id, print_profile=profile, **tuple_columns(row_tuple(item))))
-    printer = await session.get(Printer, printer_id)
-    printer.test_print_job_id, printer.test_print_waiver_id = job_id, waiver_id
-    await session.commit()
-    queue_engine.wake()
-    return {"job_id": job_id}
-
-
-@router.delete("/{printer_id}/test-print", status_code=204, summary="Cancel a printer's pending test print (BIZ-365)",
-               responses={404: {"description": "Printer not found"}},
-               dependencies=[Depends(require_scope("printers:control"))])
-async def cancel_test_print(printer_id: int, session: AsyncSession = Depends(get_session)) -> Response:
-    """The printer goes back to queue work; a test job that has not started is cancelled."""
-    printer = await _get_or_404(printer_id, session)
-    if printer.test_print_job_id is not None:
-        job = await session.get(Job, printer.test_print_job_id)
-        if job is not None and job.status in ("queued", "blocked"):
-            job.status = "cancelled"
-        printer.test_print_job_id = printer.test_print_waiver_id = None
-        await session.commit()
-        queue_engine.wake()
-    return Response(status_code=204)
-
-
-@router.get(
-    "/{printer_id}/plate-results",
-    summary="The project job whose print results are still to report on this plate (BIZ-364)",
-    responses={404: {"description": "Printer not found"}},
-    dependencies=[Depends(require_scope("printers:read"))],
+# ---- the rest of the printers routes ---------------------------------------------------------------
+# Imported last: each module below registers its routes on `router` (so they match after the ones above, in this order)
+# and uses the names defined above. Their names are re-exported here for existing importers.
+from .printer_plate import (  # noqa: E402,F401,I001
+    cancel_test_print,  # noqa: F401
+    clear_all_waivers,  # noqa: F401
+    clear_waiver,  # noqa: F401
+    list_waivers,  # noqa: F401
+    plate_cleared,  # noqa: F401
+    plate_results,  # noqa: F401
+    test_print_waiver,  # noqa: F401
 )
-async def plate_results(printer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
-    """The latest finished project job on this printer with no reported results yet, and its parts (name × quantity on the
-    plate), so the plate-clear dialog can ask what printed. `job_id` null = nothing to report: a plain clear."""
-    import json as _json
-    from sqlalchemy import select as _select
-    from ...models import Job, JobItemFailure, ProjectItem, UploadedFile
-    await _get_or_404(printer_id, session)
-    reported = _select(JobItemFailure.job_id).where(JobItemFailure.resolution.is_not(None))
-    printer = await session.get(Printer, printer_id)
-    job = (await session.execute(
-        _select(Job).where(Job.assigned_printer_id == printer_id, Job.project_id.is_not(None),
-                           Job.project_item_quantities.is_not(None), Job.status.in_(["complete", "failed"]),
-                           Job.id.not_in(reported), Job.outcome.is_(None))
-        .order_by(Job.updated_at.desc(), Job.id.desc()).limit(1))).scalar_one_or_none()
-    if job is None:
-        return {"job_id": None, "project_id": None, "parts": [], "test_print_waiver_id": None}
-    parts = []
-    for key, qty in _json.loads(job.project_item_quantities).items():
-        item = await session.get(ProjectItem, int(key))
-        if item is None or int(qty) <= 0:
-            continue
-        f = await session.get(UploadedFile, item.file_id)
-        parts.append({"project_item_id": item.id, "file_name": f.original_filename if f else f"[file {item.file_id}]",
-                      "quantity": int(qty)})
-    test_waiver = printer.test_print_waiver_id if printer is not None and printer.test_print_job_id == job.id else None
-    return {"job_id": job.id, "project_id": job.project_id, "parts": parts, "test_print_waiver_id": test_waiver}
-
-
-@router.post(
-    "/{printer_id}/plate-cleared",
-    summary="Confirm plate cleared",
-    responses={
-        404: {"description": "Printer not found"},
-    },
-    dependencies=[],      # printers:control is checked by the `key` dependency below (results also need jobs:write)
+from .printer_controls import (  # noqa: E402,F401,I001
+    _CONSOLE_RESPONSES,  # noqa: F401
+    _direct_start_locks,  # noqa: F401
+    _ok_or_502,  # noqa: F401
+    _require_capability,  # noqa: F401
+    _require_not_printing,  # noqa: F401
+    home_printer,  # noqa: F401
+    jog_axis,  # noqa: F401
+    jog_z,  # noqa: F401
+    pause_printer,  # noqa: F401
+    reconnect_printer,  # noqa: F401
+    resume_printer,  # noqa: F401
+    set_bed_temp,  # noqa: F401
+    set_chamber_temp,  # noqa: F401
+    set_fan,  # noqa: F401
+    set_light,  # noqa: F401
+    set_nozzle_temp,  # noqa: F401
+    stop_printer,  # noqa: F401
 )
-async def plate_cleared(
-    printer_id: int,
-    body: Optional[PlateResults] = None,
-    key=Depends(require_scope("printers:control")),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
-    what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
-    they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
-    printer = await _get_or_404(printer_id, session)
-    outcome: dict = {}
-    recorded: dict | None = None
-    job = None
-    if body is not None and body.job_id is not None:
-        from ...models import Job
-        from ...services import print_results
-        if "jobs:write" not in (getattr(key, "scopes", None) or []):
-            raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
-        job = await session.get(Job, body.job_id)
-        if job is None or job.assigned_printer_id != printer_id:
-            raise HTTPException(422, f"Job {body.job_id} did not print on {printer.name}")
-        if job.project_id is None or job.status not in ("complete", "failed"):
-            raise HTTPException(409, f"Job {body.job_id} is not a finished project job")
-        if printer.test_print_job_id == job.id:
-            job.outcome = "reviewed"           # a test print (BIZ-365) is an extra copy: it credits nothing to the project
-        else:
-            recorded = await print_results.record_and_restore(
-                session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
-    if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
-        test_job = await session.get(Job, printer.test_print_job_id)
-        if test_job is not None and test_job.status in ("complete", "failed"):
-            test_job.outcome = test_job.outcome or "reviewed"
-            printer.test_print_job_id = printer.test_print_waiver_id = None
-    if job is not None and printer.test_print_job_id == job.id:       # BIZ-365: the test print is done
-        if body is not None and body.clear_waiver and printer.test_print_waiver_id is not None:
-            from ...services import part_waivers
-            await part_waivers.clear(session, printer_id, printer.test_print_waiver_id)
-        printer.test_print_job_id = printer.test_print_waiver_id = None
-    printer.awaiting_plate_clear = False
-    await session.commit()                 # results + the clear are in before any repacking
-    printer_manager.set_awaiting_plate_clear(printer_id, False)
-    if recorded:
-        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
-        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
-    queue_engine.wake()
-    return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported
-
-
-@router.post(
-    "/{printer_id}/reconnect",
-    summary="Reconnect printer",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Connection attempt failed"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
+from .printer_files import (  # noqa: E402,F401,I001
+    FileRef,  # noqa: F401
+    _BUSY_JOB_STATUSES,  # noqa: F401
+    _FILE_RESPONSES,  # noqa: F401
+    _MAX_DIRECT_UPLOAD_BYTES,  # noqa: F401
+    _UPLOAD_EXTENSIONS,  # noqa: F401
+    _direct_start,  # noqa: F401
+    _set_plate_gate,  # noqa: F401
+    _start_stored_file,  # noqa: F401
+    copy_stored_file_to_library,  # noqa: F401
+    delete_stored_file,  # noqa: F401
+    list_files_on_printer,  # noqa: F401
+    print_stored_file,  # noqa: F401
+    upload_to_printer,  # noqa: F401
 )
-async def reconnect_printer(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Disconnect the current session and open a fresh connection. 409 while a required connection field is missing (nothing is
-    sent with a blank credential)."""
-    printer = await _get_or_404(printer_id, session)
-    missing = printer_setup.missing_required(printer_setup.fields_for(printer), printer.connection_config or {})
-    if missing:
-        raise HTTPException(409, printer_setup.missing_reason(missing))
-    printer_manager.disconnect_printer(printer_id)
-    try:
-        client = create_client(printer)
-        printer_manager.connect_printer(printer_id, client)
-    except Exception as exc:
-        raise HTTPException(503, f"Failed to connect: {exc}")
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/pause",
-    summary="Pause print",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
+from .printer_camera import (  # noqa: E402,F401,I001
+    _activate_camera,  # noqa: F401
+    snapshot_camera,  # noqa: F401
+    stream_camera,  # noqa: F401
 )
-async def pause_printer(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.pause_print()
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/resume",
-    summary="Resume print",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def resume_printer(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.resume_print()
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/stop",
-    summary="Stop print",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def stop_printer(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Stop the active print and cancel any Themis job the printer was physically running."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.stop_print()
-    # Reconcile any Themis job this printer was physically running so it doesn't
-    # stay stuck "printing" after the machine is stopped.
-    from datetime import datetime, timezone
-    from ...models import Job
-    result = await session.execute(
-        select(Job).where(
-            Job.assigned_printer_id == printer_id,
-            Job.status.in_(["slicing", "printing", "paused", "uploading"]),
-        )
-    )
-    now = datetime.now(timezone.utc).isoformat()
-    printer = await session.get(Printer, printer_id)
-    for job in result.scalars().all():
-        if job.status in ("printing", "paused"):     # a started print: settle the attempt's usage (BIZ-366 v2)
-            from ...services import completion_events
-            await completion_events.enqueue_attempt_ended(session, job.id, printer_id, result="cancelled",
-                                                          loaded_filaments=printer.loaded_filaments if printer else None)
-        job.status = "cancelled"
-        job.assigned_printer_id = None
-        job.queue_position = None
-        job.updated_at = now
-    await session.commit()
-    from ...eventing.hub import hub as _hub
-    _hub.wake()                                  # deliver a `job.attempt_ended` written above
-    from ...services.queue_engine import queue_engine
-    queue_engine.cancel_slice(printer_id=printer_id)    # and a slice being made for it (cancel <-> stop, BIZ-295)
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/light",
-    summary="Set chamber light",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def set_light(
-    printer_id: int,
-    body: LightBody,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.set_chamber_light(body.on)
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/jog-z",
-    summary="Jog Z axis",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def jog_z(
-    printer_id: int,
-    body: JogZBody,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.jog_z(body.distance_mm)
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/fan",
-    summary="Set fan speed",
-    responses={
-        404: {"description": "Printer not found"},
-        422: {"description": "Invalid fan name"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def set_fan(
-    printer_id: int,
-    body: FanBody,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Set fan speed (0–100 %) for `model`, `auxiliary`, or `box` fan."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    state = printer_manager.get_normalized_state(printer_id)
-    model = int(state.get("fan_model", 0))
-    aux = int(state.get("fan_aux", 0))
-    box = int(state.get("fan_box", 0))
-    if body.fan == "model":
-        model = body.speed_pct
-    elif body.fan == "auxiliary":
-        aux = body.speed_pct
-    elif body.fan == "box":
-        box = body.speed_pct
-    else:
-        raise HTTPException(422, f"Invalid fan name: {body.fan!r}. Valid: model, auxiliary, box")
-    client.set_fan_speeds(model, aux, box)
-    return {"ok": True}
-
-
-@router.post(
-    "/{printer_id}/bed-temp",
-    summary="Set bed temperature",
-    responses={
-        404: {"description": "Printer not found"},
-        503: {"description": "Printer not connected"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def set_bed_temp(
-    printer_id: int,
-    body: BedTempBody,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    client.set_bed_temp(body.celsius)
-    return {"ok": True}
-
-
-def _require_capability(client, name: str, what: str) -> None:
-    if not getattr(client.get_capabilities(), name, False):
-        raise HTTPException(409, f"This printer does not support {what}")
-
-
-def _require_not_printing(client) -> None:
-    """Motion and nozzle changes need a printer that is positively idle (the queue's own notion), not merely
-    "not printing": states like Bambu's PREPARE (heating/levelling) are neither."""
-    if client.is_printing or not client.is_idle:
-        raise HTTPException(409, "Printer is busy; wait for it to be idle (or stop the print) first")
-
-
-def _ok_or_502(result) -> dict:
-    if not result:
-        raise HTTPException(502, "Printer rejected the command")
-    return {"ok": True}
-
-
-_CONSOLE_RESPONSES = {
-    404: {"description": "Printer not found"},
-    409: {"description": "Not supported by this printer, or the printer is printing"},
-    502: {"description": "Printer rejected the command"},
-    503: {"description": "Printer not connected"},
-}
-
-
-@router.post(
-    "/{printer_id}/jog",
-    summary="Jog an axis",
-    responses=_CONSOLE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def jog_axis(printer_id: int, body: JogBody, session: AsyncSession = Depends(get_session)) -> dict:
-    """Relative move of X, Y or Z by `distance_mm` (negative = other direction). X/Y need the `axis_jog`
-    capability; refused while a print is running."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    if body.axis != "Z":
-        _require_capability(client, "axis_jog", "X/Y jog")
-    _require_not_printing(client)
-    if body.axis == "Z":      # vendors with a native Z command (Elegoo SDCP) override jog_z, not jog
-        return _ok_or_502(await asyncio.to_thread(client.jog_z, body.distance_mm))
-    return _ok_or_502(await asyncio.to_thread(client.jog, body.axis, body.distance_mm))
-
-
-@router.post(
-    "/{printer_id}/home",
-    summary="Home axes",
-    responses=_CONSOLE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def home_printer(printer_id: int, body: HomeBody, session: AsyncSession = Depends(get_session)) -> dict:
-    """Home all axes, or a single axis (needs the `home_axes` capability). Refused while printing."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_not_printing(client)
-    if body.axes == "all":
-        return _ok_or_502(await asyncio.to_thread(client.home))
-    _require_capability(client, "home_axes", "single-axis homing")
-    return _ok_or_502(await asyncio.to_thread(client.home_axes, body.axes))
-
-
-@router.post(
-    "/{printer_id}/nozzle-temp",
-    summary="Set nozzle temperature",
-    responses=_CONSOLE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def set_nozzle_temp(printer_id: int, body: NozzleTempBody, session: AsyncSession = Depends(get_session)) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "nozzle_temp", "a nozzle setpoint")
-    _require_not_printing(client)      # M104 mid-print would cool the nozzle and ruin the print
-    return _ok_or_502(await asyncio.to_thread(client.set_nozzle_temp, body.celsius))
-
-
-@router.post(
-    "/{printer_id}/chamber-temp",
-    summary="Set chamber temperature",
-    responses=_CONSOLE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: AsyncSession = Depends(get_session)) -> dict:
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "chamber_temp", "a chamber setpoint")
-    return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
-
-
-_direct_start_locks: dict[tuple[int, int], asyncio.Lock] = {}     # keyed by (event loop, printer)
-
-
-async def _start_stored_file(client, file_id: str, failure: str) -> None:
-    from ...services.abstract_printer_client import StartPrintOptions
-    opts = StartPrintOptions(gcode_path=os.path.basename(file_id))     # same options the queue engine passes
-    if not await asyncio.to_thread(client.start_print, file_id, opts):
-        raise HTTPException(502, failure)
-
-
-async def _direct_start(session: AsyncSession, client, printer_id: int, steps) -> None:
-    """Run `steps` (which end in a start_print) on a printer that is idle, uncleared-plate-free and not held by
-    a queue job. The printer is claimed (plate gate set) BEFORE the steps so the queue engine cannot race them,
-    and released again if nothing ended up printing."""
-    # One direct start per printer at a time: the checks below await, so without this two concurrent requests
-    # could both pass them before either has claimed the printer.
-    async with _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
-        if not client.is_idle:
-            raise HTTPException(409, "Printer is not idle")
-        if printer_manager.is_awaiting_plate_clear(printer_id):
-            raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
-        busy = await session.execute(
-            select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
-        if busy.first() is not None:
-            raise HTTPException(409, "A queued job currently holds this printer")
-        printer = await session.get(Printer, printer_id)
-        await _set_plate_gate(session, printer, printer_id, True)
-        started = False
-        try:
-            await steps()
-            started = True
-        finally:
-            if not started:
-                await _set_plate_gate(session, printer, printer_id, False)
-
-
-async def _set_plate_gate(session: AsyncSession, printer, printer_id: int, value: bool) -> None:
-    printer_manager.set_awaiting_plate_clear(printer_id, value)
-    if printer is not None:
-        printer.awaiting_plate_clear = value
-        await session.commit()
-
-
-_UPLOAD_EXTENSIONS = (".gcode", ".gcode.3mf", ".3mf", ".bgcode")
-_MAX_DIRECT_UPLOAD_BYTES = 300 * 1024 * 1024
-_BUSY_JOB_STATUSES = ("slicing", "sliced", "uploading", "printing", "paused")
-
-
-@router.post(
-    "/{printer_id}/upload",
-    summary="Upload a file to the printer, bypassing the queue",
-    responses={
-        **_CONSOLE_RESPONSES,
-        413: {"description": "File too large"},
-        422: {"description": "Unsupported file type"},
-    },
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def upload_to_printer(
-    printer_id: int,
-    file: UploadFile = File(...),
-    start: bool = Form(False),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Send a .gcode / .3mf / .bgcode file straight to the printer. With `start`, also begin printing it —
-    only when the printer is idle and no queued job holds it; the plate is then marked not-ready (same
-    gate as a queue-started print)."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "direct_upload", "direct upload")
-    name = os.path.basename((file.filename or "").replace("\\", "/"))
-    if not name or not name.lower().endswith(_UPLOAD_EXTENSIONS) or any(c in name for c in "\x00\r\n"):
-        raise HTTPException(422, f"Unsupported file; expected one of {', '.join(_UPLOAD_EXTENSIONS)}")
-    data = await file.read(_MAX_DIRECT_UPLOAD_BYTES + 1)
-    if len(data) > _MAX_DIRECT_UPLOAD_BYTES:
-        raise HTTPException(413, "File is larger than 300 MB")
-    if not start:
-        if not await asyncio.to_thread(client.upload_file, data, name):
-            raise HTTPException(502, "Printer rejected the upload")
-        return {"ok": True, "filename": name, "started": False}
-
-    async def steps() -> None:
-        if not await asyncio.to_thread(client.upload_file, data, name):
-            raise HTTPException(502, "Printer rejected the upload")
-        await _start_stored_file(client, name, "Uploaded, but the printer would not start the print")
-
-    await _direct_start(session, client, printer_id, steps)
-    return {"ok": True, "filename": name, "started": True}
-
-
-class FileRef(BaseModel):
-    file_id: str = Field(..., min_length=1, max_length=1024)
-
-
-_FILE_RESPONSES = {
-    **_CONSOLE_RESPONSES,
-    409: {"description": "Not supported by this printer, or the printer/queue state forbids it"},
-}
-
-
-@router.get(
-    "/{printer_id}/files",
-    summary="List files stored on a printer",
-    responses=_FILE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:read"))],
-)
-async def list_files_on_printer(
-    printer_id: int, directory: str = "/", session: AsyncSession = Depends(get_session),
-) -> dict:
-    """One directory of the printer's own storage (`directory` is an entry id from a previous listing, `/` for
-    the root). Includes slicer metadata (print time, filament) where the protocol offers it."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "file_browser", "browsing its files")
-    try:
-        files = await _list_printer_files(client, directory)
-    except asyncio.TimeoutError:
-        raise HTTPException(502, "Timed out listing files")
-    except ValueError as e:
-        raise HTTPException(422, str(e))
-    except Exception as e:                       # login refused, port closed, 4xx/5xx from the printer…
-        raise HTTPException(502, f"Could not list files: {e}")
-    caps = client.get_capabilities()
-    return {"printer_id": printer_id, "directory": directory, "files": files,
-            "can_delete": caps.file_delete, "can_download": caps.file_download}
-
-
-@router.post(
-    "/{printer_id}/files/print",
-    summary="Print a file already stored on the printer",
-    responses=_FILE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def print_stored_file(printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session)) -> dict:
-    """Start a stored file. Same gate as a direct upload-and-print: the printer must be idle, its plate cleared
-    and not held by a queue job; it is then marked not-ready like any started print."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "file_browser", "browsing its files")
-    if not body.file_id.lower().endswith((".gcode", ".3mf", ".bgcode")):
-        raise HTTPException(422, "Not a printable file")
-
-    async def steps() -> None:
-        await _start_stored_file(client, body.file_id, "The printer would not start the print")
-
-    await _direct_start(session, client, printer_id, steps)
-    return {"ok": True, "file_id": body.file_id, "started": True}
-
-
-@router.delete(
-    "/{printer_id}/files",
-    summary="Delete a file from the printer",
-    responses=_FILE_RESPONSES,
-    dependencies=[Depends(require_scope("printers:control"))],
-)
-async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """Permanently remove a file from the printer's storage. Refused for the file currently being printed."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "file_delete", "deleting files")
-    if not client.is_idle:
-        # Not idle covers the start-up window too (heating/levelling) when state isn't RUNNING yet. Firmwares
-        # report the running file inconsistently (with/without extension, with a path), so compare stems, and
-        # when the name is unknown refuse rather than guess.
-        current = printer_manager.get_normalized_state(printer_id).get("current_print") or ""
-        if not current or _stem(current) == _stem(file_id):
-            raise HTTPException(409, "That file is (or may be) being printed right now")
-    return _ok_or_502(await asyncio.to_thread(client.delete_file, file_id))
-
-
-@router.post(
-    "/{printer_id}/files/to-library",
-    summary="Copy a file from the printer into the file library",
-    responses={**_FILE_RESPONSES, 413: {"description": "File too large"}, 422: {"description": "Not a library file type"}},
-    dependencies=[Depends(require_scope("files:write"))],
-)
-async def copy_stored_file_to_library(
-    printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
-    deduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models."""
-    await _get_or_404(printer_id, session)
-    client = _get_connected_client(printer_id)
-    _require_capability(client, "file_download", "downloading files")
-    name = os.path.basename(body.file_id)
-    if not name.lower().endswith((".3mf", ".stl")) or is_presliced_name(name):
-        raise HTTPException(422, "Only .3mf and .stl models can be added to the library (not sliced gcode)")
-    from ...services.abstract_printer_client import FileTooLargeError
-    try:
-        data = await asyncio.to_thread(client.download_file, body.file_id, _MAX_DIRECT_UPLOAD_BYTES)
-    except FileTooLargeError:
-        raise HTTPException(413, "File is larger than 300 MB")     # aborted mid-transfer, never fully buffered
-    if data is None:
-        raise HTTPException(502, "The printer would not hand over the file")
-    from io import BytesIO
-    from starlette.datastructures import UploadFile as StarletteUpload
-    from .files import upload_file as library_upload
-    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), "/From Printers", session)
-
-
-async def _activate_camera(client) -> None:
-    """Enable the camera stream; runs the blocking call off the event loop."""
-    if hasattr(client, "start_video_stream"):
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, client.start_video_stream)
-
-
-@router.get(
-    "/{printer_id}/camera",
-    summary="Stream camera (MJPEG)",
-    responses={
-        404: {"description": "Printer not found or has no camera"},
-        503: {"description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"},
-    },
-    dependencies=[Depends(require_scope("printers:read"))],
-)
-async def stream_camera(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> StreamingResponse:
-    """MJPEG multipart stream from the printer camera. The printer's client produces the feed (native
-    MJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on
-    printers that time out after 60 s of inactivity."""
-    await _get_or_404(printer_id, session)
-    client = printer_manager._clients.get(printer_id)
-    if client is None or not client.connected:
-        raise HTTPException(503, "Printer not connected")
-    caps = client.get_capabilities()
-    if not caps.camera:
-        raise HTTPException(404, "This printer has no camera")
-
-    if not client.camera_configured:
-        raise HTTPException(404, "No camera URL configured")
-    reason = client.camera_unavailable_reason()          # e.g. a transcoder the vendor needs is missing
-    if reason:
-        raise HTTPException(503, reason)
-
-    if not camera_hub.hub.has_stream(printer_id):
-        await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
-
-    async def upstream():
-        async for chunk in client.camera_stream():       # the client (its plugin) produces the feed; core fans it out
-            yield chunk
-
-    # One upstream connection / transcoder per printer however many viewers (camera wall, several browsers);
-    # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
-    ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
-    if camera_hub.hub.is_full_for(printer_id):
-        raise HTTPException(429, "Too many camera streams open")
-
-    async def _stream():
-        frames = camera_hub.hub.subscribe(printer_id, upstream, ping)
-        try:
-            async for part in frames:
-                yield part
-        except camera_hub.HubFull:
-            return
-        finally:
-            await frames.aclose()
-
-    return StreamingResponse(
-        _stream(),
-        media_type=f"multipart/x-mixed-replace; boundary={camera_hub.BOUNDARY}",
-    )
-
-
-@router.get(
-    "/{printer_id}/snapshot",
-    summary="Camera snapshot",
-    responses={
-        404: {"description": "Printer not found, has no camera, or no camera source"},
-        503: {"description": "Printer not connected or camera unavailable"},
-    },
-    dependencies=[Depends(require_scope("printers:read"))],
-)
-async def snapshot_camera(
-    printer_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> Response:
-    """Return a single JPEG frame from any camera source (MJPEG or RTSP)."""
-    await _get_or_404(printer_id, session)
-    client = printer_manager._clients.get(printer_id)
-    if client is None or not client.connected:
-        raise HTTPException(503, "Printer not connected")
-    caps = client.get_capabilities()
-    if not caps.camera:
-        raise HTTPException(404, "This printer has no camera")
-
-    async def grab():
-        await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
-        return await client.camera_snapshot()
-
-    try:
-        jpeg = await camera_hub.hub.snapshot(printer_id, grab)
-    except Exception as exc:
-        raise HTTPException(503, f"Camera unavailable: {exc}")
-
-    if jpeg is None:
-        raise HTTPException(404, "No camera source available")
-
-    return Response(
-        content=jpeg,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-store"},
-    )
