@@ -684,20 +684,20 @@ async def test_the_queue_listing_names_each_jobs_printers_without_a_query_per_jo
 async def test_history_is_enriched_with_file_printer_and_project_names_in_a_fixed_number_of_queries(
         client, session_factory, create_job, create_printer, upload_3mf):
     from app.models import Project
-    file_id = await upload_3mf()
-    printer = await create_printer(name="Alpha")
-    ids = [await create_job(file_id=file_id, printer_id=printer) for _ in range(4)]
-    async with session_factory() as s:
-        project = Project(name="Brackets", created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00")
-        s.add(project)
-        await s.flush()
-        for n, job_id in enumerate(ids):
-            job = await s.get(Job, job_id)
+    # Every job has its own printer and project, so those are not answered from the session's identity map.
+    ids = []
+    for n in range(4):
+        printer = await create_printer(name=f"Printer {n}")
+        ids.append(await create_job(file_id=await upload_3mf(filename=f"part{n}.3mf"), printer_id=printer))
+        async with session_factory() as s:
+            project = Project(name=f"Project {n}", created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00")
+            s.add(project)
+            await s.flush()
+            job = await s.get(Job, ids[-1])
             job.status, job.updated_at = "complete", f"2026-01-0{n + 1}T00:00:00+00:00"
-            if n == 0:                                  # the oldest one ran on a printer for a project; the rest name neither
+            if n:                                       # the oldest one ran nowhere, for no project
                 job.assigned_printer_id, job.project_id = printer, project.id
-        await s.commit()
-    file_name = (await client.get("/api/v1/files")).json()[0]["original_filename"]
+            await s.commit()
 
     async def history(limit):
         with _QueryCounter(session_factory) as counter:
@@ -708,7 +708,8 @@ async def test_history_is_enriched_with_file_printer_and_project_names_in_a_fixe
     rows, selects_for_four = await history(4)
 
     assert [r["id"] for r in rows] == ids[::-1]                                            # newest first
-    assert {r["file_name"] for r in rows} == {file_name}
-    assert [(r["printer_name"], r["project_name"]) for r in rows] == [(None, None)] * 3 + [("Alpha", "Brackets")]
+    assert [(r["file_name"], r["printer_name"], r["project_name"]) for r in rows] == [
+        ("part0.3mf", "Printer 3", "Project 3"), ("part0.3mf", "Printer 2", "Project 2"),
+        ("part0.3mf", "Printer 1", "Project 1"), ("part0.3mf", None, None)]     # identical uploads are one library file
     assert [r["id"] for r in newest_only] == [ids[-1]]
-    assert selects_for_four <= selects_for_one + 2        # +2: the printer and project lookups the one-row page skipped
+    assert selects_for_four == selects_for_one            # a longer page costs no more queries
