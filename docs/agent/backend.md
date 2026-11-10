@@ -18,8 +18,8 @@ the first file, which imports the others at its bottom, so routes keep their dec
 schemas, serializers, shared helpers and the create/list/get routes; the others hold one area each (`job_actions`: what an
 operator does to an existing job; `project_children`: items/links/parts; `project_generate`: packing + held items;
 `printer_plate`: waivers and plate-cleared; `printer_controls`; `printer_files`; `printer_camera`). A later file imports what it
-needs from the first directly, **except** the names in that file's `_PATCH_POINTS` (e.g. `queue_engine`,
-`get_project_constructor`), which it calls as `_jobs.<name>` / `_projects.<name>` / `_printers.<name>`: tests replace those
+needs from the first directly, **except** the names tests replace on the first module: its `_PATCH_POINTS` (e.g. `queue_engine`, `get_project_constructor`)
+and a few of its own helpers and constants (listed in each later file's docstring), which it calls as `_jobs.<name>` / `_projects.<name>` / `_printers.<name>`: tests replace those
 on the first module (`patch("app.api.routes.jobs.queue_engine")`), and that must keep reaching every route. New route in
 one of these areas → add it to the matching file, and its name to the re-export list at the bottom of the first.
 

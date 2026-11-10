@@ -19,7 +19,9 @@ const PATTERNS = [
   /(plugin_?[iI]d|provider_?[iI]d)\s*(===|!==|==|!=)\s*['"`]/,
   /\[['"`](bambu|elegoo_centauri|snapmaker|moonraker|laminus|spoolman|local_inventory|notify_ntfy|notify_discord|notify_email)['"`]\]/,
   // A lookup table keyed by plugin id (`const ACCENT = { bambu: '#3b82f6' }`) is the same branch written as data.
-  new RegExp(String.raw`^\s*['"]?(${ID})['"]?\s*:\s*['"\x60]`, 'm'),
+  // Only a literal value counts (`bambu: '#3b82f6'`, `spoolman: 3`): a response field that happens to be called `laminus`
+  // (`{ laminus: {...} }`, `d: { laminus: unknown }`) is a payload shape, not a per-plugin table.
+  new RegExp(String.raw`(^|[{,])\s*['"]?(${ID})['"]?\s*:\s*(['"\x60]|-?\d)`, 'm'),
 ];
 
 const ALLOWLIST: Record<string, string> = {};
@@ -51,5 +53,11 @@ describe('UI code does not branch on a plugin id', () => {
     expect(bad("if (p.plugin_id == 'whatever') {}")).toEqual(['screens/New.tsx']);
     expect(bad("const f = FLAGS['spoolman'];")).toEqual(['screens/New.tsx']);
     expect(bad("const label = 'Bambu Lab'; if (a.id === 'row-1') {}")).toEqual([]);
+    // a lookup table keyed by plugin id is the same branch written as data
+    expect(bad("const ACCENT = { bambu: '#3b82f6' };")).toEqual(['screens/New.tsx']);
+    expect(bad("const BADGE = {\n  generic: 'GEN', elegoo_centauri: 'ECC',\n};")).toEqual(['screens/New.tsx']);
+    expect(bad("const LIMIT = {\n  'spoolman': 3,\n};")).toEqual(['screens/New.tsx']);
+    expect(bad("const o = { name: 'bambu', kind: plugin.name };")).toEqual([]);          // a value, not a key
+    expect(bad("type Status = { laminus: { ok: boolean } | null };")).toEqual([]);       // a payload field, not a table
   });
 });

@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   # Decides whether this run can affect anything the jobs below test. A pull request into develop that touches only
-  # documentation (docs/**, *.md, .claude/**, LICENSE) sets code=false, and every test, image and e2e job is skipped:
+  # documentation (docs/**, *.md, LICENSE; not the docs the test suite reads, and not .claude/) sets code=false, and every test, image and e2e job is skipped:
   # no image build, no three-container e2e. Anything else runs the full pipeline: pushes, tags, manual runs, release
   # pull requests into main (e2e-full is their gate and must never be skipped), and any pull request with one
   # non-documentation file. When in doubt (no base commit, a failed diff) it runs everything.
@@ -50,7 +50,8 @@ jobs:
             echo "Not a pull request into a non-release branch: running everything."
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if ! files="$(git diff --name-only "$BASE_SHA"...HEAD)"; then
+          # --no-renames: a code file renamed into docs/ must be listed under its old path too, or the diff looks docs-only.
+          if ! files="$(git diff --name-only --no-renames "$BASE_SHA"...HEAD)"; then
             echo "Could not diff against $BASE_SHA: running everything."
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -59,7 +60,7 @@ jobs:
 
   backend:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -90,7 +91,7 @@ jobs:
 
   mcp-server:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -110,7 +111,7 @@ jobs:
 
   frontend:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -141,7 +142,7 @@ jobs:
 
   frontend-e2e:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -180,7 +181,7 @@ jobs:
 
   spec:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -260,7 +261,7 @@ jobs:
 
   image:
     needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

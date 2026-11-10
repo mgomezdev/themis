@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import zipfile
@@ -155,7 +156,11 @@ async def _settle_queue_engines(monkeypatch):
     yield
     for engine in built:
         if "_job_tasks" in engine.__dict__:              # the lifespan tests reset the singleton to an empty shell
-            await engine.cancel_job_tasks()
+            names = sorted(t.get_name() for t in engine._job_tasks if not t.done())
+            try:
+                await asyncio.wait_for(engine.cancel_job_tasks(), timeout=10)
+            except asyncio.TimeoutError:                 # a task that swallows cancellation would otherwise hang the run, unnamed
+                pytest.fail(f"queue engine tasks did not stop when cancelled: {names}")
 
 
 @pytest_asyncio.fixture(autouse=True)

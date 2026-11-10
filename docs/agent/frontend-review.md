@@ -51,7 +51,7 @@ import fails the build, not just a lint warning.
 
 ## 5. Reuse before adding a new pattern
 
-`SettingsScreen.tsx` has accumulated several pages that already solve common shapes: a
+The settings pages (`screens/settings/*Page.tsx`; `SettingsScreen.tsx` is only the nav shell) already solve common shapes: a
 save-button-with-"Saved"-pill flow, an event-checkbox list, a per-item test button. Before hand-rolling
 a new version of any of these, check whether the existing one can be reused or lightly generalized
 (e.g. take a list as a prop instead of hardcoding it) rather than copy-pasting the shape again — same

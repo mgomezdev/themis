@@ -14,7 +14,6 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Printer
 from ...services import printer_setup
-from ...services.queue_engine import queue_engine
 
 from . import printers as _printers
 from .printers import (  # noqa: I001
@@ -137,7 +136,7 @@ async def stop_printer(
     await session.commit()
     from ...eventing.hub import hub as _hub
     _hub.wake()                                  # deliver a `job.attempt_ended` written above
-    queue_engine.cancel_slice(printer_id=printer_id)    # and a slice being made for it (cancel <-> stop, BIZ-295)
+    _printers.queue_engine.cancel_slice(printer_id=printer_id)    # and a slice being made for it (cancel <-> stop, BIZ-295)
     return {"ok": True}
 
 

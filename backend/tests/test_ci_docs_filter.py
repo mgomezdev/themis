@@ -33,6 +33,7 @@ def test_documentation_only_changes_skip_the_pipeline(paths):
     ["docs/reference 3mfs/anything.3mf"],                   # documentation the test suite reads
     ["mock/Dockerfile"], ["backend/pyproject.toml"], ["frontend/package-lock.json"],
     [],                                                     # nothing listed: run everything rather than assume
+    ["backend/app/helper.py", "docs/helper-notes.md"],     # a code file renamed into docs/ (CI lists both ends: --no-renames)
 ])
 def test_anything_ci_can_test_runs_the_pipeline(paths):
     assert ci.changed_code(paths) is True
@@ -56,6 +57,20 @@ def test_every_docs_path_a_test_reads_makes_the_pipeline_run():
     assert {"docs/plugin-test-matrix.md", "docs/reference 3mfs"} <= read               # the scan still finds the known ones
     unlisted = sorted(p for p in read if ci.is_doc(p + "/x" if (REPO / p).is_dir() else p))
     assert unlisted == [], f"add to TESTED_DOCS in scripts/ci_changed_code.py: {unlisted}"
+
+
+def test_the_workflow_lists_both_ends_of_a_rename():
+    """With rename detection on, `git mv app/x.py docs/x.md` shows up as docs/x.md alone and would be judged docs-only."""
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    (diff,) = [line for line in workflow.splitlines() if "git diff --name-only" in line and "files=" in line]
+    assert "--no-renames" in diff
+
+
+def test_jobs_run_unless_the_verdict_is_explicitly_docs_only():
+    """An empty or garbled filter output must run the pipeline, not skip it."""
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    conditions = [line.split("#")[0].strip() for line in workflow.splitlines() if "needs.changes.outputs.code" in line]
+    assert len(conditions) == 6 and set(conditions) == {"if: needs.changes.outputs.code != 'false'"}
 
 
 def test_every_listed_path_exists():

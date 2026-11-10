@@ -844,6 +844,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .w-full { width: 100%; }
 .nowrap { white-space: nowrap; }
 .text-right { text-align: right; }
+.tbl th.text-right { text-align: right; }      /* `.tbl th` sets left with higher specificity */
 .text-err { color: var(--err); }
 .text-warn { color: var(--warn); }
 .text-ok { color: var(--ok); }
