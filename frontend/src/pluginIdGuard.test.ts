@@ -18,6 +18,8 @@ const PATTERNS = [
   new RegExp(String.raw`['"\x60](${ID})['"\x60]\s*(===|!==|==|!=)`),
   /(plugin_?[iI]d|provider_?[iI]d)\s*(===|!==|==|!=)\s*['"`]/,
   /\[['"`](bambu|elegoo_centauri|snapmaker|moonraker|laminus|spoolman|local_inventory|notify_ntfy|notify_discord|notify_email)['"`]\]/,
+  // A lookup table keyed by plugin id (`const ACCENT = { bambu: '#3b82f6' }`) is the same branch written as data.
+  new RegExp(String.raw`^\s*['"]?(${ID})['"]?\s*:\s*['"\x60]`, 'm'),
 ];
 
 const ALLOWLIST: Record<string, string> = {};

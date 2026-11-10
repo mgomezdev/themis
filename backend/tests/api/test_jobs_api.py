@@ -635,3 +635,80 @@ async def test_job_details_spool_warning_set_when_insufficient(client, session_f
     assert warning is not None
     assert "340" in warning["message"]
     assert "220" in warning["message"]
+
+
+# ---- list routes: query count does not grow with the number of jobs ------------------------------------------------
+
+class _QueryCounter:
+    """Counts SELECTs the test database runs inside a `with` block."""
+    def __init__(self, session_factory):
+        self._engine = session_factory.kw["bind"].sync_engine
+        self.selects = 0
+
+    def _on_execute(self, conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            self.selects += 1
+
+    def __enter__(self):
+        from sqlalchemy import event
+        event.listen(self._engine, "before_cursor_execute", self._on_execute)
+        return self
+
+    def __exit__(self, *exc):
+        from sqlalchemy import event
+        event.remove(self._engine, "before_cursor_execute", self._on_execute)
+
+
+async def test_the_queue_listing_names_each_jobs_printers_without_a_query_per_job(
+        client, session_factory, create_job, create_printer, upload_3mf):
+    file_id = await upload_3mf()
+    a, b = await create_printer(name="Alpha"), await create_printer(name="Beta")
+
+    async def listing():
+        with _QueryCounter(session_factory) as counter:
+            body = (await client.get("/api/v1/jobs")).json()
+        return body, counter.selects
+
+    first = await create_job(file_id=file_id, printer_id=a)
+    one, selects_for_one = await listing()
+    for printer in (b, a, b, a, b):
+        await create_job(file_id=file_id, printer_id=printer)
+    six, selects_for_six = await listing()
+
+    assert [j["eligible_printers"] for j in one] == [[{"id": a, "name": "Alpha"}]]
+    assert [j["eligible_printers"][0]["name"] for j in six] == ["Alpha", "Beta", "Alpha", "Beta", "Alpha", "Beta"]
+    assert six[0]["id"] == first
+    assert selects_for_six == selects_for_one             # the listing costs the same however long the queue is
+
+
+async def test_history_is_enriched_with_file_printer_and_project_names_in_a_fixed_number_of_queries(
+        client, session_factory, create_job, create_printer, upload_3mf):
+    from app.models import Project
+    file_id = await upload_3mf()
+    printer = await create_printer(name="Alpha")
+    ids = [await create_job(file_id=file_id, printer_id=printer) for _ in range(4)]
+    async with session_factory() as s:
+        project = Project(name="Brackets", created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00")
+        s.add(project)
+        await s.flush()
+        for n, job_id in enumerate(ids):
+            job = await s.get(Job, job_id)
+            job.status, job.updated_at = "complete", f"2026-01-0{n + 1}T00:00:00+00:00"
+            if n == 0:                                  # the oldest one ran on a printer for a project; the rest name neither
+                job.assigned_printer_id, job.project_id = printer, project.id
+        await s.commit()
+    file_name = (await client.get("/api/v1/files")).json()[0]["original_filename"]
+
+    async def history(limit):
+        with _QueryCounter(session_factory) as counter:
+            body = (await client.get(f"/api/v1/jobs/history?limit={limit}")).json()
+        return body, counter.selects
+
+    newest_only, selects_for_one = await history(1)
+    rows, selects_for_four = await history(4)
+
+    assert [r["id"] for r in rows] == ids[::-1]                                            # newest first
+    assert {r["file_name"] for r in rows} == {file_name}
+    assert [(r["printer_name"], r["project_name"]) for r in rows] == [(None, None)] * 3 + [("Alpha", "Brackets")]
+    assert [r["id"] for r in newest_only] == [ids[-1]]
+    assert selects_for_four <= selects_for_one + 2        # +2: the printer and project lookups the one-row page skipped

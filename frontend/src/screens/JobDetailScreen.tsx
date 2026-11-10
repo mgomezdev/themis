@@ -11,15 +11,7 @@ import { JobProjectControl } from '../components/JobProjectControl';
 import { getProject } from '../api/projects';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
 import { askIsUndefined, describeAsk } from '../lib/filamentAsk';
-
-const BADGE: Record<string, string> = {
-  elegoo_centauri: 'ECC',
-  bambu: 'P1S',
-};
-
-function printerBadge(type: string): string {
-  return BADGE[type] ?? type.slice(0, 3).toUpperCase();
-}
+import { typeBadge } from '../api/fleet';
 
 function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   if (cfg.slice_failed) {
@@ -58,7 +50,7 @@ function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
 }
 
 function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAssigned: boolean }) {
-  const badge = printerBadge(cfg.printer_type);
+  const badge = typeBadge(cfg.printer_type);
   return (
     <div style={{
       padding: 14, borderRadius: 10,
@@ -381,7 +373,7 @@ export function JobDetailScreen() {
                   <Kv k="Printing on" v={
                     <span className="small">
                       <span className={`elig on`} style={{ fontSize: 10, marginRight: 4 }}>
-                        {printerBadge(job.assigned_printer.printer_type)}
+                        {typeBadge(job.assigned_printer.printer_type)}
                       </span>
                       {job.assigned_printer.name}
                     </span>

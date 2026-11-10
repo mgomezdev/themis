@@ -569,28 +569,36 @@ async def check_overrides(
     return _inspection_json(inspection)
 
 
+async def _names_by_id(session: AsyncSession, model, ids, column=None) -> dict[int, str]:
+    """`{id: name}` for the rows of `model` among `ids` (None/absent ids are skipped), in one query."""
+    wanted = {i for i in ids if i is not None}
+    if not wanted:
+        return {}
+    name = model.name if column is None else column
+    return {row_id: value for row_id, value in await session.execute(select(model.id, name).where(model.id.in_(wanted)))}
+
+
 @router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs ordered by queue position. Includes jobs in all statuses."""
     result = await session.execute(select(Job).order_by(Job.queue_position))
     jobs = result.scalars().all()
 
-    targets_by_job = await model_targets.target_dicts_by_job(session, [j.id for j in jobs])
+    job_ids = [j.id for j in jobs]
+    targets_by_job = await model_targets.target_dicts_by_job(session, job_ids)
+    # Two queries for the whole queue, not one per job plus one per printer config: this route is polled.
+    configs_by_job: dict[int, list[JobPrinterConfig]] = {}
+    for c in (await session.execute(
+            select(JobPrinterConfig).where(JobPrinterConfig.job_id.in_(job_ids)).order_by(JobPrinterConfig.id))).scalars():
+        configs_by_job.setdefault(c.job_id, []).append(c)
+    printer_names = await _names_by_id(session, Printer, {c.printer_id for cs in configs_by_job.values() for c in cs})
     out = []
     for j in jobs:
         d = _to_dict(j)
-        cfg_result = await session.execute(
-            select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
-        )
-        configs = cfg_result.scalars().all()
-        materials = type_labels(configs)
-        eligible_printers = []
-        for c in configs:
-            p = await session.get(Printer, c.printer_id)
-            if p:
-                eligible_printers.append({"id": p.id, "name": p.name})
-        d["materials"] = materials
-        d["eligible_printers"] = eligible_printers
+        configs = configs_by_job.get(j.id, [])
+        d["materials"] = type_labels(configs)
+        d["eligible_printers"] = [{"id": c.printer_id, "name": printer_names[c.printer_id]}
+                                  for c in configs if c.printer_id in printer_names]
         d["model_targets"] = targets_by_job[j.id]
         out.append(d)
     return out
@@ -612,18 +620,16 @@ async def list_history(
     q = q.order_by(Job.updated_at.desc()).limit(limit)
     jobs = (await session.execute(q)).scalars().all()
 
+    # One lookup per table for the whole page (was three queries per job).
+    file_names = await _names_by_id(session, UploadedFile, {j.uploaded_file_id for j in jobs}, UploadedFile.original_filename)
+    printer_names = await _names_by_id(session, Printer, {j.assigned_printer_id for j in jobs})
+    project_names = await _names_by_id(session, Project, {j.project_id for j in jobs})
     out = []
     for j in jobs:
         d = _to_dict(j)
-        # Enrich with file name
-        f = await session.get(UploadedFile, j.uploaded_file_id)
-        d["file_name"] = f.original_filename if f else None
-        # Enrich with assigned printer name
-        p = await session.get(Printer, j.assigned_printer_id) if j.assigned_printer_id else None
-        d["printer_name"] = p.name if p else None
-        # Enrich with project name
-        proj = await session.get(Project, j.project_id) if j.project_id else None
-        d["project_name"] = proj.name if proj else None
+        d["file_name"] = file_names.get(j.uploaded_file_id)
+        d["printer_name"] = printer_names.get(j.assigned_printer_id)
+        d["project_name"] = project_names.get(j.project_id)
         out.append(d)
     return out
 

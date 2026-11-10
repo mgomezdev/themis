@@ -7,6 +7,7 @@ import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, slotIsLoaded, t
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
 import { UNKNOWN_DOT_COLOR } from '../data/helpers';
+import { typeBadge } from '../api/fleet';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -37,10 +38,6 @@ export const askToCfg = (a: FilamentAsk): Pick<PerPrinterCfg, 'filamentManufactu
   filamentManufacturer: a.filament_manufacturer, filamentType: a.filament_type,
   filamentSubtype: a.filament_subtype, filamentColor: a.filament_color,
 });
-
-const BADGE: Record<string, string> = {
-  bambu: 'P1S', elegoo_centauri: 'ECC', snapmaker_extended: 'U1',
-};
 
 /** A model colour pinned to tool `t` (the default: filament N on tool N-1, clamped to the slots there are). */
 const pinned = (modelFilament: number, tool: number): FilamentMapEntry => ({ model_filament: modelFilament, tool_index: tool, ...NO_ASK });
@@ -105,7 +102,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const conflicts = useSlotConflicts(pid, printer?.loaded_filaments, undefined, !!printer);
 
   if (!printer) return null;
-  const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
+  const badge = typeBadge(printer.printer_type);
   const slots = printer.loaded_filaments ?? [];
   const ask = cfgAsk(config);
   const multi = !!(modelFilaments?.length && (modelFilaments.length > 1 || slots.length >= 2));

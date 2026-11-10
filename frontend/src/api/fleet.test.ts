@@ -108,16 +108,18 @@ describe('toFleetPrinter', () => {
     expect(toFleetPrinter({ ...BASE, progress: 28.6 }).progress).toBe(29);
   });
 
-  it('uses ECC badge for elegoo_centauri', () => {
-    expect(toFleetPrinter({ ...BASE, printer_type: 'elegoo_centauri' }).badge).toBe('ECC');
+  it('derives the badge from the type key: initials of a multi-word key, else its first three letters', () => {
+    expect(toFleetPrinter({ ...BASE, printer_type: 'acme_core_one' }).badge).toBe('ACO');
+    expect(toFleetPrinter({ ...BASE, printer_type: 'acme' }).badge).toBe('ACM');
+    expect(toFleetPrinter({ ...BASE, printer_type: 'a_b_c_d_e_f' }).badge).toBe('ABCD');
   });
 
-  it('uses P1S badge for bambu', () => {
-    expect(toFleetPrinter({ ...BASE, printer_type: 'bambu' }).badge).toBe('P1S');
-  });
-
-  it('uses accent color for elegoo_centauri', () => {
-    expect(toFleetPrinter({ ...BASE, printer_type: 'elegoo_centauri' }).accent).toBe('#22d3ee');
+  it('gives every type a stable accent from the palette, including one no plugin has declared yet', () => {
+    const a = toFleetPrinter({ ...BASE, printer_type: 'acme_core_one' }).accent;
+    expect(a).toMatch(/^#[0-9a-f]{6}$/);
+    expect(toFleetPrinter({ ...BASE, printer_type: 'acme_core_one' }).accent).toBe(a);       // same key, same colour
+    const seen = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map(t => toFleetPrinter({ ...BASE, printer_type: t }).accent));
+    expect(seen.size).toBeGreaterThan(3);                                                    // and it spreads across the palette
   });
 
   it('maps current_print to currentJobId', () => {

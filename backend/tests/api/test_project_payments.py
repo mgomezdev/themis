@@ -9,11 +9,19 @@ from app.migrations import v024_project_payments
 from app.models import Project, ProjectPayment
 from app.services.payments import OPENING_NOTE
 
-TODAY = datetime.now(timezone.utc).date()
+def today():
+    """UTC today, read when called. A module-level constant goes stale when a run crosses midnight UTC: the app dated the
+    payment with the new day and every 'is today' assertion failed until the next run."""
+    return datetime.now(timezone.utc).date()
 
 
 def day(offset: int) -> str:
-    return (TODAY + timedelta(days=offset)).isoformat()
+    return (today() + timedelta(days=offset)).isoformat()
+
+
+def dated_today(value: str, before) -> bool:
+    """`value` is the day the request was made: `before` (read just ahead of it) or, across midnight, the day after."""
+    return value in {before.isoformat(), today().isoformat()} and today() - before <= timedelta(days=1)
 
 
 async def _project(client, price=100, **extra) -> dict:
@@ -51,8 +59,9 @@ async def test_deposit_then_final_payment_flip_status_and_keep_dated_history(cli
 
 async def test_payment_default_date_is_today_and_defaults_method_other(client):
     p = await _project(client)
+    before = today()
     pay = await _pay(client, p["id"], 5)
-    assert pay["received_on"] == TODAY.isoformat() and pay["method"] == "other"
+    assert dated_today(pay["received_on"], before) and pay["method"] == "other"
 
 
 async def test_overpayment_is_paid(client):
@@ -74,11 +83,12 @@ async def test_hand_entered_amount_is_kept_as_an_opening_payment_when_the_first_
 
 
 async def test_creating_a_project_with_an_amount_paid_records_it_as_a_payment(client):
+    before = today()
     p = await _project(client, price=100, amount_paid=100, payment_status="unpaid")
 
     assert (p["amount_paid"], p["payment_status"]) == (100.0, "paid")   # derived, whatever status was sent
-    rows = (await client.get(f"/api/v1/projects/{p['id']}/payments")).json()
-    assert [(r["amount"], r["received_on"]) for r in rows] == [(100.0, TODAY.isoformat())]
+    (row,) = (await client.get(f"/api/v1/projects/{p['id']}/payments")).json()
+    assert row["amount"] == 100.0 and dated_today(row["received_on"], before)
 
 
 async def test_a_legacy_paid_without_amount_project_keeps_counting_as_paid_in_full(client):
@@ -254,6 +264,7 @@ async def test_projects_without_payment_rows_keep_legacy_revenue_dating(client, 
 # ---- migration back-fill --------------------------------------------------------------------
 
 async def test_migration_turns_existing_amount_paid_into_one_opening_payment(session_factory):
+    before = today()
     async with session_factory() as s:
         for name, paid in (("paid some", 50.0), ("paid none", None), ("zero", 0.0)):
             s.add(Project(name=name, created_at="2026-03-05T10:00:00+00:00", updated_at="2026-04-01T00:00:00+00:00",
@@ -272,5 +283,5 @@ async def test_migration_turns_existing_amount_paid_into_one_opening_payment(ses
     assert sorted(by_amount) == [7.0, 50.0]
     assert (by_amount[50.0].received_on, by_amount[50.0].method, by_amount[50.0].note) == (
         "2026-03-05", "other", v024_project_payments.OPENING_NOTE)
-    assert by_amount[7.0].received_on == datetime.now(timezone.utc).date().isoformat()   # blank created_at → today, not ''
+    assert dated_today(by_amount[7.0].received_on, before)                               # blank created_at → today, not ''
     assert all(len(p.received_on) == 10 for p in pays)

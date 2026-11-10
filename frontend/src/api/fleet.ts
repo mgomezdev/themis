@@ -41,15 +41,22 @@ export interface FleetPrinter {
   waiver_stopped?: boolean;             // reached its stop threshold: takes no queue work
 }
 
-const ACCENT: Record<string, string> = {
-  elegoo_centauri: '#22d3ee',
-  bambu: '#3b82f6',
-};
+// A printer's badge and accent are derived from its type key, never looked up per vendor: shared UI names no plugin
+// (pluginIdGuard.test.ts), and a type added by a new plugin gets a stable colour and badge with no change here.
+const ACCENTS = ['#22d3ee', '#3b82f6', '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#facc15', '#94a3b8'];
 
-const BADGE: Record<string, string> = {
-  elegoo_centauri: 'ECC',
-  bambu: 'P1S',
-};
+/** Stable per-type accent: the same type key always maps to the same palette entry. */
+export function typeAccent(printerType: string): string {
+  let h = 0;
+  for (const ch of printerType) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return ACCENTS[h % ACCENTS.length];
+}
+
+/** Short badge for a type key: initials of a multi-word key (`acme_core_one` → ACO), else its first three letters. */
+export function typeBadge(printerType: string): string {
+  const words = printerType.split(/[_\s-]+/).filter(Boolean);
+  return (words.length > 1 ? words.map(w => w[0]).join('').slice(0, 4) : printerType.slice(0, 3)).toUpperCase();
+}
 
 const DORMANT_TEXT: Record<string, string> = {
   plugin_disabled: 'Its plugin is disabled',
@@ -77,7 +84,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     model: p.printer_type,
     pluginId: p.plugin_id ?? undefined,
     dormantReason: p.dormant ? (DORMANT_TEXT[p.dormant_reason ?? ''] ?? 'Plugin unavailable') : undefined,
-    badge: BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase(),
+    badge: typeBadge(p.printer_type),
     buildVolume: '',
     capabilities: Object.entries(p.capabilities ?? {})
       .filter(([, v]) => v)
@@ -103,7 +110,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
       name: m.name || '—', type: m.type || '—', color: m.color || UNKNOWN_COLOR,
     })),
     currentJobId: p.current_print ?? null,
-    accent: ACCENT[p.printer_type] ?? '#888888',
+    accent: typeAccent(p.printer_type),
     fanModel: p.fan_model ?? 0,
     fanAux: p.fan_aux ?? 0,
     fanBox: p.fan_box ?? 0,
