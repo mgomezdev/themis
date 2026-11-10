@@ -220,6 +220,14 @@ tests: each has its own SQLite file and `tmp_path`. A test that binds a fixed po
 another test's leftover module state will pass alone and fail in CI. `tests/test_tests_assert_something.py` fails on a test
 with no assertion at all.
 
+Background tasks the queue engine starts (slice-and-print, upload-and-print, notification delivery) go through
+`QueueEngine._spawn`, which keeps them referenced; `stop()` cancels and awaits them, and the autouse `_settle_queue_engines`
+fixture does the same for every engine a test builds (a task left pending would be torn down inside a later test).
+
+**CI skips for docs-only pull requests.** `scripts/ci_changed_code.py` decides (the `changes` job in `ci.yml`): a pull request
+into `develop` touching only Markdown / `docs/**` skips every test, image and e2e job. Docs that tests read are listed in its
+`TESTED_DOCS` and count as code; `tests/test_ci_docs_filter.py` fails when a test opens a docs path that is not listed.
+
 
 ### Model filament asks (BIZ-235)
 

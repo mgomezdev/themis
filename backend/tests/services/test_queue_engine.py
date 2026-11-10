@@ -1827,9 +1827,36 @@ async def test_fire_notifications_does_not_block_on_a_slow_channel(db):
         await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
         await asyncio.wait_for(started.wait(), timeout=1.0)
         assert not delivered.is_set()                       # returned while the channel was still mid-delivery
+        (delivery,) = qe._job_tasks                         # ...and the delivery is referenced, so it cannot be collected mid-send
+        assert not delivery.done()
 
-        may_finish.set()                                    # ...and the delivery then completes in the background
+        may_finish.set()                                    # it then completes in the background
         await asyncio.wait_for(delivered.wait(), timeout=1.0)
+        await asyncio.wait_for(delivery, timeout=1.0)
+        await asyncio.sleep(0)                              # the done-callback that releases it runs on the next loop turn
+    assert qe._job_tasks == set()                           # and is released once done
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_tasks_still_in_flight_and_waits_for_them_to_unwind(db):
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+    started, unwound = asyncio.Event(), []
+
+    async def long_running():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)                          # cleanup that itself needs the loop
+            unwound.append("done")
+
+    task = qe._spawn(long_running(), name="slice-1-1")
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    await asyncio.wait_for(qe.stop(), timeout=1.0)
+
+    assert task.cancelled() and unwound == ["done"]         # stop() returned only after the task finished unwinding
+    assert qe._job_tasks == set()
 
 
 @pytest.mark.asyncio

@@ -245,14 +245,6 @@ def _notification_text(event: str, job_id: int, file_name: str, printer_name: st
 NO_MATCH_PREFIX = "no eligible printer"
 
 
-# _UNTRACKED_TASKS: three tasks below (slice-and-print, upload-and-print, notification delivery) are started without
-# keeping a reference, which ruff's RUF006 flags because the event loop only holds tasks weakly. They are left that way
-# on purpose for now. In practice each is strongly held while it runs (by the executor future, database call, timer or
-# slice-queue entry it is waiting on). Holding them on the engine as well was tried and backed out: tests leave these
-# tasks pending when their event loop closes, the last-built engine outlives the test, and the retained tasks were then
-# torn down in the middle of a later test (GeneratorExit inside its database calls; reproducible under `pytest -n auto`).
-# Tracking them properly needs stop() to cancel and await them and the tests that start them to call it.
-
 class QueueEngine:
     def __init__(
         self,
@@ -280,7 +272,26 @@ class QueueEngine:
         self._pool_backoff: dict[int, float] = {}
         self._pool_nofit: dict[tuple[int, int], tuple] = {}
         self._pool_tasks: set[asyncio.Task] = set()
+        # Slice-and-print, upload-and-print and notification tasks in flight (see _spawn). stop() cancels and awaits them.
+        self._job_tasks: set[asyncio.Task] = set()
         completion_events.bind_engine(self)      # the `job_complete.notices` subscriber sends through the engine that was last built
+
+    def _spawn(self, coro, *, name: str | None = None) -> asyncio.Task:
+        """Start a fire-and-forget task and keep it referenced until it is done. The event loop holds tasks only weakly,
+        so one nobody else references can be garbage-collected mid-run: a print that silently never starts."""
+        task = asyncio.create_task(coro, name=name)
+        self._job_tasks.add(task)
+        task.add_done_callback(self._job_tasks.discard)
+        return task
+
+    async def cancel_job_tasks(self) -> None:
+        """Cancel every task _spawn started and wait until each has unwound (shutdown, and test teardown: a task left
+        pending on the engine outlives its event loop and is torn down later, inside whatever is running then)."""
+        tasks = [t for t in self._job_tasks if not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _slice_worker(self) -> None:
         while True:
@@ -616,6 +627,7 @@ class QueueEngine:
             await asyncio.gather(*self._pool_tasks, return_exceptions=True)
         if self._estimate_tasks:
             await asyncio.gather(*self._estimate_tasks, return_exceptions=True)
+        await self.cancel_job_tasks()
         self._executor.shutdown(wait=False)
 
     async def _loop(self) -> None:
@@ -1082,7 +1094,7 @@ class QueueEngine:
             return  # no longer claimable — bail without starting the slice/print
         await session.commit()
 
-        asyncio.create_task(  # noqa: RUF006 - see _UNTRACKED_TASKS
+        self._spawn(
             self._run_slice_and_print(job_id, printer_id, plate_number, slice_only=slice_only,
                                       cache_only_version=cache_only_version, provider_id=provider_id),
             name=f"slice-{job_id}-{printer_id}",
@@ -1680,7 +1692,7 @@ class QueueEngine:
         if result.rowcount == 0:
             return False  # no longer claimable
         await session.commit()
-        asyncio.create_task(  # noqa: RUF006 - see _UNTRACKED_TASKS
+        self._spawn(
             self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
             name=f"upload-{job.id}-{printer_id}",
         )
@@ -1949,7 +1961,7 @@ class QueueEngine:
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
             # which runs before new jobs are claimed each _process_queue iteration).
             # dispatch() already swallows every per-channel exception itself.
-            asyncio.create_task(notify(event, job_id, title, message, message_id=event_id))  # noqa: RUF006 - see _UNTRACKED_TASKS
+            self._spawn(notify(event, job_id, title, message, message_id=event_id), name=f"notify-{job_id}")
         except Exception:
             logger.exception("Failed to dispatch notifications for job %s", job_id)
 

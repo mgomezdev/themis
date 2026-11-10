@@ -138,6 +138,27 @@ def _laminus_unconfigured_by_default(request, monkeypatch):
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _settle_queue_engines(monkeypatch):
+    """A test that makes a QueueEngine claim work leaves slice / upload / notification tasks in flight. The engine keeps
+    them referenced (QueueEngine._spawn) and itself outlives the test (`completion_events.bind_engine`), so a task left
+    pending here would be torn down later, in the middle of some other test's database call. Cancel and await them
+    while this test's event loop is still running."""
+    from app.services.queue_engine import QueueEngine
+    built: list[QueueEngine] = []
+    real_init = QueueEngine.__init__
+
+    def recording_init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    monkeypatch.setattr(QueueEngine, "__init__", recording_init)
+    yield
+    for engine in built:
+        if "_job_tasks" in engine.__dict__:              # the lifespan tests reset the singleton to an empty shell
+            await engine.cancel_job_tasks()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def _reset_login_throttle():
     """Failed-login throttle is process-global; don't let one test's failures leak into another."""
     from app.services import login_throttle
