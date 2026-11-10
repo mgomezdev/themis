@@ -71,12 +71,12 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
         onClick={() => setExpanded(e => !e)}
       >
         <div style={{ width: 12, height: 12, borderRadius: 3, flexShrink: 0, background: color, border: '1px solid var(--border-2)' }} />
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{materialDisplayName(filament)}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{materialDisplayName(filament)}</div>
           <div className="tiny muted">{filament.material}</div>
         </div>
         {Object.keys(saved).length > 0 && (
-          <span className="tiny" style={{ color: 'var(--ok)' }}>
+          <span className="tiny text-ok">
             {Object.keys(saved).length} preset{Object.keys(saved).length > 1 ? 's' : ''} mapped
           </span>
         )}
@@ -103,7 +103,7 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
 
             {orphanedPresets.map(preset => (
               <div key={preset} className="col gap-1">
-                <label className="tiny" style={{ color: 'var(--warn)' }}>
+                <label className="tiny text-warn">
                   {preset} <span className="muted">(no matching printer registered)</span>
                 </label>
                 <div className="tiny muted">
@@ -279,7 +279,7 @@ export function MaterialMappingsPage() {
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <span style={{ fontWeight: 500 }}>{materialDisplayName(f)}</span>
+                  <span className="fw-500">{materialDisplayName(f)}</span>
                   <span className="tiny muted" style={{ marginLeft: 8 }}>{f.material}</span>
                 </div>
               ))}

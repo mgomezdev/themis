@@ -232,7 +232,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Queue check interval"
                 hint="How often the queue engine scans for an available printer and claims the next compatible job. Minutes.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <input className="input" type="number" min={1} step={1}
                  value={checkInterval}
                  onChange={e => setCheckInterval(Number(e.target.value))}
@@ -244,7 +244,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Camera snapshot interval"
                 hint="How often printer tiles refresh their camera snapshot. Applies to all printers unless 'No snapshots while idle' is set on a specific printer.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <input className="input" type="number" min={1} step={1}
                  value={snapshotInterval}
                  onChange={e => setSnapshotInterval(Number(e.target.value))}
@@ -256,7 +256,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Printer offline limit"
                 hint="How long a printer may stay offline before it is considered dead. A shorter drop changes nothing, so a flaky network does not keep reprocessing the queue. When a printer is declared dead, the job it was printing fails and goes back to the top of the queue. 0 = never.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <input className="input" type="number" min={0} max={1440} step={1}
                  aria-label="Printer offline limit"
                  value={deadAfter}
@@ -269,7 +269,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Hold a failed part after"
                 hint="When a part fails on this many different printers it is held on its project for you to Reprint or Drop, instead of going back into the queue again.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <input className="input" type="number" min={1} max={20} step={1}
                  aria-label="Hold a failed part after"
                  value={retryLimit}
@@ -282,7 +282,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Waive a printer for a part after"
                 hint="When one printer fails the same part this many times, it stops getting that part, in every project. Clear it on the Printers page, or test-print it there.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <input className="input" type="number" min={1} max={20} step={1}
                  aria-label="Waive a printer for a part after"
                  value={waiveAfter}
@@ -317,7 +317,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="OrcaSlicer profiles"
                 hint="Themis caches your OrcaSlicer printer/process/filament presets. Rescan after adding or editing presets so new options appear in printer setup and new jobs.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <button className="btn sm" disabled={rescanning} onClick={doRescan}>
             {Icons.refresh} {rescanning ? 'Rescanning…' : 'Rescan profiles'}
           </button>
@@ -336,7 +336,7 @@ export function PrintDefaultsPage() {
               ? catalogSummary
               : 'Not yet cached'}
           </div>
-          <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+          <div className="row gap-2 wrap">
             <button className="btn sm" disabled={catalogOp !== 'idle'} onClick={doRefreshCatalog}>
               {Icons.refresh} {catalogOp === 'refreshing' ? 'Refreshing…' : 'Refresh catalog'}
             </button>

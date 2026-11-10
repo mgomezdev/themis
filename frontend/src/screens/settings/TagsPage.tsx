@@ -49,7 +49,7 @@ function TagRow({ tag, onEdit, onDelete }: { tag: Tag; onEdit: () => void; onDel
     }}>
       <span style={{ width: 4, height: 28, borderRadius: 2, flexShrink: 0, background: tag.color }}/>
       <TagChip tag={tag} />
-      <div className="col" style={{ flex: 1, minWidth: 0 }} />
+      <div className="col grow min-0" />
       <div style={{ width: 140, flexShrink: 0 }}>
         <span className="tiny muted">{tag.category || '—'}</span>
       </div>
@@ -274,7 +274,7 @@ export function TagsPage() {
         <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-1)' }}>
           <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-2)' }}>
             <div style={{ width: 4, flexShrink: 0 }}/>
-            <div style={{ flex: 1 }}>Tag</div>
+            <div className="grow">Tag</div>
             <div style={{ width: 140, flexShrink: 0 }}>Category</div>
             <div style={{ width: 110, flexShrink: 0, textAlign: 'right' }}>Actions</div>
           </div>

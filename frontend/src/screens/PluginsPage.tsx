@@ -70,7 +70,7 @@ export function PluginsPage() {
         <div className="card" role="status" data-testid="restart-banner" style={{ padding: 12, marginBottom: 12 }}>
           {restarting ? <div>Restarting Themis… this page will reconnect when it is back.</div> : (
             <div className="col gap-2">
-              <div className="row between" style={{ alignItems: 'center' }}>
+              <div className="row between">
                 <div>
                   <strong>Restart Themis to apply {pending.length} pending change{pending.length === 1 ? '' : 's'}</strong>
                   <ul className="small muted" style={{ margin: '4px 0 0 16px', padding: 0 }}>
@@ -92,7 +92,7 @@ export function PluginsPage() {
                   </div>
                 </div>
               )}
-              {restartError && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{restartError}</div>}
+              {restartError && <div role="alert" className="small text-err">{restartError}</div>}
             </div>
           )}
         </div>
@@ -102,9 +102,9 @@ export function PluginsPage() {
       <div className="col gap-2">
         {plugins.map(p => (
           <div key={p.id} className="card" style={{ padding: 16 }} data-testid={`plugin-${p.id}`}>
-            <div className="row between" style={{ alignItems: 'center' }}>
+            <div className="row between">
               <div className="col">
-                <div style={{ fontWeight: 600 }}>{p.name} <span className="muted small">v{p.version}</span></div>
+                <div className="fw-600">{p.name} <span className="muted small">v{p.version}</span></div>
                 {p.description && <div className="muted small">{p.description}</div>}
                 {p.provides.length > 0 && (
                   <div className="row gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }} data-testid={`plugin-caps-${p.id}`}>
@@ -122,10 +122,10 @@ export function PluginsPage() {
                     {p.install.status === 'pending_restart' && p.install.version !== p.version && ` · v${p.install.version} after restart`}
                   </div>
                 )}
-                {p.install?.error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{p.install.error}</div>}
+                {p.install?.error && <div role="alert" className="small text-err">{p.install.error}</div>}
                 {notice[p.id] && <div className="tiny muted" data-testid={`plugin-notice-${p.id}`}>{notice[p.id]}</div>}
               </div>
-              <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <div className="row gap-2">
                 <span className={`pill ${p.error ? 'err' : p.active ? 'ok' : p.enabled ? 'info' : 'idle'}`}>
                   <span className="dot" />{p.install?.status === 'pending_removal' ? 'Uninstalls on restart'
                     : p.loaded === false && p.install?.status === 'pending_restart' ? 'Starts after restart'
@@ -150,7 +150,7 @@ export function PluginsPage() {
             {removing === p.id && (
               <div className="col gap-2" style={{ marginTop: 12 }} data-testid={`uninstall-confirm-${p.id}`}>
                 <div className="small">Uninstall <strong>{p.name}</strong>? It is disabled now and its code is removed at the next restart.</div>
-                <label className="row gap-2 small" style={{ alignItems: 'center' }}>
+                <label className="row gap-2 small">
                   <input type="checkbox" checked={removeData} onChange={e => setRemoveData(e.target.checked)} /> Also delete this plugin&apos;s data (tables and settings) — cannot be undone
                 </label>
                 <div className="row gap-2">

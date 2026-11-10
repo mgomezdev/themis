@@ -21,7 +21,7 @@ function MaterialForm({ initial, onSave, onCancel }: { initial?: InvMaterial; on
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement>) => setV(s => ({ ...s, [k]: e.target.value }));
   return (
     <div className="card col gap-2" style={{ padding: 14 }} data-testid="material-form">
-      <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <input className="input" aria-label="Material name" placeholder="Name *" value={v.name} onChange={set('name')} />
         <input className="input" aria-label="Material type" placeholder="Type (PLA…)" value={v.material} onChange={set('material')} style={{ width: 120 }} />
         <input className="input" aria-label="Material subtype" list="material-subtypes" placeholder="Subtype (standard)" value={v.subtype} onChange={set('subtype')}
@@ -53,7 +53,7 @@ function SpoolForm({ initial, materials, canWeigh, onSave, onCancel }: {
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV(s => ({ ...s, [k]: e.target.value }));
   return (
     <div className="card col gap-2" style={{ padding: 14 }} data-testid="spool-form">
-      <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         {!initial && (
           <select className="select" aria-label="Spool material" value={v.material_ref} onChange={set('material_ref')}>
             <option value="">Material *</option>
@@ -123,19 +123,19 @@ export function FilamentLibraryScreen() {
           {canSpools && <button className={`settings-tab ${tab === 'spools' ? 'active' : ''}`} onClick={() => { setTab('spools'); setAdding(false); setEditing(null); }}>Spools</button>}
           {canMaterials && <button className={`settings-tab ${tab === 'materials' ? 'active' : ''}`} onClick={() => { setTab('materials'); setAdding(false); setEditing(null); }}>Materials</button>}
         </nav>
-        <div className="row gap-3" style={{ alignItems: 'center' }}>
-          <label className="row gap-2 small" style={{ alignItems: 'center' }}>
+        <div className="row gap-3">
+          <label className="row gap-2 small">
             <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} /> Show archived
           </label>
           <button className="btn primary sm" onClick={() => { setAdding(true); setEditing(null); }}>{tab === 'spools' ? 'Add spool' : 'Add material'}</button>
         </div>
       </div>
-      {error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+      {error && <div role="alert" className="small text-err">{error}</div>}
 
       {tab === 'materials' && canMaterials && (
         <>
           {adding && <MaterialForm onSave={v => act(() => createMaterial(v as never))} onCancel={() => setAdding(false)} />}
-          <table className="table" style={{ width: '100%' }} data-testid="materials-table">
+          <table className="tbl w-full" data-testid="materials-table">
             <thead><tr><th /><th style={{ textAlign: 'left' }}>Material</th><th style={{ textAlign: 'left' }}>Type</th><th>Spools</th><th /></tr></thead>
             <tbody>
               {visibleMaterials.length === 0 && <tr><td colSpan={5} className="muted small">No materials yet.</td></tr>}
@@ -163,8 +163,8 @@ export function FilamentLibraryScreen() {
       {tab === 'spools' && canSpools && (
         <>
           {adding && <SpoolForm materials={materials} canWeigh={canWeigh} onSave={v => act(() => createSpool(v as never))} onCancel={() => setAdding(false)} />}
-          <table className="table" style={{ width: '100%' }} data-testid="spools-table">
-            <thead><tr><th /><th style={{ textAlign: 'left' }}>Spool</th><th style={{ textAlign: 'left' }}>Location</th><th style={{ textAlign: 'right' }}>Remaining</th><th /></tr></thead>
+          <table className="tbl w-full" data-testid="spools-table">
+            <thead><tr><th /><th style={{ textAlign: 'left' }}>Spool</th><th style={{ textAlign: 'left' }}>Location</th><th className="text-right">Remaining</th><th /></tr></thead>
             <tbody>
               {visibleSpools.length === 0 && <tr><td colSpan={5} className="muted small">No spools yet.</td></tr>}
               {visibleSpools.map(s => (
@@ -172,7 +172,7 @@ export function FilamentLibraryScreen() {
                   <td><span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', background: spoolColor(s) }} /></td>
                   <td>#{s.ref} {spoolDisplayName(s)}{s.archived && <span className="tiny muted"> · archived</span>}</td>
                   <td>{s.location?.trim() || '—'}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="text-right">
                     {weighing?.ref === s.ref ? (
                       <span className="row gap-1" style={{ justifyContent: 'flex-end' }}>
                         <input className="input" type="number" min="0" aria-label={`New weight for spool ${s.ref}`} style={{ width: 90 }}

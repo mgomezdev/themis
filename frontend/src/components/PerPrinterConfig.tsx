@@ -137,8 +137,8 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
     <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
         <span className="elig on">{badge}</span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{printer.name}</div>
           <div className="tiny muted">{printer.printer_type}</div>
         </div>
       </div>
@@ -172,7 +172,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                 const unmatched = noMatch || unmatchedFilaments.includes(f.index);
                 return (
                   <div key={f.index}>
-                    <div className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div className="row gap-2">
                       <div style={{
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
                         background: f.color || UNKNOWN_DOT_COLOR, border: '1px solid var(--border-2)',

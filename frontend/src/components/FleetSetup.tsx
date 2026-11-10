@@ -55,7 +55,7 @@ export function SetupIncompleteCard({ printer: p, refetchFleet }: { printer: Pri
   return (
     <div data-testid="setup-card" onClick={e => e.stopPropagation()}
          style={{ padding: '8px 14px 12px', borderTop: '1px solid var(--border-1)' }}>
-      <div className="tiny" style={{ color: 'var(--warn)' }}>
+      <div className="tiny text-warn">
         Setup incomplete — {p.configError ?? 'waiting for a connection test'}. It takes no queue work until a connection succeeds.
       </div>
       {form && (

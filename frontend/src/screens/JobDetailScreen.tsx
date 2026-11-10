@@ -62,8 +62,8 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
               style={isAssigned ? { background: 'rgba(59,130,246,0.2)' } : undefined}>
           {badge}
         </span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{cfg.printer_name}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{cfg.printer_name}</div>
           <div className="tiny muted">{cfg.printer_type}</div>
         </div>
         {isAssigned && (
@@ -78,7 +78,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
         </div>
         <div>
           <div className="tag-key" style={{ marginBottom: 4 }}>Filament</div>
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             {cfg.filament_color && (
               <div style={{
                 width: 14, height: 14, borderRadius: 3, flexShrink: 0,
@@ -86,7 +86,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
                 border: '1px solid rgba(255,255,255,0.15)',
               }} />
             )}
-            <div className="col" style={{ minWidth: 0 }}>
+            <div className="col min-0">
               <div className="small" style={{ color: 'var(--text-1)' }}>
                 {askIsUndefined(cfg) ? 'Any loaded filament' : describeAsk(cfg)}
               </div>
@@ -349,7 +349,7 @@ export function JobDetailScreen() {
                 </div>
               )}
 
-              <div className="row gap-5" style={{ flexWrap: 'wrap' }}>
+              <div className="row gap-5 wrap">
                 {(job.estimated_seconds_live != null || job.plate?.estimated_time != null) && (
                   <Kv k="Est. print" v={
                     <span className="num small">
@@ -387,7 +387,7 @@ export function JobDetailScreen() {
           {job.model_targets.length > 0 && (
             <div className="card" style={{ padding: 20 }} data-testid="model-targets">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Any printer of</div>
-              <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+              <div className="row gap-2 wrap">
                 {job.model_targets.map(t => <span key={t.model_uuid ?? 'any'} className="elig on">{t.model_label ?? t.model_uuid}</span>)}
               </div>
               {job.printer_configs.length === 0 && (
@@ -495,7 +495,7 @@ export function JobDetailScreen() {
           {(job.status === 'queued' || job.status === 'blocked') && (
             <div className="card" style={{ padding: 20 }} data-testid="start-time-card">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Start time</div>
-              <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="row gap-2 wrap">
                 <input
                   type="datetime-local" className="input" aria-label="Earliest start"
                   style={{ maxWidth: 220 }}
@@ -523,7 +523,7 @@ export function JobDetailScreen() {
           {/* Cost */}
           <div className="card" style={{ padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Filament cost</div>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div className="row gap-2">
               <input
                 type="number" min="0" step="0.01"
                 className="input" placeholder="0.00"

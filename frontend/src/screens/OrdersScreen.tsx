@@ -119,7 +119,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
     <div className="card" style={{ padding: 0, overflow: 'hidden', borderColor: expanded ? 'var(--border-3)' : 'var(--border-1)' }}>
       <button onClick={onToggle} aria-label={`order-${order.id}`}
               style={{ width: '100%', background: 'transparent', border: 'none', color: 'inherit', textAlign: 'left', padding: '14px 18px', cursor: 'pointer', display: 'block' }}>
-        <div aria-hidden="true" className="row gap-4" style={{ alignItems: 'center' }}>
+        <div aria-hidden="true" className="row gap-4">
           <div style={{ width: 20, color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 160ms ease', display: 'inline-flex' }}>{Icons.chevR}</div>
           <div className="col" style={{ width: 130, flexShrink: 0 }}>
             <span className="mono tiny muted">#{order.id}</span>
@@ -211,7 +211,7 @@ export function OrdersScreen() {
                   className={`btn sm ${filter === k ? 'primary' : ''}`}
                   style={filter === k ? undefined : { background: 'transparent', borderColor: 'var(--border-1)' }}>{l}</button>
         ))}
-        <div style={{ flex: 1 }} />
+        <div className="grow" />
         <span className="tiny muted">{filtered.length} orders</span>
       </div>
 

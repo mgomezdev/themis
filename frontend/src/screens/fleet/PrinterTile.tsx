@@ -95,7 +95,7 @@ export function PrinterTile({ printer: p, onClick, refetchFleet, snapshotInterva
           <span style={{ fontSize: 14, fontWeight: 600 }}>{p.nickname}</span>
           <span className="tiny muted">{p.badge}</span>
         </div>
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
           <QueueStateBadges printer={p} />
           <AlarmBadge printer={p} />
@@ -116,7 +116,7 @@ export function PrinterTile({ printer: p, onClick, refetchFleet, snapshotInterva
       <div className="row between" style={{ padding: '12px 14px 10px' }}>
         <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
           <Swatch color={p.material.color} />
-          <div className="col" style={{ minWidth: 0 }}>
+          <div className="col min-0">
             <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.material.name}</div>
             <div className="tiny muted">{p.material.type}</div>
           </div>
@@ -175,8 +175,8 @@ export function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRow
       }}>
         <span className="mono tiny" style={{ color: p.accent }}>{p.badge}</span>
       </div>
-      <div className="col" style={{ minWidth: 0 }}>
-        <div className="row gap-1" style={{ alignItems: 'center' }}>
+      <div className="col min-0">
+        <div className="row gap-1">
           <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
           <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nickname}</div>
         </div>
@@ -189,12 +189,12 @@ export function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRow
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
         <Swatch color={p.material.color} />
-        <div className="col" style={{ minWidth: 0 }}>
+        <div className="col min-0">
           <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.material.name}</div>
           <div className="tiny muted">{p.material.type}</div>
         </div>
       </div>
-      <div className="col" style={{ minWidth: 0 }}>
+      <div className="col min-0">
         {isPrinting ? (
           <>
             <Progress value={p.progress} />
@@ -252,7 +252,7 @@ export function AddPrinterCard({ onClick, variant }: { onClick: () => void; vari
                        justifyContent: 'center', transition: 'all 140ms ease' }}
               onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
         {Icons.plus}
-        <span className="small" style={{ fontWeight: 500 }}>Add printer</span>
+        <span className="small fw-500">Add printer</span>
       </button>
     );
   }
@@ -267,7 +267,7 @@ export function AddPrinterCard({ onClick, variant }: { onClick: () => void; vari
                     background: 'var(--bg-3)', border: '1px solid var(--border-1)' }}>
         {Icons.plus}
       </div>
-      <div className="small" style={{ fontWeight: 500 }}>Add printer</div>
+      <div className="small fw-500">Add printer</div>
       <div className="tiny muted" style={{ textAlign: 'center', maxWidth: 220 }}>
         Connect a Bambu, Elegoo or Snapmaker host.
       </div>

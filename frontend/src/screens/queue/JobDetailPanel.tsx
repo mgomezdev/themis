@@ -357,13 +357,13 @@ export function JobDetailPanel({
             <div className="divider" />
             <div className="tag-key" style={{ marginBottom: 8 }}>Queue position</div>
             <div className="row gap-2" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
-              <button className="btn ghost sm" style={{ flex: 1 }}
+              <button className="btn ghost sm grow"
                       onClick={() => onReorder(job.rawId, 'front')}>⇤ Front</button>
-              <button className="btn ghost sm" style={{ flex: 1 }}
+              <button className="btn ghost sm grow"
                       onClick={() => onReorder(job.rawId, 'promote')}>↑ Up</button>
-              <button className="btn ghost sm" style={{ flex: 1 }}
+              <button className="btn ghost sm grow"
                       onClick={() => onReorder(job.rawId, 'demote')}>↓ Down</button>
-              <button className="btn ghost sm" style={{ flex: 1 }}
+              <button className="btn ghost sm grow"
                       onClick={() => onReorder(job.rawId, 'back')}>⇥ Back</button>
             </div>
           </>

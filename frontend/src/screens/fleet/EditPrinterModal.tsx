@@ -128,7 +128,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
           padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
           alignItems: 'center', background: 'var(--bg-3)',
         }}>
-          <div className="row gap-3" style={{ alignItems: 'center' }}>
+          <div className="row gap-3">
             <div style={{
               width: 36, height: 36, borderRadius: 8,
               background: `linear-gradient(135deg, ${p.accent}33, transparent)`,
@@ -238,7 +238,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
 
           <div className="col gap-2">
             <div className="tag-key">Quiet hours</div>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div className="row gap-2">
               <input type="time" className="input" aria-label="Quiet hours start" style={{ maxWidth: 130 }}
                      value={quietStart} onChange={e => setQuietStart(e.target.value)} />
               <span className="small muted">to</span>
@@ -253,7 +253,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
 
           <div className="col gap-2">
             <div className="tag-key">Camera</div>
-            <div className="row gap-3" style={{ alignItems: 'center' }}>
+            <div className="row gap-3">
               <button
                 role="switch"
                 aria-checked={noSnapshotsWhileIdle}
@@ -274,13 +274,13 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
                 }}/>
               </button>
               <div className="col">
-                <span className="small" style={{ fontWeight: 500 }}>No snapshots while idle</span>
+                <span className="small fw-500">No snapshots while idle</span>
                 <span className="tiny muted">Pause camera polling when this printer is not printing. Saves resources on printers that are often idle.</span>
               </div>
             </div>
           </div>
 
-          {error && <div className="tiny" style={{ color: 'var(--err)' }}>{error}</div>}
+          {error && <div className="tiny text-err">{error}</div>}
         </div>
 
         <div className="row between" style={{
@@ -288,15 +288,15 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
           background: 'var(--bg-3)', alignItems: 'center',
         }}>
           {confirmDelete ? (
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
-              <span className="small" style={{ color: 'var(--err)' }}>Remove printer?</span>
-              <button className="btn ghost sm" style={{ color: 'var(--err)' }} onClick={handleDelete}>
+            <div className="row gap-2">
+              <span className="small text-err">Remove printer?</span>
+              <button className="btn ghost sm text-err" onClick={handleDelete}>
                 {Icons.trash} Confirm
               </button>
               <button className="btn ghost sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
             </div>
           ) : (
-            <button className="btn ghost sm" style={{ color: 'var(--err)' }} onClick={handleDelete}>
+            <button className="btn ghost sm text-err" onClick={handleDelete}>
               {Icons.trash} Remove printer
             </button>
           )}

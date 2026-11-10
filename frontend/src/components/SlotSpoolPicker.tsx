@@ -162,7 +162,7 @@ export function SlotSpoolPicker({
                   onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
                   <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(spool), flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>{spoolRowLabel(spool)}</span>
+                  <span className="grow">{spoolRowLabel(spool)}</span>
                   <span className="muted" style={{ fontSize: 12 }}>{spoolDetail(spool)}</span>
                 </div>
               ))}

@@ -166,7 +166,7 @@ export function FileDetailPanel({
 
       <div style={{ marginTop: 16 }}>
         <div className="tag-key" style={{ marginBottom: 6 }}>Tags</div>
-        <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+        <div className="row gap-2 wrap">
           {file.tags.map(t => (
             <button key={t.id} onClick={() => onRemoveTag(file, t.id)}
                     className="row gap-2"
@@ -205,8 +205,8 @@ export function FileDetailPanel({
           Use in new job
         </button>
         <div className="row gap-2">
-          <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => onRename(file)}>Rename</button>
-          <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => onMove(file)}>Move</button>
+          <button className="btn ghost sm grow" onClick={() => onRename(file)}>Rename</button>
+          <button className="btn ghost sm grow" onClick={() => onMove(file)}>Move</button>
         </div>
         <button className="btn ghost sm" onClick={() => onDelete(file)}
                 style={{ color: 'var(--err)' }}>

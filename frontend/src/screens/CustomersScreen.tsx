@@ -38,19 +38,19 @@ function NewCustomerForm({ onCancel, onCreated }: { onCancel: () => void; onCrea
     <form className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={submit}>
       <div style={{ fontSize: 14, fontWeight: 600 }}>New customer</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-        <label className="col" style={{ gap: 4 }}><span className="label">Name *</span>
+        <label className="col gap-1"><span className="label">Name *</span>
           <input className="input" autoFocus {...field('name')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Email *</span>
+        <label className="col gap-1"><span className="label">Email *</span>
           <input className="input" type="email" {...field('email')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Company</span>
+        <label className="col gap-1"><span className="label">Company</span>
           <input className="input" {...field('company')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Phone</span>
+        <label className="col gap-1"><span className="label">Phone</span>
           <input className="input" type="tel" {...field('phone')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Portal password</span>
+        <label className="col gap-1"><span className="label">Portal password</span>
           <input className="input" type="password" placeholder="Optional" autoComplete="new-password" {...field('password')} /></label>
       </div>
       <div className="small muted">Leave the password blank if this customer doesn't need to sign in to the portal yet.</div>
-      {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+      {error && <div className="small text-err">{error}</div>}
       <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
         <button type="button" className="btn sm" onClick={onCancel}>Cancel</button>
         <button type="submit" className="btn primary sm" disabled={!canCreate}>{Icons.plus} Create customer</button>
@@ -90,8 +90,8 @@ function LinkProjectsPanel({ unlinked, customers, onLinked }: {
 
   return (
     <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ color: 'var(--warn)' }}>{Icons.alert}</span>
+      <div className="row gap-2 wrap">
+        <span className="text-warn">{Icons.alert}</span>
         <span style={{ fontSize: 13, flex: 1 }}>
           {unlinked.length} project{unlinked.length !== 1 ? 's name a customer' : ' names a customer'} but
           {unlinked.length !== 1 ? ' aren’t' : ' isn’t'} linked to an account, so {unlinked.length !== 1 ? 'they' : 'it'} won’t
@@ -125,7 +125,7 @@ function LinkProjectsPanel({ unlinked, customers, onLinked }: {
           <div className="small muted">
             No match? Create the customer first with “New customer”, then pick them here.
           </div>
-          {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+          {error && <div className="small text-err">{error}</div>}
           <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
             <button className="btn primary sm" disabled={saving || selected.length === 0} onClick={link}>
               {saving ? 'Linking…' : `Link ${selected.length} project${selected.length !== 1 ? 's' : ''}`}
@@ -173,10 +173,10 @@ export function CustomersScreen() {
         />
       )}
 
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <input className="input" placeholder="Search name, email, company…" value={query}
                onChange={e => setQuery(e.target.value)} style={{ maxWidth: 320, flex: 1 }} />
-        <div className="spacer" style={{ flex: 1 }} />
+        <div className="spacer grow" />
         {customers && customers.length > 0 && (
           <span className="small muted">
             {customers.length} customer{customers.length !== 1 ? 's' : ''} · {fmtMoney(totalOutstanding)} outstanding
@@ -184,7 +184,7 @@ export function CustomersScreen() {
         )}
       </div>
 
-      {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+      {error && <div className="small text-err">{error}</div>}
 
       {customers && customers.length > 0 && unlinked.length > 0 && (
         // Keyed on the row set so a reload after linking resets the pre-selections.
@@ -204,8 +204,8 @@ export function CustomersScreen() {
             <thead>
               <tr>
                 <th>Name</th><th>Email</th><th>Phone</th>
-                <th style={{ textAlign: 'right' }}>Projects</th>
-                <th style={{ textAlign: 'right' }}>Outstanding</th>
+                <th className="text-right">Projects</th>
+                <th className="text-right">Outstanding</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -213,12 +213,12 @@ export function CustomersScreen() {
               {visible.map(c => (
                 <tr key={c.id} onClick={() => navigate(`/customers/${c.id}`)}>
                   <td>
-                    <div style={{ fontWeight: 500 }}>{c.name}</div>
+                    <div className="fw-500">{c.name}</div>
                     {c.company && <div className="small muted">{c.company}</div>}
                   </td>
                   <td>{c.email}</td>
                   <td>{c.phone ?? <span className="muted">—</span>}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="text-right">
                     {c.project_count === 0 ? <span className="muted">—</span>
                       : <>{c.active_project_count} current · {c.project_count} total</>}
                   </td>

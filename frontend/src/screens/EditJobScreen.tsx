@@ -182,9 +182,9 @@ export function EditJobScreen() {
 
       {job && (
         <div className="card" style={{ padding: '12px 16px', background: 'var(--bg-1)' }}>
-          <div className="row gap-3" style={{ alignItems: 'center' }}>
+          <div className="row gap-3">
             <span className="mono tiny muted">#{job.id}</span>
-            <span className="small" style={{ fontWeight: 500 }}>
+            <span className="small fw-500">
               Plate {job.plate_number}
               {job.file && <span className="muted" style={{ fontWeight: 400 }}> · {job.file.original_filename}</span>}
             </span>
@@ -261,7 +261,7 @@ export function EditJobScreen() {
         {/* Sidebar */}
         <div className="col gap-4">
           <div className="card" style={{ padding: 18 }}>
-            <button className="btn primary" style={{ width: '100%' }}
+            <button className="btn primary w-full"
                     disabled={!isComplete || saving || !job}
                     onClick={handleSave}>
               {Icons.check} {saving ? 'Saving…' : 'Save & re-queue'}
@@ -286,7 +286,7 @@ export function EditJobScreen() {
                   const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
                   const done = gcode ? !!pp : pp?.printProfile != null;
                   return (
-                    <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div key={sid} className="row gap-2">
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
                       <span className="small" style={{ flex: 1, minWidth: 0, color: done ? 'var(--text-1)' : 'var(--text-3)' }}>
                         {label}

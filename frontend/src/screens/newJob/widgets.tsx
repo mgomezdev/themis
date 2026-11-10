@@ -124,7 +124,7 @@ export function ProjectPicker({ selectedProjectId, onChange }: {
 
   return (
     <div className="col gap-2">
-      <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         {open.map(p => {
           const selected = selectedProjectId === p.id;
           return (

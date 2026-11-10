@@ -63,11 +63,11 @@ export function CostsCard({ projectId, costs, onChanged }: { projectId: number; 
             <tr key={r.key} data-testid={`cost-${r.key}`}>
               <td>{r.label}</td>
               <td className="muted small">{r.hint(costs)}</td>
-              <td style={{ textAlign: 'right' }}>{fmtMoney(costs[r.key])}</td>
+              <td className="text-right">{fmtMoney(costs[r.key])}</td>
             </tr>
           ))}
           <tr data-testid="cost-total" style={{ fontWeight: 600 }}>
-            <td>Total</td><td /><td style={{ textAlign: 'right' }}>{fmtMoney(costs.total)}</td>
+            <td>Total</td><td /><td className="text-right">{fmtMoney(costs.total)}</td>
           </tr>
         </tbody>
       </table>
@@ -81,10 +81,10 @@ export function CostsCard({ projectId, costs, onChanged }: { projectId: number; 
             <tbody>
               {(labor ?? []).map(l => (
                 <tr key={l.id} data-testid={`labor-${l.id}`}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.logged_on)}</td>
+                  <td className="nowrap">{fmtDate(l.logged_on)}</td>
                   <td>{fmtMinutes(l.minutes)}</td>
                   <td className="muted">{l.note ?? ''}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="text-right">
                     <button className="btn ghost sm" aria-label={`Delete ${fmtMinutes(l.minutes)} labour entry`} onClick={() => remove(l)}>Delete</button>
                   </td>
                 </tr>
@@ -95,12 +95,12 @@ export function CostsCard({ projectId, costs, onChanged }: { projectId: number; 
       )}
 
       <form onSubmit={add} className="row gap-2" style={{ flexWrap: 'wrap', alignItems: 'end' }}>
-        <label className="col" style={{ gap: 4 }}>
+        <label className="col gap-1">
           <span className="label">Minutes</span>
           <input className="input" type="number" min="1" step="1" placeholder="45" style={{ width: 90 }}
                  value={minutes} onChange={e => setMinutes(e.target.value)} aria-label="Labour minutes" />
         </label>
-        <label className="col" style={{ gap: 4 }}>
+        <label className="col gap-1">
           <span className="label">Date</span>
           <input className="input" type="date" value={loggedOn} max={todayLocal()}
                  onChange={e => setLoggedOn(e.target.value)} aria-label="Labour date" />

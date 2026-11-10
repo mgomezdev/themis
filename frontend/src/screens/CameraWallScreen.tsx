@@ -117,13 +117,13 @@ export function CameraWallScreen() {
   const count = (f: Filter) => f === 'all' ? withCamera.length : withCamera.filter(p => p.status === f).length;
 
   return (
-    <div className="page" data-testid="camera-wall">
+    <div data-testid="camera-wall">
       <div className="row gap-3" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         {FILTERS.map(f => (
           <button key={f} className={`btn sm${prefs.filter === f ? ' primary' : ''}`} aria-pressed={prefs.filter === f}
                   onClick={() => set({ filter: f })}>{f[0].toUpperCase() + f.slice(1)} · {count(f)}</button>
         ))}
-        <span style={{ flex: 1 }} />
+        <span className="grow" />
         <label className="small muted" htmlFor="wall-cols">Columns</label>
         <select id="wall-cols" className="input" style={{ width: 'auto' }} value={prefs.columns}
                 onChange={e => set({ columns: Number(e.target.value) })}>

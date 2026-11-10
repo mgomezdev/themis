@@ -162,15 +162,15 @@ export function FleetScreen() {
             <div className="muted small">{fleetSummary}</div>
           </div>
         </div>
-        <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+        <div className="row gap-2 wrap">
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
-          <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
+          <button className="btn sm nowrap">{Icons.refresh} Sync now</button>
           {canScan && (
-            <button className="btn sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setScanning(true)}>
+            <button className="btn sm nowrap" onClick={() => setScanning(true)}>
               {Icons.spool} Scan spool
             </button>
           )}
-          <button className="btn primary sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setAdding(true)}>
+          <button className="btn primary sm nowrap" onClick={() => setAdding(true)}>
             {Icons.plus} Add printer
           </button>
         </div>

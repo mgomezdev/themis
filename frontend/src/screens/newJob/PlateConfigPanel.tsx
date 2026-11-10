@@ -68,14 +68,14 @@ export function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers,
   return (
     <div className="col gap-4">
       {/* Plate banner with queue toggle */}
-      <div className="row gap-3" style={{ alignItems: 'center' }}>
+      <div className="row gap-3">
         <PlateThumbnail
           fileId={plate.fileId}
           thumbnailPath={plate.thumbnailPath}
           label={`P${plate.index}`}
           style={{ width: 56, height: 50, opacity: queued ? 1 : 0.55 }}
         />
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
+        <div className="col grow min-0">
           <div style={{ fontSize: 14, fontWeight: 500, color: queued ? 'var(--text-1)' : 'var(--text-3)' }}>
             {plate.name}
           </div>

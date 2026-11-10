@@ -57,8 +57,8 @@ function FanTelem({ label, pct, maxRpm = 7000 }: { label: string; pct: number; m
   const running = pct > 0;
   const rpm = Math.round((pct / 100) * maxRpm);
   return (
-    <div className="row between" style={{ alignItems: 'center' }}>
-      <div className="row gap-2" style={{ alignItems: 'center' }}>
+    <div className="row between">
+      <div className="row gap-2">
         <FanIcon pct={pct} />
         <span className="small muted">{label}</span>
       </div>
@@ -142,13 +142,13 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
                 </svg>
               </button>
               <div className="muted small" style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{p.name}</div>
-              <span className="mono tiny muted" style={{ flexShrink: 0 }}>· {p.id}</span>
+              <span className="mono tiny muted shrink-0">· {p.id}</span>
             </div>
             <div className="tiny muted" style={{ marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {p.capabilities.join(' · ')}
             </div>
           </div>
-          <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+          <div className="row gap-2 wrap">
             {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
             <WaiverBadge printer={p} />
@@ -195,7 +195,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
         {/* Body */}
         <div className="fleet-expanded">
           {/* LEFT */}
-          <div className="col gap-4" style={{ minWidth: 0 }}>
+          <div className="col gap-4 min-0">
             <VideoTile
               live={p.status !== 'offline'}
               status={p.status}
@@ -205,7 +205,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
               noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
             />
 
-            <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+            <div className="row gap-6 wrap">
               <Kv k="Progress" v={<span className="num" style={{ fontSize: 22, fontWeight: 600 }}>{p.progress}%</span>} />
               <Kv k="Time left" v={
                 <span className="num" style={{ fontSize: 22, fontWeight: 600, color: isPrinting ? 'var(--accent-hi)' : 'var(--text-3)' }}>
@@ -246,7 +246,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
           {/* RIGHT */}
           <div className="col gap-4">
             <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
-              <div className="row between" style={{ alignItems: 'center' }}>
+              <div className="row between">
                 <span className="tag-key">Loaded filament{mats.length > 1 ? 's' : ''}</span>
                 <button className="btn ghost sm" onClick={() => setPickingFilament(v => !v)}>
                   {pickingFilament ? 'Cancel' : 'Change'}
@@ -257,7 +257,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
               ) : (
                 <div className="col gap-2" style={{ marginTop: 10 }}>
                   {mats.map((m, i) => (
-                    <div key={i} className="row gap-3" style={{ alignItems: 'center' }}>
+                    <div key={i} className="row gap-3">
                       <Swatch color={m.color} large={mats.length === 1} />
                       <div className="col" style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -265,7 +265,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
                         </div>
                         <div className="tiny muted">{m.type}</div>
                       </div>
-                      {mats.length > 1 && <span className="tiny muted mono" style={{ flexShrink: 0 }}>T{i}</span>}
+                      {mats.length > 1 && <span className="tiny muted mono shrink-0">T{i}</span>}
                     </div>
                   ))}
                 </div>
@@ -308,7 +308,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
                 <div className="tag-key" style={{ marginBottom: 10 }}>👷 Maintenance due</div>
                 <div className="col gap-2">
                   {(dueRowsByPrinter[p.id] ?? []).map(row => (
-                    <div key={row.item_id} className="row between" style={{ alignItems: 'center' }}>
+                    <div key={row.item_id} className="row between">
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item_name}</div>
                       <button
                         className="btn sm"

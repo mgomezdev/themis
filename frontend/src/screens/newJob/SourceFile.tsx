@@ -73,7 +73,7 @@ export function FileCard({ file, plateCount, selectedCount, onClear }: {
       }}>
         {file.type.toUpperCase()}
       </div>
-      <div className="col" style={{ flex: 1, minWidth: 0 }}>
+      <div className="col grow min-0">
         <div className="small" style={{
           fontWeight: 500, color: 'var(--text-1)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

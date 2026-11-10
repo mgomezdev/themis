@@ -103,7 +103,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
                               style={{ width: '100%', borderRadius: 8, background: '#000', aspectRatio: '4 / 3', objectFit: 'cover' }} />}
             {cameraError && <div role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>{cameraError}</div>}
 
-            <label className="col" style={{ gap: 4 }}>
+            <label className="col gap-1">
               <span className="label">Spool code</span>
               <input className="input" placeholder="Scan, or type the spool code" value={code}
                      onChange={e => setCode(e.target.value)} aria-label="Spool code" />
@@ -117,7 +117,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
                      style={{ padding: 10, border: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
                   <span style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                                  background: spoolColor(spool) }} />
-                  <div className="col" style={{ minWidth: 0 }}>
+                  <div className="col min-0">
                     <div style={{ fontSize: 14, fontWeight: 500 }}>#{spool.ref} {spoolDisplayName(spool)} · {spool.material?.material ?? '—'}</div>
                     <div className="small muted">
                       {spool.remaining_g != null ? `${Math.round(spool.remaining_g)}g left` : 'weight not tracked'}{spool.unsynced ? ' (not yet synced)' : ''}{spool.location?.trim() ? ` · Stored at ${spool.location.trim()}` : ''}
@@ -128,7 +128,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
 
             {spool && (
               <>
-                <label className="col" style={{ gap: 4 }}>
+                <label className="col gap-1">
                   <span className="label">Printer</span>
                   <select className="select" value={printerId} aria-label="Printer"
                           onChange={e => { setPrinterId(e.target.value); setSlot(NEW_SLOT); }}>
@@ -137,7 +137,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
                   </select>
                 </label>
                 {printer && (
-                  <label className="col" style={{ gap: 4 }}>
+                  <label className="col gap-1">
                     <span className="label">Slot</span>
                     <select className="select" value={slot} aria-label="Slot" onChange={e => setSlot(e.target.value)}>
                       {(printer.loaded_filaments ?? []).map(s => <option key={s.slot} value={String(s.slot)}>{slotLabel(s)}</option>)}

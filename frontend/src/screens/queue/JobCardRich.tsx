@@ -86,7 +86,7 @@ export function JobCardRich({
                 </div>
               )}
             </div>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div className="row gap-2">
               <SliceCacheMarkers job={job.sliceCache} />
               {(showStatus || isFailed) && <StatusPill status={job.status as StatusKey} />}
             </div>
@@ -102,7 +102,7 @@ export function JobCardRich({
             )}
             {job.eligiblePrinters.length > 0 && (
               <Kv k="Eligible" v={
-                <span className="row gap-1" style={{ flexWrap: 'wrap' }}>
+                <span className="row gap-1 wrap">
                   {job.eligiblePrinters.map(p => (
                     <span key={p.id} className="pill idle">{p.name}</span>
                   ))}
@@ -128,9 +128,9 @@ export function JobCardRich({
             {!isActive && !isFailed && (
               <Kv k="Slicing" v={
                 isBlocked && job.blockReason?.toLowerCase().includes('slice')
-                  ? <span style={{ color: 'var(--err)' }}>failed</span>
+                  ? <span className="text-err">failed</span>
                   : isBlocked
-                    ? <span style={{ color: 'var(--warn)' }}>blocked</span>
+                    ? <span className="text-warn">blocked</span>
                     : job.sliced
                       ? 'ready'
                       : <span title="Will slice when a printer claims this job">on claim</span>

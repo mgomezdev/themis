@@ -608,7 +608,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .row.between { justify-content: space-between; }
 .row.wrap { flex-wrap: wrap; }
 .col { display: flex; flex-direction: column; }
-.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
 .muted { color: var(--text-3); }
 .tiny  { font-size: 11px; }
 .small { font-size: 12px; }
@@ -831,3 +831,21 @@ input, textarea, select { font-family: inherit; color: inherit; }
   .topbar .btn, .layout-toggle button { min-height: 44px; }
   .more-sheet { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* ---------- one-property helpers ---------- */
+/* One-property helpers for what used to be repeated inline (`style={{ flex: 1 }}`, `style={{ color: 'var(--err)' }}`).
+   Compose them in className; reach for inline `style` only for a value that is computed or truly one-off.
+   Kept LAST in the file on purpose: these replace inline styles, so they must win over any single-class rule above
+   (`.muted`, `.btn`, ...) when both are on one element. */
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; }
+.min-0 { min-width: 0; }
+.shrink-0 { flex-shrink: 0; }
+.w-full { width: 100%; }
+.nowrap { white-space: nowrap; }
+.text-right { text-align: right; }
+.text-err { color: var(--err); }
+.text-warn { color: var(--warn); }
+.text-ok { color: var(--ok); }
+.fw-500 { font-weight: 500; }
+.fw-600 { font-weight: 600; }

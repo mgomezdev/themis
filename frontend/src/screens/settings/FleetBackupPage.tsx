@@ -65,7 +65,7 @@ export function FleetBackupPage() {
               {downloading ? 'Exporting…' : 'Download backup'}
             </button>
             {downloadErr && (
-              <span className="small" style={{ color: 'var(--err)' }}>{downloadErr}</span>
+              <span className="small text-err">{downloadErr}</span>
             )}
           </div>
         </FieldRow>
@@ -79,7 +79,7 @@ export function FleetBackupPage() {
           hint="Printers in the file are added to this install. Existing printers are not removed. Orca profile names are matched against the current catalog — mismatches are reported but don't block the import."
         >
           <div className="col gap-2">
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div className="row gap-2">
               <button
                 className="btn sm"
                 disabled={importing}
@@ -97,7 +97,7 @@ export function FleetBackupPage() {
               />
             </div>
             {importErr && (
-              <span className="small" style={{ color: 'var(--err)' }}>{importErr}</span>
+              <span className="small text-err">{importErr}</span>
             )}
           </div>
         </FieldRow>
@@ -112,7 +112,7 @@ export function FleetBackupPage() {
             borderRadius: 10,
           }}>
             <div className="row gap-3" style={{ marginBottom: importReport.warnings.length > 0 ? 12 : 0 }}>
-              <div style={{ flex: 1 }}>
+              <div className="grow">
                 <span className="small" style={{ fontWeight: 600, color: 'var(--text-1)' }}>
                   Import complete
                 </span>
@@ -123,7 +123,7 @@ export function FleetBackupPage() {
               </div>
             </div>
             {importReport.warnings.length > 0 && (
-              <div className="col" style={{ gap: 4 }}>
+              <div className="col gap-1">
                 <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
                   Profile warnings ({importReport.warnings.length})
                 </div>

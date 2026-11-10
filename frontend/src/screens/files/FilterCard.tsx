@@ -25,9 +25,9 @@ export function FilterCard({
         flexWrap: 'wrap',
       }}>
         <div className="row gap-3" style={{ alignItems: 'center', flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
-          <span className="tag-key" style={{ flexShrink: 0 }}>Filter by tag</span>
+          <span className="tag-key shrink-0">Filter by tag</span>
           {activeTags.length > 0 ? (
-            <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+            <div className="row gap-2 wrap">
               {activeTags.map(t => (
                 <button key={t} onClick={() => toggleTag(t)}
                         className="row gap-2"
@@ -53,7 +53,7 @@ export function FilterCard({
             !expanded && <span className="tiny muted">No filters · click to add</span>
           )}
         </div>
-        <div className="row gap-2" style={{ flexShrink: 0 }}>
+        <div className="row gap-2 shrink-0">
           {activeTags.length > 0 && (
             <button className="btn ghost sm" onClick={() => setActiveTags([])}>
               Clear {activeTags.length}
@@ -78,7 +78,7 @@ export function FilterCard({
             return (
               <div key={group.label}>
                 <div className="tag-key" style={{ marginBottom: 6 }}>{group.label}</div>
-                <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+                <div className="row gap-2 wrap">
                   {group.tags.map(t => {
                     const on = activeTags.includes(t);
                     const count = tagCounts[t] ?? 0;

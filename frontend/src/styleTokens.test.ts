@@ -53,7 +53,30 @@ const literalCount = (files: readonly (readonly [string, string])[]) =>
 // white-on-thumbnail overlays; turn those into tokens and lower this.
 const LITERAL_BUDGET = 49;
 
+// Class names: `className="row gap-1"` for a class app.css never defined renders with no styling and no error (it happened:
+// `gap-1` was used 50 times before it existed, and four tables said `table` where the class is `tbl`).
+const cssClasses = (stylesheet: string) =>
+  new Set([...stylesheet.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z_][\w-]*)/g)].map(m => m[1]));
+const usedClasses = (text: string) => [
+  ...[...text.matchAll(/className="([^"]*)"/g)].flatMap(m => m[1].split(/\s+/)),
+  // the fixed words of a template literal; `${…}` parts are computed and not checked
+  ...[...text.matchAll(/className=\{`([^`]*)`\}/g)].flatMap(m => m[1].replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)),
+].filter(Boolean);
+const undefinedClasses = (files: readonly (readonly [string, string])[], stylesheet: string) => {
+  const known = cssClasses(stylesheet);
+  return [...new Set(files.flatMap(([path, text]) => usedClasses(text).filter(c => !known.has(c)).map(c => `${path}: ${c}`)))].sort();
+};
+
 describe('style tokens', () => {
+  it('every class name used in the source is defined in app.css', () => {
+    expect(undefinedClasses(prod, css)).toEqual([]);
+  });
+
+  it('can fail: an undefined class is caught, a defined one and a computed part are not', () => {
+    const planted = [['x.tsx', '<div className="row gap-9"><span className={`pill ${tone} nope`} /></div>']] as const;
+    expect(undefinedClasses(planted, '.row { display: flex; } .pill.ok { color: green; } /* .gap-9 { } */')).toEqual(['x.tsx: gap-9', 'x.tsx: nope']);
+  });
+
   it('every var(--token) used in the source is defined in app.css (or set inline by a component)', () => {
     expect(undefinedVars(prod, css)).toEqual([]);
   });

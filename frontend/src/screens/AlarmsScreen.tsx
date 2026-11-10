@@ -37,7 +37,7 @@ export function AlarmsScreen() {
   }
 
   return (
-    <div className="page" data-testid="alarms-screen">
+    <div data-testid="alarms-screen">
       <div className="row gap-3" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         {(Object.keys(STATUS_LABEL) as AlarmStatus[]).map(s => (
           <button key={s} className={`btn sm${status === s ? ' primary' : ''}`} aria-pressed={status === s}
@@ -46,7 +46,7 @@ export function AlarmsScreen() {
         {printerId != null && (
           <button className="btn ghost sm" onClick={() => setParams({})}>Showing one printer · show all {Icons.x}</button>
         )}
-        <span style={{ flex: 1 }} />
+        <span className="grow" />
         <label className="small muted" htmlFor="alarm-min-severity">Send webhook / notifications for</label>
         <select id="alarm-min-severity" className="input" style={{ width: 'auto' }} value={minSeverity}
                 onChange={e => {
@@ -71,7 +71,7 @@ export function AlarmsScreen() {
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="tbl" style={{ width: '100%' }}>
+          <table className="tbl w-full">
             <thead><tr><th>Severity</th><th>Printer</th><th>Problem</th><th>First seen</th><th>State</th><th /></tr></thead>
             <tbody>
               {alarms.map(a => (

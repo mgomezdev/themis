@@ -11,8 +11,8 @@ export function CachedVersionPrompt({ plate, multiPlate, versions, useLatest, on
 }) {
   return (
     <section className="card col gap-2" aria-label="Cached sliced versions" style={{ padding: '12px 14px' }}>
-      <div className="row between" style={{ alignItems: 'center' }}>
-        <span style={{ fontWeight: 600 }}>Cached gcode for plate {plate}</span>
+      <div className="row between">
+        <span className="fw-600">Cached gcode for plate {plate}</span>
         <button className="btn ghost sm" onClick={onReslice}>Reslice</button>
       </div>
       <span className="tiny muted">This model was sliced before. Print a saved version instead of slicing again?</span>
@@ -39,7 +39,7 @@ export function CachedVersionPrompt({ plate, multiPlate, versions, useLatest, on
                 {` · ${new Date(v.created_at).toLocaleDateString()}`}
               </span>
               {chips.length > 0 && (
-                <span className="row gap-1" style={{ flexWrap: 'wrap' }}>
+                <span className="row gap-1 wrap">
                   {chips.map(c => <span key={c} className="pill" style={{ color: 'var(--warn)', border: '1px solid currentColor', background: 'transparent', fontSize: 10.5 }}>{c}</span>)}
                 </span>
               )}

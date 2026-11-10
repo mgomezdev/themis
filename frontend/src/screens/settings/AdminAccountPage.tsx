@@ -49,8 +49,8 @@ export function AdminAccountPage() {
             <button className="btn primary sm" type="submit" disabled={!password || tooShort || password !== confirm}>
               {acct.password_set ? 'Change password' : 'Set password'}
             </button>
-            {tooShort && <span className="small" style={{ color: 'var(--err)' }}>At least 8 characters</span>}
-            {!tooShort && mismatch && <span className="small" style={{ color: 'var(--err)' }}>Passwords don’t match</span>}
+            {tooShort && <span className="small text-err">At least 8 characters</span>}
+            {!tooShort && mismatch && <span className="small text-err">Passwords don’t match</span>}
           </form>
 
           <label className="row gap-2" style={{ alignItems: 'flex-start' }}>

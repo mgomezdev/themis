@@ -48,7 +48,7 @@ export function LinkJobsModal({ projectId, projectName, projectStage, onClose, o
            style={{ width: 'min(560px, 100%)', maxHeight: '80vh', overflowY: 'auto', padding: 0, borderColor: 'var(--border-3)' }}>
         <div className="row between" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-1)', alignItems: 'center' }}>
           <div>
-            <div style={{ fontWeight: 600 }}>Link existing jobs</div>
+            <div className="fw-600">Link existing jobs</div>
             <div className="tiny muted">Jobs without a project, to add to {projectName}</div>
           </div>
           <button className="btn ghost sm" onClick={onClose}>Close</button>
@@ -61,14 +61,14 @@ export function LinkJobsModal({ projectId, projectName, projectStage, onClose, o
           )}
           {(jobs ?? []).map(job => (
             <div key={job.id} className="row between" style={{ alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--border-1)' }}>
-              <div style={{ minWidth: 0 }}>
+              <div className="min-0">
                 <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   #{job.id} · {fileName(job.uploaded_file_id)} <span className="tiny muted">p{job.plate_number}</span>
                 </div>
                 <div className="tiny muted">
                   {job.status}
                   {projectStage !== 'queued' && (job.status === 'queued' || job.status === 'blocked') && (
-                    <span style={{ color: 'var(--warn)' }}> · will be held until {projectName} is moved to Queued</span>
+                    <span className="text-warn"> · will be held until {projectName} is moved to Queued</span>
                   )}
                 </div>
               </div>

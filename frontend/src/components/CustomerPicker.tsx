@@ -104,7 +104,7 @@ export function CustomerPicker({ value, onChange }: { value: CustomerChoice; onC
           </button>
         </div>
       )}
-      {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+      {error && <div className="small text-err">{error}</div>}
     </div>
   );
 }

@@ -101,7 +101,7 @@ function ProjectCard({
       </div>
 
       {/* Name + customer */}
-      <div style={{ flex: 1 }}>
+      <div className="grow">
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-1)' }}>{project.name}</div>
         {project.customer_id != null && project.customer_name ? (
           <div style={{ fontSize: 12, marginTop: 1 }}>

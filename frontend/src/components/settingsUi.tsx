@@ -26,7 +26,7 @@ export function FieldRow({ label, hint, children }: { label: string; hint?: stri
         <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--text-1)' }}>{label}</div>
         {hint && <div className="tiny muted" style={{ marginTop: 4, lineHeight: 1.5, maxWidth: 480 }}>{hint}</div>}
       </div>
-      <div style={{ minWidth: 0 }}>{children}</div>
+      <div className="min-0">{children}</div>
     </div>
   );
 }

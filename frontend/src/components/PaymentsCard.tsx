@@ -68,15 +68,15 @@ export function PaymentsCard({ projectId, price, onChanged }: {
       ) : (
         <div style={{ overflowX: 'auto', marginBottom: 12 }}>
           <table className="tbl">
-            <thead><tr><th>Date</th><th>Method</th><th>Note</th><th style={{ textAlign: 'right' }}>Amount</th><th /></tr></thead>
+            <thead><tr><th>Date</th><th>Method</th><th>Note</th><th className="text-right">Amount</th><th /></tr></thead>
             <tbody>
               {(payments ?? []).map(p => (
                 <tr key={p.id} data-testid={`payment-${p.id}`}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(p.received_on)}</td>
+                  <td className="nowrap">{fmtDate(p.received_on)}</td>
                   <td>{methodLabel(p.method)}</td>
                   <td className="muted">{p.note ?? ''}</td>
-                  <td style={{ textAlign: 'right' }}>{fmtMoney(p.amount)}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="text-right">{fmtMoney(p.amount)}</td>
+                  <td className="text-right">
                     <button className="btn ghost sm" aria-label={`Delete payment of ${fmtMoney(p.amount)}`}
                             onClick={() => remove(p)}>Delete</button>
                   </td>
@@ -88,17 +88,17 @@ export function PaymentsCard({ projectId, price, onChanged }: {
       )}
 
       <form onSubmit={add} className="row gap-2" style={{ flexWrap: 'wrap', alignItems: 'end' }}>
-        <label className="col" style={{ gap: 4 }}>
+        <label className="col gap-1">
           <span className="label">Amount</span>
           <input className="input" type="number" min="0" step="0.01" placeholder="0.00" style={{ width: 110 }}
                  value={amount} onChange={e => setAmount(e.target.value)} aria-label="Payment amount" />
         </label>
-        <label className="col" style={{ gap: 4 }}>
+        <label className="col gap-1">
           <span className="label">Received</span>
           <input className="input" type="date" value={receivedOn} max={todayLocal()}
                  onChange={e => setReceivedOn(e.target.value)} aria-label="Date received" />
         </label>
-        <label className="col" style={{ gap: 4 }}>
+        <label className="col gap-1">
           <span className="label">Method</span>
           <select className="select" value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} aria-label="Payment method">
             {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}

@@ -28,7 +28,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
 
       <div className="row gap-2" style={{ marginTop: 12 }}>
         <SummaryDot done={!!file} />
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
+        <div className="col grow min-0">
           <div className="tiny" style={{
             color: file ? 'var(--text-1)' : 'var(--text-3)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -40,7 +40,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
 
       <div className="row gap-2" style={{ marginTop: 10, alignItems: 'flex-start' }}>
         <SummaryDot done={selectedPlateIds.length > 0} />
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
+        <div className="col grow min-0">
           <div className="tiny" style={{ color: selectedPlateIds.length ? 'var(--text-1)' : 'var(--text-3)' }}>
             {selectedPlateIds.length === 0
               ? 'No plates picked'
@@ -57,7 +57,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
             const complete = plateIsComplete(id);
             const isActive = activePlateId === id;
             return (
-              <div key={id} className="row gap-2" style={{ alignItems: 'center' }}>
+              <div key={id} className="row gap-2">
                 <span style={{
                   width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
                   background: complete ? 'var(--ok)' : 'var(--warn)',
@@ -71,7 +71,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
                 }}>
                   P{plate?.index} · {cfg.jobName}
                 </span>
-                <span className="num tiny muted" style={{ flexShrink: 0 }}>
+                <span className="num tiny muted shrink-0">
                   {cfg.selectedPrinters.length ?? 0}p
                 </span>
               </div>

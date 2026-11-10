@@ -72,7 +72,7 @@ export function FolderTreeNode({ node, depth, openSet, toggle, current, setCurre
         <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {node.name}
         </span>
-        <span className="num tiny muted" style={{ flexShrink: 0 }}>{node.count}</span>
+        <span className="num tiny muted shrink-0">{node.count}</span>
       </button>
       {hasChildren && isOpen && (
         <div>

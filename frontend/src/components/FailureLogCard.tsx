@@ -41,9 +41,9 @@ export function FailureLogCard({ projectId, items, onChanged }: {
       {held.length > 0 && (
         <div className="col gap-2" style={{ marginBottom: 14 }}>
           {held.map(i => (
-            <div key={i.id} className="row gap-2 small" style={{ alignItems: 'center' }}>
+            <div key={i.id} className="row gap-2 small">
               <span className="pill warn">Held</span>
-              <span style={{ flex: 1 }}>{i.file_name} × {i.quantity_held}: failed on too many printers</span>
+              <span className="grow">{i.file_name} × {i.quantity_held}: failed on too many printers</span>
               <button className="btn sm" disabled={busy === i.id} onClick={() => act(i.id, 'reprint')}>Reprint</button>
               <button className="btn ghost sm" disabled={busy === i.id} onClick={() => act(i.id, 'drop')}>Drop</button>
             </div>

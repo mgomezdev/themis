@@ -131,7 +131,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
                onBlur={() => { if (name.trim() && name !== group.name) onPatch({ name: name.trim() }); }}
                style={{ maxWidth: 260, fontWeight: 600 }} />
         {group.is_default && <span className="pill idle">Default</span>}
-        <span className="tiny muted" style={{ flex: 1 }}>{scoped ? '' : `${items.length} item${items.length === 1 ? '' : 's'}`}</span>
+        <span className="tiny muted grow">{scoped ? '' : `${items.length} item${items.length === 1 ? '' : 's'}`}</span>
         {!scoped && <>
           <button className="btn ghost sm" aria-label={`Move ${group.name} up`} disabled={index === 0} onClick={() => onMove(-1)}>↑</button>
           <button className="btn ghost sm" aria-label={`Move ${group.name} down`} disabled={index === count - 1} onClick={() => onMove(1)}>↓</button>
@@ -180,7 +180,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
       {!pool && (
       <div className="row gap-2" style={{ alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
         <span className="label" style={{ margin: 0 }}>Pack for</span>
-        <label className="row gap-1 small" style={{ alignItems: 'center' }}>
+        <label className="row gap-1 small">
           <input type="checkbox" checked={auto}
                  onChange={e => onPatch(e.target.checked ? { envelope_x: null, envelope_y: null }
                                                          : { envelope_x: autoBed.x, envelope_y: autoBed.y })} />
@@ -202,8 +202,8 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
       {items.length > 0 && (
         <div className="col gap-1" style={{ marginTop: 10 }}>
           {items.map(it => (
-            <div key={it.id} className="row gap-2 small" style={{ alignItems: 'center' }}>
-              <span style={{ flex: 1 }}>{it.file_name} × {it.quantity}</span>
+            <div key={it.id} className="row gap-2 small">
+              <span className="grow">{it.file_name} × {it.quantity}</span>
               {groups.length > 1 && (
                 <select className="select" aria-label={`Group for ${it.file_name}`} value={group.id}
                         onChange={e => onMoveItem(it.id, Number(e.target.value))} style={{ maxWidth: 200 }}>
@@ -236,7 +236,7 @@ function TargetProcess({ label, value, printerIds, onChange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return (
-    <label className="row gap-2 small" style={{ alignItems: 'center' }}>
+    <label className="row gap-2 small">
       <span style={{ minWidth: 160 }}>{label}</span>
       <select className="select" aria-label={`Process profile for ${label}`} value={value} onChange={e => onChange(e.target.value)}>
         <option value="">Printer default</option>

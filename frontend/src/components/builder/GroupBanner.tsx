@@ -80,7 +80,7 @@ export function GroupBanner({ groups, counts, selected, onSelect, showAll, onDro
         <span className="label" style={{ margin: 0 }}>{onDropItems ? 'Groups · drag items onto a badge' : 'Groups'}</span>
         <span className="tiny muted">{onReorder ? 'Drag badges to set queue order' : 'Select a badge to show its items'}</span>
       </div>
-      <div className="row gap-2" style={{ flexWrap: 'wrap' }} role="tablist" aria-label="Print groups">
+      <div className="row gap-2 wrap" role="tablist" aria-label="Print groups">
         {showAll && (
           <button type="button" role="tab" aria-selected={selected === 'all'} style={badge(selected === 'all', 'var(--accent)', false)}
                   onClick={() => onSelect('all')}>

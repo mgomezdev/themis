@@ -196,7 +196,7 @@ export function ProjectDetailScreen() {
         {/* ── Header card ─────────────────────────────────────────────────── */}
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="grow min-0">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-1)' }}>
                   {project.name}
@@ -260,7 +260,7 @@ export function ProjectDetailScreen() {
                   <span>
                     Price: {fmtMoney(project.price)}
                     {project.payment_status !== 'paid' && project.price > (project.amount_paid ?? 0) && (
-                      <span style={{ color: 'var(--warn)' }}>
+                      <span className="text-warn">
                         {' '}· {fmtMoney(project.price - (project.amount_paid ?? 0))} outstanding
                       </span>
                     )}
@@ -278,7 +278,7 @@ export function ProjectDetailScreen() {
                   </label>
                 )}
                 {project.quote_accepted_at && (
-                  <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
+                  <span className="text-ok">Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
                 )}
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   Account
@@ -425,7 +425,7 @@ export function ProjectDetailScreen() {
               padding: '10px 14px', background: 'oklch(55% 0.15 142 / 0.06)',
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
-              <span style={{ color: 'var(--ok)' }}>{Icons.check}</span>
+              <span className="text-ok">{Icons.check}</span>
               <span style={{ fontSize: 13, flex: 1 }}>
                 {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
                 {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
@@ -445,7 +445,7 @@ export function ProjectDetailScreen() {
               background: 'var(--err-bg)', border: '1px solid var(--err-border)',
               borderRadius: 6, padding: '10px 14px',
             }}>
-              <span style={{ color: 'var(--err)' }}>{Icons.alert}</span>
+              <span className="text-err">{Icons.alert}</span>
               <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
             </div>
           )}

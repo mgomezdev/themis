@@ -93,7 +93,7 @@ export function FolderPicker({ count, onPick, onClose }: {
         display: 'flex', flexDirection: 'column', padding: 0,
       }}>
         <div className="row between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)' }}>
-          <div style={{ fontWeight: 600 }}>Move {count} file{count === 1 ? '' : 's'} to…</div>
+          <div className="fw-600">Move {count} file{count === 1 ? '' : 's'} to…</div>
           <button className="btn ghost icon sm" onClick={onClose}>
             <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.x}</span>
           </button>
@@ -111,7 +111,7 @@ export function FolderPicker({ count, onPick, onClose }: {
             <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.plus}</span>
             New folder
           </button>
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             <span className="tiny muted" style={{
               maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>→ {destLabel}</span>

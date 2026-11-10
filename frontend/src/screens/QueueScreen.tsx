@@ -206,7 +206,7 @@ export function QueueScreen() {
             background: 'var(--err-bg)', border: '1px solid var(--err-border)',
             color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
           }}>
-            <span style={{ flex: 1 }}>{actionError}</span>
+            <span className="grow">{actionError}</span>
             <button className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setActionError(null)}>{Icons.x}</button>
           </div>
         )}

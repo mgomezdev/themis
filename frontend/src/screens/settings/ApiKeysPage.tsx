@@ -31,7 +31,7 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
 }) {
   return (
     <tr style={{ opacity: item.enabled ? 1 : 0.55 }}>
-      <td style={{ fontWeight: 500 }}>{item.name}</td>
+      <td className="fw-500">{item.name}</td>
       <td><span className="mono small">{item.key_prefix}…</span></td>
       <td>
         <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
@@ -53,8 +53,8 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
           )}
         </div>
       </td>
-      <td className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{new Date(item.created_at).toLocaleString()}</td>
-      <td className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
+      <td className="tiny muted nowrap">{new Date(item.created_at).toLocaleString()}</td>
+      <td className="tiny muted nowrap">
         {item.last_used_at ? new Date(item.last_used_at).toLocaleString() : 'Never'}
       </td>
       <td>
@@ -62,7 +62,7 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
           ? <StatusPill status={'idle' as StatusKey} label="Active" />
           : <StatusPill status={'offline' as StatusKey} label="Revoked" />}
       </td>
-      <td style={{ textAlign: 'right' }}>
+      <td className="text-right">
         <div className="row gap-1" style={{ justifyContent: 'flex-end' }}>
           {item.enabled && (
             <button className="btn ghost sm" onClick={onRevoke}>Revoke</button>
@@ -295,7 +295,7 @@ export function ApiKeysPage() {
                   <th>Created</th>
                   <th>Last used</th>
                   <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
+                  <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>

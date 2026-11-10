@@ -20,8 +20,8 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
 }) {
   return (
     <div className="row gap-3" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-1)', alignItems: 'center' }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 500 }}>{item.name}</div>
+      <div className="grow">
+        <div className="fw-500">{item.name}</div>
         <div className="tiny muted">
           {item.scope === 'general' ? 'General' : `${item.machine_vendor} ${item.machine_model}`}
         </div>
@@ -139,7 +139,7 @@ export function MaintenancePage() {
         {templates.length > 0 && (
           <div className="col gap-2" style={{ marginBottom: 20 }}>
             <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>Suggested items</div>
-            <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+            <div className="row gap-2 wrap">
               {templates.map(t => (
                 <button key={t.name} className="btn sm" title={t.description} onClick={() => startCreate(t)}>
                   {Icons.plus} Add {t.name}

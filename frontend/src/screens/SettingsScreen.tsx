@@ -107,7 +107,7 @@ export function SettingsScreen() {
       {/* mobile tab bar */}
       <nav className="settings-tabs" style={{ gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
         {pluginPages.map(p => (
-          <button key={p.id} onClick={() => navigate(`/plugins/${p.id}`)} className="settings-tab" style={{ whiteSpace: 'nowrap' }}>
+          <button key={p.id} onClick={() => navigate(`/plugins/${p.id}`)} className="settings-tab nowrap">
             {p.ui.nav_label}
           </button>
         ))}

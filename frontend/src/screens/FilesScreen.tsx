@@ -306,7 +306,7 @@ export function FilesScreen() {
         />
 
         {/* RIGHT: header + toolbar + filters + grid */}
-        <div className="col gap-4" style={{ minWidth: 0 }}>
+        <div className="col gap-4 min-0">
           {/* Header + toolbar */}
           <div className="row between" style={{ gap: 12, flexWrap: 'wrap' }}>
             <div className="col" style={{ minWidth: 0, flex: 1 }}>
@@ -367,8 +367,8 @@ export function FilesScreen() {
               padding: '8px 12px', alignItems: 'center', gap: 12, flexWrap: 'wrap',
               borderColor: 'var(--border-3)',
             }}>
-              <span className="small" style={{ fontWeight: 600 }}>{selectedIds.size} selected</span>
-              <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+              <span className="small fw-600">{selectedIds.size} selected</span>
+              <div className="row gap-2 wrap">
                 <button className="btn ghost sm" onClick={selectAll}>Select all</button>
                 <button className="btn ghost sm" onClick={openBulkMove}>
                   <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.files}</span>
@@ -444,8 +444,8 @@ export function FilesScreen() {
                     </div>
                   )}
                   <div className="row between" style={{ marginTop: 3 }}>
-                    <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{fmtBytes(f.size_bytes)}</span>
-                    <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
+                    <span className="tiny muted nowrap">{fmtBytes(f.size_bytes)}</span>
+                    <span className="tiny muted nowrap">
                       {f.plate_count} {f.plate_count === 1 ? 'plate' : 'plates'}
                     </span>
                   </div>

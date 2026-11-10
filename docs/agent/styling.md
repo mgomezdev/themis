@@ -55,6 +55,7 @@ Reach for these before inventing classes. Composable via space-separated `classN
 | **Layout/util**: `.app`, `.main`, `.sidebar`, `.topbar`, `.content`, `.screen-grid`, `.layout-main-sidebar` | shells |
 | `.row`(+`.between`), `.col`, `.gap-2`…`.gap-6`, `.divider` | flex helpers |
 | `.muted`, `.tiny`, `.small`, `.mono`, `.num` | text helpers (`.num` = tabular mono figures) |
+| `.gap-1`…`.gap-6`, `.wrap`, `.grow`, `.min-0`, `.shrink-0`, `.w-full`, `.nowrap`, `.text-right`, `.text-err`/`.text-warn`/`.text-ok`, `.fw-500`/`.fw-600` | one-property helpers (end of `app.css`). Use these, not `style={{ flex: 1 }}` / `style={{ color: 'var(--err)' }}`. `.row` already centres its items: don't add `alignItems: 'center'` |
 
 ## Shared components (`components/ui.tsx`) — prefer these over raw markup
 
@@ -103,7 +104,8 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
 
 ## Gotchas
 
-- No framework → no utility-class autocomplete/purge; class names are the ones in `app.css`, that's it.
+- No framework → no utility-class autocomplete/purge; class names are the ones in `app.css`, that's it. `styleTokens.test.ts` fails on a
+  `className` word that `app.css` does not define.
 - One global stylesheet → class names are global; prefix domain-specific classes to avoid collisions.
 - Build/type-check is still `npm run build` (`tsc -b`); CSS isn't type-checked — a typo'd class name
-  silently no-ops (verify against `app.css`). A typo'd `var(--token)` is caught by `styleTokens.test.ts`.
+  and a typo'd `var(--token)` used to no-op silently; `styleTokens.test.ts` now catches both.

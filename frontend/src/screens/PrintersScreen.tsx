@@ -242,7 +242,7 @@ export function EditForm({
           </div>
         </div>
 
-        <label className="row gap-2" style={{ alignItems: 'center' }}>
+        <label className="row gap-2">
           <input type="checkbox" checked={singleColourOnly} onChange={e => setSingleColourOnly(e.target.checked)} />
           <span>Single colour only <span className="tiny muted">— takes any loaded colour, never multicolour jobs</span></span>
         </label>
@@ -436,7 +436,7 @@ export function PrinterAddForm({
         {/* Step indicators */}
         <div className="row gap-3" style={{ marginBottom: 24 }}>
           {steps.map(s => (
-            <div key={s.n} className="row gap-2" style={{ alignItems: 'center' }}>
+            <div key={s.n} className="row gap-2">
               <div style={{
                 width: 24, height: 24, borderRadius: 12,
                 display: 'grid', placeItems: 'center',
@@ -761,7 +761,7 @@ export function PrintersScreen() {
                 <th>Connection</th>
                 <th>Filament</th>
                 <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -770,7 +770,7 @@ export function PrintersScreen() {
                   <tr style={{ opacity: p.enabled ? 1 : 0.5 }}>
                     <td>
                       <div className="col">
-                        <div style={{ fontWeight: 500 }}>{p.name}</div>
+                        <div className="fw-500">{p.name}</div>
                         <div className="mono tiny muted">#{p.id}</div>
                       </div>
                     </td>
@@ -780,7 +780,7 @@ export function PrintersScreen() {
                       {p.loaded_filaments.length === 0 ? (
                         <span className="tiny muted">— no filament</span>
                       ) : (
-                        <div className="row gap-1" style={{ alignItems: 'center' }}>
+                        <div className="row gap-1">
                           {p.loaded_filaments.map(s => (
                             <SlotSwatch key={s.slot} color={s.color} name={s.name} type={s.type} />
                           ))}
@@ -790,7 +790,7 @@ export function PrintersScreen() {
                     <td>
                       <StatusPill status={p.connected ? 'idle' : 'offline'} />
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td className="text-right">
                       <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
                         <button
                           className="btn ghost sm"
