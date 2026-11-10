@@ -1816,15 +1816,20 @@ async def test_fire_notifications_does_not_block_on_a_slow_channel(db):
     qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
     started, may_finish = asyncio.Event(), asyncio.Event()
 
+    delivered = asyncio.Event()
+
     async def slow_notify(*args, **kwargs):
         started.set()
         await may_finish.wait()
+        delivered.set()
 
     with _channels(["notify_test"]), patch("app.services.queue_engine.notify", side_effect=slow_notify):
         await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
         await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert not delivered.is_set()                       # returned while the channel was still mid-delivery
 
-    may_finish.set()                                        # let the background task finish cleanly
+        may_finish.set()                                    # ...and the delivery then completes in the background
+        await asyncio.wait_for(delivered.wait(), timeout=1.0)
 
 
 @pytest.mark.asyncio

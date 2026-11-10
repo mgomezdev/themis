@@ -5,7 +5,6 @@ Threshold = the material's override if set, else the default; with neither, noth
 State (`inventory_config`) is namespaced by provider, so alert state survives a provider switch."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -15,6 +14,7 @@ from ...plugins.capabilities.filament_inventory import InvSpool
 from .. import webhook_service
 from ..notify import notify
 from . import config as inv_config
+from . import tasks as inventory_tasks
 
 logger = logging.getLogger("app")
 
@@ -110,4 +110,4 @@ async def _deliver(session: AsyncSession, low: LowSpool) -> None:
             # provider-namespaced refs (additive; `spool_id`/`filament_id` stay for existing consumers)
             "provider": low.provider, "spool_ref": low.spool_ref, "material_ref": low.material_ref})
     title, message = message_for(low)
-    asyncio.create_task(notify(EVENT, None, title, message))
+    inventory_tasks.spawn(notify(EVENT, None, title, message), name="low-stock-notify")

@@ -1,5 +1,6 @@
 """File browsing against virtual printers: the real Bambu (FTPS) and Snapmaker (Moonraker) client code, run over
 in-memory stand-ins for the documented protocols. Whether real firmware agrees is `backend/protocol_verification`."""
+import httpx
 import pytest
 
 from app.plugins.bambu.client import parse_unix_list_line
@@ -127,8 +128,9 @@ def test_moonraker_subdirectory_ids_are_paths_relative_to_gcodes(moon):
     client, _ = moon
     (inner,) = client.list_files("sub")
     assert (inner.id, inner.name, inner.metadata) == ("sub/inner.gcode", "inner.gcode", {"estimated_seconds": 60})
-    with pytest.raises(Exception):                                       # 404 propagates: "couldn't look" != "empty"
+    with pytest.raises(httpx.HTTPStatusError) as missing:                # 404 propagates: "couldn't look" != "empty"
         client.list_files("/nope")
+    assert missing.value.response.status_code == 404
     with pytest.raises(ValueError):
         client.list_files("sub/../..")
 
@@ -155,8 +157,9 @@ def test_moonraker_sends_the_api_key(monkeypatch):
     server = moon_fake.VirtualMoonraker({"a.gcode": {"data": b"x", "modified": 1.0}}, api_key="sekret")
     moon_fake.install(monkeypatch, server)
     assert [f.id for f in moon_fake.make_client("sekret").list_files()] == ["a.gcode"]
-    with pytest.raises(Exception):                                       # 401 → raises (a wrong key is not an empty printer)
+    with pytest.raises(httpx.HTTPStatusError) as refused:                # 401 → raises (a wrong key is not an empty printer)
         moon_fake.make_client(None).list_files()
+    assert refused.value.response.status_code == 401
 
 
 # ── capability claims ────────────────────────────────────────────────────────

@@ -245,6 +245,12 @@ def _notification_text(event: str, job_id: int, file_name: str, printer_name: st
 NO_MATCH_PREFIX = "no eligible printer"
 
 
+# _UNTRACKED_TASKS: three tasks below (slice-and-print, upload-and-print, notification delivery) are started without
+# keeping a reference, which ruff's RUF006 flags because the event loop only holds tasks weakly. They are left that way
+# on purpose for now: each is always awaiting executor work, database I/O or a timer, all of which hold the task, and
+# holding them on the engine as well changed when an abandoned task is torn down in the test suite (the engine outlives
+# a test's event loop), which broke unrelated tests. Tracking them needs a stop()/teardown that cancels and awaits them.
+
 class QueueEngine:
     def __init__(
         self,
@@ -1074,7 +1080,7 @@ class QueueEngine:
             return  # no longer claimable — bail without starting the slice/print
         await session.commit()
 
-        asyncio.create_task(
+        asyncio.create_task(  # noqa: RUF006 - see _UNTRACKED_TASKS
             self._run_slice_and_print(job_id, printer_id, plate_number, slice_only=slice_only,
                                       cache_only_version=cache_only_version, provider_id=provider_id),
             name=f"slice-{job_id}-{printer_id}",
@@ -1672,7 +1678,7 @@ class QueueEngine:
         if result.rowcount == 0:
             return False  # no longer claimable
         await session.commit()
-        asyncio.create_task(
+        asyncio.create_task(  # noqa: RUF006 - see _UNTRACKED_TASKS
             self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
             name=f"upload-{job.id}-{printer_id}",
         )
@@ -1941,7 +1947,7 @@ class QueueEngine:
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
             # which runs before new jobs are claimed each _process_queue iteration).
             # dispatch() already swallows every per-channel exception itself.
-            asyncio.create_task(notify(event, job_id, title, message, message_id=event_id))
+            asyncio.create_task(notify(event, job_id, title, message, message_id=event_id))  # noqa: RUF006 - see _UNTRACKED_TASKS
         except Exception:
             logger.exception("Failed to dispatch notifications for job %s", job_id)
 

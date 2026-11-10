@@ -90,6 +90,8 @@ async def test_delete_printer(client):
     assert response.status_code == 204
     response = await client.get(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 404
+    assert printer_id not in [p["id"] for p in (await client.get("/api/v1/printers")).json()]
+    assert printer_id not in [p["id"] for p in (await client.get("/api/v1/fleet")).json()]     # gone from the live fleet too
 
 
 async def test_delete_printer_refuses_with_active_job(client, session_factory, create_job):

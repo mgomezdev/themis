@@ -164,6 +164,9 @@ async def lifespan(app: FastAPI):
     # catalog cache in the background so the first user request is fast.
     from .services.providers.slicing import get_slicing_provider
     _slicing = get_slicing_provider()
+    # Held here for the life of the app: the event loop keeps only a weak reference to a task, so an unreferenced
+    # warm-up (it can poll for five minutes) may be garbage-collected mid-run. Cancelled on shutdown below.
+    warm_task: asyncio.Task | None = None
     if _slicing is not None:
         try:
             await asyncio.to_thread(_slicing.health)
@@ -174,9 +177,16 @@ async def lifespan(app: FastAPI):
             )
         # Kick off catalog warm-up in the background — don't block startup.
         from .services import catalog_service
-        asyncio.create_task(catalog_service.warm())
+        warm_task = asyncio.create_task(catalog_service.warm(), name="catalog-warm")
 
     yield
+
+    if warm_task is not None and not warm_task.done():
+        warm_task.cancel()
+        try:
+            await warm_task
+        except asyncio.CancelledError:
+            pass
 
     await inventory_sync_loop.stop()
     await event_hub.stop()
