@@ -41,9 +41,13 @@ jobs:
       # No services needed: backend/tests/conftest.py runs against a per-test SQLite
       # file over an ASGI transport, so there is no DB server, network or sidecar.
       # --cov enforces the `fail_under` floor in backend/pyproject.toml ([tool.coverage.report]).
+      # -n auto (pytest-xdist): one worker per core. Every test has its own database file and
+      # tmp_path, so they are independent; measured 7m05s serial -> 2m33s on 4 cores with the
+      # same 4001 passes and the same coverage. -v is off: 4000 PASSED lines bury the failure
+      # that -ra already lists in full.
       - name: Run backend tests
         working-directory: backend
-        run: pytest -v -ra --cov
+        run: pytest -ra -n auto --cov
 
   mcp-server:
     runs-on: ubuntu-latest
@@ -79,7 +83,8 @@ jobs:
 
       - run: npm ci
 
-      # Warnings (react-refresh, exhaustive-deps, `any` in app code) don't fail the job; errors do.
+      # Errors fail the job. Warnings (react-refresh, exhaustive-deps) are a ratchet: `--max-warnings` in
+      # package.json is the count on develop, so a new one fails; lower the number when you fix some.
       - name: Lint
         run: npm run lint
 
@@ -106,7 +111,22 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+
+      # The browser download is the slow half of `playwright install`; key it on the resolved
+      # Playwright version so a dependency bump refetches it. The apt packages it needs are not
+      # cacheable, so install-deps still runs on a hit.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       # Backend-free: frontend/e2e/mock-api.ts intercepts routes, and
       # playwright.config.ts starts the Vite dev server itself.

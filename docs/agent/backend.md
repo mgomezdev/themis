@@ -215,6 +215,11 @@ in the `main.py` lifespan; `configure(SessionLocal)` first):
 separate connection per session; see `session_factory`) + `get_session` override. Unit tests for services in `tests/services/`. To seed DB state inside an API
 test, reuse the override: `agen = app.dependency_overrides[get_session](); session = await agen.__anext__()`.
 
+The suite runs in parallel (`pytest -n auto`, pytest-xdist; CI does the same). That works because nothing is shared between
+tests: each has its own SQLite file and `tmp_path`. A test that binds a fixed port, writes outside `tmp_path`, or leans on
+another test's leftover module state will pass alone and fail in CI. `tests/test_tests_assert_something.py` fails on a test
+with no assertion at all.
+
 
 ### Model filament asks (BIZ-235)
 

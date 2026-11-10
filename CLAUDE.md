@@ -42,8 +42,8 @@ pip install -e ".[dev]"
 # Run dev server (auto-reload)
 uvicorn app.main:app --reload --port 8001
 
-# Run all tests (CI runs `pytest -v -ra --cov`, which enforces the coverage floor)
-pytest -v
+# Run all tests (CI runs `pytest -ra -n auto --cov`: parallel, and enforces the coverage floor)
+pytest -n auto
 
 # Lint (CI runs it; rules in pyproject.toml [tool.ruff])
 ruff check .
@@ -60,7 +60,7 @@ cd frontend
 npm install          # first time
 npm run dev          # dev server on :5173, proxies /api to :8001
 npm run build        # production build → frontend/dist/ (`tsc -b` is the real type-check)
-npm run lint         # ESLint (eslint.config.js); errors fail CI, warnings don't
+npm run lint         # ESLint (eslint.config.js); errors fail CI, and so does a warning beyond `--max-warnings` (a ratchet)
 npx vitest run       # unit tests (CI: `npm run test:cov`, enforces the coverage floor)
 npm run test:e2e     # Playwright specs against a mocked API
 ```

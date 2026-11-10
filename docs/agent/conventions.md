@@ -119,7 +119,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 ```
 # Backend (from backend/, python.org venv active)
 uvicorn app.main:app --reload --port 8001
-pytest -v                       # all (CI: `pytest -v -ra --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
+pytest -n auto                  # all, one worker per core (CI: `pytest -ra -n auto --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
 pytest tests/services/test_bambu_mqtt.py -v   # the Bambu client now lives in app/plugins/bambu/client.py
 
 # Frontend (from frontend/)

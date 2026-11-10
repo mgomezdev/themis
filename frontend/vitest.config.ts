@@ -14,15 +14,16 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
     exclude: ['e2e/**', 'node_modules/**'],
+    // Vitest blanks CSS imports by default; src/styleTokens.test.ts reads the stylesheet's text to check the tokens.
+    css: { include: [/styles\/app\.css/] },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/**/*.d.ts'],
       reporter: ['text-summary', 'json-summary'],
-      // Floors sit ~1-2 points under the measured coverage (2026-10-15, after model slicer profiles / BIZ-294:
-      // statements 81.2, branches 74.2, functions 78.9, lines 83.9) so a regression fails CI;
-      // raise them as coverage improves.
-      thresholds: { statements: 80, branches: 73, functions: 77, lines: 82 },
+      // Floors sit ~1-2 points under the measured coverage (2026-11-10: statements 83.7, branches 76.8,
+      // functions 81.4, lines 86.2) so a regression fails CI; raise them as coverage improves.
+      thresholds: { statements: 82, branches: 75, functions: 80, lines: 85 },
     },
   },
 });
