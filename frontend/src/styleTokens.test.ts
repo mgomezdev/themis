@@ -38,7 +38,7 @@ const PALETTE_FILES: Record<string, string> = {
   'api/fleet.ts': 'per-printer-type accent',
   'components/builder/GroupBanner.tsx': 'the colours a print group can be given',
   'components/StlPreview.tsx': 'canvas renderer: shades each triangle from its normal',
-  'screens/SettingsScreen.tsx': 'the swatch picker offered for a material type',
+  'screens/settings/TagsPage.tsx': 'the swatch picker offered for a material tag',
   'screens/FilesScreen.tsx': 'per-plate fallback colours for a file with no filament data',
 };
 // A hex colour anywhere inside a quoted string (`'#fff'`, `'1px solid #333'`, a gradient) or `rgba(…)` / `hsl(…)` / `oklch(…)`.
