@@ -1,24 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentAskEditor } from '../components/FilamentAskEditor';
-import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { buildStlTree, isPickableStl, stlFilesInView } from '../lib/stlTree';
-import {
-  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft,
-  type LocalItem, type LocalLink, type LocalPart, type OrderType, type ProjectDraft, type RemovedSnapshot,
-} from '../lib/projectDraft';
+import { askOf, parseGenerateError } from '../lib/projectDraft';
+import type { HeaderFields } from '../lib/projectBuilderState';
 import { StlFolderTree } from '../components/StlFolderTree';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { CustomerPicker } from '../components/CustomerPicker';
+import { useAutoDismiss } from '../components/useAutoDismiss';
+import { useProjectDraft } from '../components/projectBuilder/useProjectDraft';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
-import type { LibraryFile } from '../data/types';
-import { getProject, generateProject, type ProjectItem } from '../api/projects';
-import { syncProject } from '../api/projectSync';
-
-const UNDO_TIMEOUT_MS = 6000;
+import { generateProject } from '../api/projects';
 
 // ---------------------------------------------------------------------------
 // ProjectBuilderScreen
@@ -37,28 +32,11 @@ export function ProjectBuilderScreen() {
   const catalogEnabled = !!inventory.plugin;
   const materials = useMaterials(catalogEnabled);
 
-  // Project header fields
-  const [name, setName] = useState('');
-  const [customer, setCustomer] = useState('');
-  const [customerId, setCustomerId] = useState<number | null>(newForCustomerId);
-  const [orderType, setOrderType] = useState<OrderType>(newForCustomerId ? 'customer' : 'internal');
-  const [onHold, setOnHold] = useState(false);
-  const [dueDate, setDueDate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [price, setPrice] = useState('');
-  // Loaded, not edited here: a draft (customer request) can't generate jobs until promoted.
-  const [isDraft, setIsDraft] = useState(false);
+  const { state, dispatch, isDirty, save } = useProjectDraft(projectId, newForCustomerId);
+  const { draft, lastRemoved, serverItems, isDraftStage: isDraft } = state;
+  const { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts } = draft;
+  const setFields = (fields: Partial<HeaderFields>) => dispatch({ type: 'setFields', fields });
 
-  // Part items
-  const [items, setItems] = useState<LocalItem[]>([]);
-  const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
-  const [deletedItemIds, setDeletedItemIds] = useState<number[]>([]);
-  // Links
-  const [links, setLinks] = useState<LocalLink[]>([]);
-  const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
-  // Non-printed parts (hardware, e.g. magnets/screws)
-  const [parts, setParts] = useState<LocalPart[]>([]);
-  const [deletedPartIds, setDeletedPartIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
@@ -66,51 +44,8 @@ export function ProjectBuilderScreen() {
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
   const [processPreset, setProcessPreset] = useState<string | null>(null);
-
-  // Undo toast for accidental removals (items, links, non-printed parts)
-  const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
-  const undoTimerRef = useRef<number | null>(null);
-  function scheduleUndoClear() {
-    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = window.setTimeout(() => setLastRemoved(null), UNDO_TIMEOUT_MS);
-  }
-  function undoRemove() {
-    if (!lastRemoved) return;
-    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    if (lastRemoved.kind === 'item') {
-      setItems(prev => {
-        const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.item);
-        return next;
-      });
-      if (lastRemoved.item.serverId) {
-        setDeletedItemIds(prev => prev.filter(id => id !== lastRemoved.item.serverId));
-      }
-    } else if (lastRemoved.kind === 'link') {
-      setLinks(prev => {
-        const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.link);
-        return next;
-      });
-      if (lastRemoved.link.serverId) {
-        setDeletedLinkIds(prev => prev.filter(id => id !== lastRemoved.link.serverId));
-      }
-    } else {
-      setParts(prev => {
-        const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.part);
-        return next;
-      });
-      if (lastRemoved.part.serverId) {
-        setDeletedPartIds(prev => prev.filter(id => id !== lastRemoved.part.serverId));
-      }
-    }
-    setLastRemoved(null);
-  }
-
-  // Dirty tracking
-  const [cleanSnap, setCleanSnap] = useState('');
   const [saveOk, setSaveOk] = useState(false);
+  useAutoDismiss(saveOk, () => setSaveOk(false), 2000);
 
   // File tree state
   const { files: allFiles } = useFiles({});
@@ -121,123 +56,12 @@ export function ProjectBuilderScreen() {
   const folderTree = buildStlTree(stlFiles);
   const folderFiles = stlFilesInView(stlFiles, selectedFolder, search);
 
-  // Load existing project
-  useEffect(() => {
-    if (!projectId) return;
-    getProject(projectId).then(p => {
-      const d = projectToDraft(p);
-      setName(d.name); setCustomer(d.customer); setCustomerId(d.customerId); setOrderType(d.orderType); setOnHold(d.onHold);
-      setDueDate(d.dueDate); setNotes(d.notes); setPrice(d.price); setIsDraft(p.stage === 'draft');
-      setItems(d.items); setLinks(d.links); setParts(d.parts);
-      setDeletedItemIds([]);
-      setDeletedLinkIds([]);
-      setDeletedPartIds([]);
-      setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(draftSnapshot(d));
-    }).catch(console.error);
-  }, [projectId]);
-
-  function addFile(f: LibraryFile) {
-    setItems(prev => {
-      const existing = prev.find(it => it.file_id === f.id);
-      if (existing) {
-        return prev.map(it =>
-          it.localId === existing.localId ? { ...it, quantity: it.quantity + 1 } : it,
-        );
-      }
-      return [
-        ...prev,
-        {
-          localId: newLocalId(),
-          file_id: f.id,
-          file_name: f.original_filename,
-          quantity: 1,
-          ...NO_ASK,
-          sort_order: prev.length,
-        },
-      ];
-    });
-  }
-
-  function updateItem(localId: string, patch: Partial<LocalItem>) {
-    setItems(prev => prev.map(it => it.localId === localId ? { ...it, ...patch } : it));
-  }
-
-  function removeItem(localId: string) {
-    const index = items.findIndex(it => it.localId === localId);
-    if (index === -1) return;
-    const item = items[index];
-    if (item.serverId) setDeletedItemIds(prev => [...prev, item.serverId!]);
-    setLastRemoved({ kind: 'item', label: item.file_name, index, item });
-    setItems(prev => prev.filter(it => it.localId !== localId));
-    scheduleUndoClear();
-  }
-
-  function removeLink(localId: string) {
-    const index = links.findIndex(l => l.localId === localId);
-    if (index === -1) return;
-    const link = links[index];
-    if (link.serverId) setDeletedLinkIds(prev => [...prev, link.serverId!]);
-    setLastRemoved({ kind: 'link', label: link.label || link.url || 'link', index, link });
-    setLinks(prev => prev.filter(l => l.localId !== localId));
-    scheduleUndoClear();
-  }
-
-  function removePart(localId: string) {
-    const index = parts.findIndex(p => p.localId === localId);
-    if (index === -1) return;
-    const part = parts[index];
-    if (part.serverId) setDeletedPartIds(prev => [...prev, part.serverId!]);
-    setLastRemoved({ kind: 'part', label: part.name || 'part', index, part });
-    setParts(prev => prev.filter(p => p.localId !== localId));
-    scheduleUndoClear();
-  }
-
-  function setItemFilament(localId: string, req: FilamentAsk) {
-    updateItem(localId, askOf(req));
-  }
-
-  function applyFilamentToAll(req: FilamentAsk) {
-    setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
-  }
-
-  const draft: ProjectDraft = { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts };
-  const currentSnap = draftSnapshot(draft);
-
-  /**
-   * Save the draft; returns the project id and the snapshot of what was saved (the new clean state). Rows are
-   * stamped with their server ids, and dropped from the pending deletes, as each request succeeds — so a retry
-   * after a partial failure picks up where it stopped.
-   */
-  async function saveProject(): Promise<{ pid: number; savedSnap: string }> {
-    const ids = new Map<string, number>();
-    const stamp = <R extends { localId: string; serverId?: number }>(rows: R[]) =>
-      rows.map(r => (ids.has(r.localId) ? { ...r, serverId: ids.get(r.localId) } : r));
-    const pid = await syncProject(projectId, draft, { itemIds: deletedItemIds, linkIds: deletedLinkIds, partIds: deletedPartIds }, e => {
-      if (e.type === 'created') {
-        ids.set(e.localId, e.id);
-        const set = (r: { localId: string }) => r.localId === e.localId;
-        if (e.kind === 'item') setItems(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
-        else if (e.kind === 'link') setLinks(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
-        else setParts(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
-      } else {
-        const drop = (prev: number[]) => prev.filter(id => id !== e.id);
-        if (e.kind === 'item') setDeletedItemIds(drop);
-        else if (e.kind === 'link') setDeletedLinkIds(drop);
-        else setDeletedPartIds(drop);
-      }
-    });
-    return { pid, savedSnap: draftSnapshot({ ...draft, items: stamp(items), links: stamp(links), parts: stamp(parts) }) };
-  }
-
   async function handleSave() {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      const { pid, savedSnap } = await saveProject();
-      setCleanSnap(savedSnap);
+      const pid = await save();
       setSaveOk(true);
-      setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
     } catch (e) {
       console.error(e);
@@ -253,7 +77,7 @@ export function ProjectBuilderScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const { pid } = await saveProject();
+      const pid = await save();
       // Stay in the builder (its /edit route keeps this component mounted) so the generate result or
       // error is shown here and a retry reuses the saved project instead of creating a second one.
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
@@ -268,7 +92,6 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
   const canSave = name.trim().length > 0 && !saving && !generating;
   const showSave = isDirty && canSave;
 
@@ -299,7 +122,7 @@ export function ProjectBuilderScreen() {
           {folderFiles.map(f => (
             <button
               key={f.id}
-              onClick={() => addFile(f)}
+              onClick={() => dispatch({ type: 'addFile', file: f })}
               title={`Add ${f.original_filename}`}
               style={{
                 width: '100%', padding: '5px 10px',
@@ -337,7 +160,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="e.g. Gridfinity Tray Set"
               value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={e => setFields({ name: e.target.value })}
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -345,7 +168,7 @@ export function ProjectBuilderScreen() {
             <select
               className="select"
               value={orderType}
-              onChange={e => setOrderType(e.target.value as 'internal' | 'customer')}
+              onChange={e => setFields({ orderType: e.target.value as HeaderFields['orderType'] })}
             >
               <option value="internal">Internal</option>
               <option value="customer">Customer</option>
@@ -358,13 +181,13 @@ export function ProjectBuilderScreen() {
                 type="date"
                 className="input"
                 value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
+                onChange={e => setFields({ dueDate: e.target.value })}
                 style={{ flex: 1 }}
               />
               {dueDate && (
                 <button
                   className="btn ghost icon sm"
-                  onClick={() => setDueDate('')}
+                  onClick={() => setFields({ dueDate: '' })}
                   title="Clear due date"
                   style={{ flexShrink: 0 }}
                 >
@@ -382,7 +205,7 @@ export function ProjectBuilderScreen() {
               <label className="label">Customer</label>
               <CustomerPicker
                 value={{ customerId, customerText: customer }}
-                onChange={v => { setCustomerId(v.customerId); setCustomer(v.customerText); }}
+                onChange={v => setFields({ customerId: v.customerId, customer: v.customerText })}
               />
             </div>
           )}
@@ -392,7 +215,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="Optional notes"
               value={notes}
-              onChange={e => setNotes(e.target.value)}
+              onChange={e => setFields({ notes: e.target.value })}
             />
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
@@ -401,7 +224,7 @@ export function ProjectBuilderScreen() {
             <input
               type="checkbox"
               checked={onHold}
-              onChange={e => setOnHold(e.target.checked)}
+              onChange={e => setFields({ onHold: e.target.checked })}
             />
             On hold
           </label>
@@ -417,7 +240,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="Quoted total"
               value={price}
-              onChange={e => setPrice(e.target.value)}
+              onChange={e => setFields({ price: e.target.value })}
             />
           </div>
           <div className="small muted" style={{ flex: 2, paddingBottom: 6 }}>
@@ -435,7 +258,7 @@ export function ProjectBuilderScreen() {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setLinks(prev => [...prev, { localId: newLocalId(), url: '', label: '' }])}
+              onClick={() => dispatch({ type: 'addLink' })}
             >
               + Add link
             </button>
@@ -446,19 +269,19 @@ export function ProjectBuilderScreen() {
                 className="input"
                 placeholder="https://..."
                 value={lk.url}
-                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, url: e.target.value } : l))}
+                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { url: e.target.value } })}
                 style={{ flex: 2 }}
               />
               <input
                 className="input"
                 placeholder="Label (optional)"
                 value={lk.label}
-                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, label: e.target.value } : l))}
+                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { label: e.target.value } })}
                 style={{ flex: 1 }}
               />
               <button
                 className="btn ghost icon sm"
-                onClick={() => removeLink(lk.localId)}
+                onClick={() => dispatch({ type: 'remove', kind: 'link', localId: lk.localId })}
                 title="Remove link"
               >
                 {Icons.x}
@@ -475,9 +298,7 @@ export function ProjectBuilderScreen() {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setParts(prev => [
-                ...prev, { localId: newLocalId(), name: '', quantity: 1, allocated: false, unitCost: '' },
-              ])}
+              onClick={() => dispatch({ type: 'addPart' })}
             >
               + Add part
             </button>
@@ -488,7 +309,7 @@ export function ProjectBuilderScreen() {
                 className="input"
                 placeholder="e.g. 3mm magnet"
                 value={pt.name}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, name: e.target.value } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { name: e.target.value } })}
                 style={{ flex: 2 }}
               />
               <input
@@ -496,7 +317,7 @@ export function ProjectBuilderScreen() {
                 className="input"
                 min={1}
                 value={pt.quantity}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
                 style={{ width: 64, textAlign: 'center' }}
               />
               <input
@@ -507,7 +328,7 @@ export function ProjectBuilderScreen() {
                 placeholder="$ each"
                 aria-label="Unit cost"
                 value={pt.unitCost}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, unitCost: e.target.value } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { unitCost: e.target.value } })}
                 style={{ width: 84 }}
               />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
@@ -515,13 +336,13 @@ export function ProjectBuilderScreen() {
                 <input
                   type="checkbox"
                   checked={pt.allocated}
-                  onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, allocated: e.target.checked } : p))}
+                  onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { allocated: e.target.checked } })}
                 />
                 Allocated
               </label>
               <button
                 className="btn ghost icon sm"
-                onClick={() => removePart(pt.localId)}
+                onClick={() => dispatch({ type: 'remove', kind: 'part', localId: pt.localId })}
                 title="Remove part"
               >
                 {Icons.x}
@@ -592,7 +413,7 @@ export function ProjectBuilderScreen() {
                     className="input"
                     min={1} max={99}
                     value={it.quantity}
-                    onChange={e => updateItem(it.localId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                    onChange={e => dispatch({ type: 'updateItem', localId: it.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
                     style={{ textAlign: 'center' }}
                   />
 
@@ -600,7 +421,7 @@ export function ProjectBuilderScreen() {
                   <FilamentAskEditor
                     id={`item-ask-${it.localId}`}
                     value={askOf(it)}
-                    onChange={req => setItemFilament(it.localId, req)}
+                    onChange={req => dispatch({ type: 'updateItem', localId: it.localId, patch: askOf(req) })}
                     materials={materials}
                     catalogEnabled={catalogEnabled}
                   />
@@ -610,7 +431,7 @@ export function ProjectBuilderScreen() {
                     {items.length > 1 && (
                       <button
                         className="btn ghost icon sm"
-                        onClick={() => applyFilamentToAll(askOf(it))}
+                        onClick={() => dispatch({ type: 'applyFilamentToAll', ask: askOf(it) })}
                         title="Apply this filament to every part"
                       >
                         {Icons.copy}
@@ -618,7 +439,7 @@ export function ProjectBuilderScreen() {
                     )}
                     <button
                       className="btn ghost icon sm"
-                      onClick={() => removeItem(it.localId)}
+                      onClick={() => dispatch({ type: 'remove', kind: 'item', localId: it.localId })}
                       title="Remove"
                     >
                       {Icons.x}
@@ -739,7 +560,7 @@ export function ProjectBuilderScreen() {
           fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
         }}>
           <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
-          <button className="btn sm" onClick={undoRemove}>Undo</button>
+          <button className="btn sm" onClick={() => dispatch({ type: 'undo' })}>Undo</button>
         </div>
       )}
     </div>

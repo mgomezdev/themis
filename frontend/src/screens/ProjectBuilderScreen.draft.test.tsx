@@ -1,7 +1,7 @@
 // Characterization tests for the builder's local draft state: dirty tracking, undo of removals, and the
 // STL folder tree. Written before the ProjectBuilderScreen refactor (docs/superpowers/plans/
 // 2026-11-11-project-builder-refactor.md) so every step of it is held to the same screen behavior.
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -90,6 +90,19 @@ describe('ProjectBuilderScreen - dirty tracking (edit mode)', () => {
     expect(api.to('PATCH', '/api/v1/projects/7')[0].body).toMatchObject({ notes: 'rush' });
   });
 
+  it('hides the Saved toast after 2 seconds', async () => {
+    open('/projects/7/edit');
+    await loaded();
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
+    const timeouts = vi.spyOn(window, 'setTimeout');
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    const call = timeouts.mock.calls.find(c => c[1] === 2000)!;
+    timeouts.mockRestore();
+    act(() => (call[0] as () => void)());
+    expect(screen.queryByText('Saved')).toBeNull();
+  });
+
   it.each([
     ['price', () => userEvent.type(screen.getByLabelText('Price'), '12')],
     ['a link label', () => userEvent.type(screen.getByDisplayValue('Spec'), '!')],
@@ -163,6 +176,34 @@ describe('ProjectBuilderScreen - saving twice (edit mode)', () => {
     expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
     expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1);
     expect(api.to('PUT', '/api/v1/projects/7/items/60')).toHaveLength(1);
+  });
+});
+
+describe('ProjectBuilderScreen - after a save', () => {
+  it('re-creates (not updates) a saved link whose removal was saved and then undone', async () => {
+    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/links': { id: 72 } });
+    await loaded();
+    await userEvent.click(screen.getByTitle('Remove link'));
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    expect(api.to('DELETE', '/api/v1/projects/7/links/70')).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await userEvent.click(saveChanges()!);
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/7/links')).toHaveLength(1));
+    expect(api.to('POST', '/api/v1/projects/7/links')[0].body).toEqual({ url: 'https://example.test/spec', label: 'Spec' });
+    expect(api.to('PUT', '/api/v1/projects/7/links/70')).toEqual([]);
+  });
+
+  it('counts the save before a generate: nothing is left to save afterwards', async () => {
+    open('/projects/7/edit', { 'POST /api/v1/projects/7/generate': { project_id: 7, jobs: [{ id: 1 }], files: [] } });
+    await loaded();
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
+    expect(saveChanges()).not.toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
+    await screen.findByText('1 job added to queue');
+    expect(saveChanges()).toBeNull();
   });
 });
 
