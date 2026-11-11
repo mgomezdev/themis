@@ -1,20 +1,25 @@
-import { ItemSourcePicker } from '../components/ItemSourcePicker';
+// Create or edit a project (`/projects/new`, `/projects/:id/edit`) in four tabs: Details, Items, Groups, Review.
+// Draft state is useProjectDraft (lib/projectBuilderState); saving is api/projectSync; the sections are
+// components/builder/*. This screen wires them to print groups, the Review checks and Queue project.
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Icons } from '../components/icons';
-import { FilamentAskEditor } from '../components/FilamentAskEditor';
-import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
-import { buildStlTree, filesInView, isPickableModel } from '../lib/stlTree';
-import { askOf, parseGenerateError, type OrderType } from '../lib/projectDraft';
+import { NO_ASK } from '../lib/filamentAsk';
+import { askOf, parseGenerateError } from '../lib/projectDraft';
 import { currentSnapshot, type HeaderFields } from '../lib/projectBuilderState';
 import { useAutoDismiss } from '../components/useAutoDismiss';
 import { useProjectDraft } from '../components/builder/useProjectDraft';
-import { StlFolderTree } from '../components/StlFolderTree';
 import { PrintGroupsCard } from '../components/PrintGroupsCard';
 import { GroupBanner, type BannerSelection } from '../components/builder/GroupBanner';
 import { ItemSections, type BulkAction } from '../components/builder/ItemSections';
 import { BuilderTabs, ReviewPanel, type BuilderTab } from '../components/builder/ReviewPanel';
-import { CustomerPicker } from '../components/CustomerPicker';
+import { ProjectMetaFields } from '../components/builder/ProjectMetaFields';
+import { ProjectLinksEditor } from '../components/builder/ProjectLinksEditor';
+import { ProjectPartsEditor } from '../components/builder/ProjectPartsEditor';
+import { ModelPicker } from '../components/builder/ModelPicker';
+import { ItemRow } from '../components/builder/ItemRow';
+import { BulkFilamentCard, type BulkAsk } from '../components/builder/BulkFilamentCard';
+import { QueueError, QueueSuccess } from '../components/builder/QueueResult';
+import { SavedToast, UndoToast } from '../components/builder/Toasts';
 import { FileDropZone } from '../components/FileDropZone';
 import { promoteProject } from '../api/customers';
 import { useFiles } from '../api/files';
@@ -47,14 +52,14 @@ export function ProjectBuilderScreen() {
 
   const { state, dispatch, isDirty, save } = useProjectDraft(projectId, newForCustomerId);
   const { draft, lastRemoved, serverItems, isDraftStage: isDraft } = state;
-  const { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts } = draft;
+  const { name, items, links, parts } = draft;
   const setFields = (fields: Partial<HeaderFields>) => dispatch({ type: 'setFields', fields });
 
   // Print groups (BIZ-360) and the banner selection
   const [groups, setGroups] = useState<ProjectGroup[]>([]);
   const [bannerSel, setBannerSel] = useState<BannerSelection>('all');
   const [groupsTick, setGroupsTick] = useState(0);
-  const [bulkAsk, setBulkAsk] = useState<{ ids: string[]; value: FilamentAsk } | null>(null);
+  const [bulkAsk, setBulkAsk] = useState<BulkAsk | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -68,16 +73,8 @@ export function ProjectBuilderScreen() {
   const [saveOk, setSaveOk] = useState(false);
   useAutoDismiss(saveOk, () => setSaveOk(false), 2000);
 
-  // File tree state
   const { files: allFiles } = useFiles({});
-  // Every model and pre-sliced file can be an item (BIZ-356): STLs, 3MF plates/objects, gcode plates.
-  const stlFiles = allFiles.filter(isPickableModel);
   const fileById = new Map(allFiles.map(f => [f.id, f]));
-  const [selectedFolder, setSelectedFolder] = useState('');
-  const [search, setSearch] = useState('');
-  const searchLower = search.trim().toLowerCase();
-  const folderTree = buildStlTree(stlFiles);
-  const folderFiles = filesInView(stlFiles, selectedFolder, search);
 
   // Print groups of a saved project, in queue order (the Default Group is created lazily by the list).
   useEffect(() => {
@@ -252,277 +249,24 @@ export function ProjectBuilderScreen() {
             <button className="btn sm" onClick={promote}>Promote to planning</button>
           </div>
         )}
-        {/* Project metadata fields */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label" htmlFor="proj-name">
-            Project name *
-            {projectId && (
-              <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-4)', marginLeft: 6 }}>
-                #{projectId}
-              </span>
-            )}
-          </label>
-            <input
-              id="proj-name"
-              className="input"
-              placeholder="e.g. Gridfinity Tray Set"
-              value={name}
-              onChange={e => setFields({ name: e.target.value })}
-            />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label">Type</label>
-            <select
-              className="select"
-              value={orderType}
-              onChange={e => setFields({ orderType: e.target.value as OrderType })}
-            >
-              <option value="internal">Internal</option>
-              <option value="customer">Customer</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label">Due date</label>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <input
-                type="date"
-                className="input"
-                value={dueDate}
-                onChange={e => setFields({ dueDate: e.target.value })}
-                style={{ flex: 1 }}
-              />
-              {dueDate && (
-                <button
-                  className="btn ghost icon sm"
-                  onClick={() => setFields({ dueDate: '' })}
-                  title="Clear due date"
-                  style={{ flexShrink: 0 }}
-                >
-                  {Icons.x}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Customer + notes row */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
-          {orderType === 'customer' && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label className="label">Customer</label>
-              <CustomerPicker
-                value={{ customerId, customerText: customer }}
-                onChange={v => setFields({ customerId: v.customerId, customer: v.customerText })}
-              />
-            </div>
-          )}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label">Notes</label>
-            <input
-              className="input"
-              placeholder="Optional notes"
-              value={notes}
-              onChange={e => setFields({ notes: e.target.value })}
-            />
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                          fontSize: 13, color: onHold ? 'var(--warn)' : 'var(--text-1)',
-                          paddingBottom: 4, whiteSpace: 'nowrap' }}>
-            <input
-              type="checkbox"
-              checked={onHold}
-              onChange={e => setFields({ onHold: e.target.checked })}
-            />
-            On hold
-          </label>
-        </div>
-
-        {/* Payment row */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label" htmlFor="proj-price">Price</label>
-            <input
-              id="proj-price"
-              type="number" min="0" step="0.01"
-              className="input"
-              placeholder="Quoted total"
-              value={price}
-              onChange={e => setFields({ price: e.target.value })}
-            />
-          </div>
-          <div className="small muted" style={{ flex: 2, paddingBottom: 6 }}>
-            {projectId
-              ? 'Payments received are recorded on the project page — amount paid and payment status follow from them.'
-              : 'Record payments on the project page once it is saved.'}
-          </div>
-        </div>
-
-        {/* Links editor */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
-              Links ({links.length})
-            </span>
-            <button
-              className="btn ghost sm"
-              onClick={() => dispatch({ type: 'addLink' })}
-            >
-              + Add link
-            </button>
-          </div>
-          {links.map(lk => (
-            <div key={lk.localId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                className="input"
-                placeholder="https://..."
-                value={lk.url}
-                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { url: e.target.value } })}
-                style={{ flex: 2 }}
-              />
-              <input
-                className="input"
-                placeholder="Label (optional)"
-                value={lk.label}
-                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { label: e.target.value } })}
-                style={{ flex: 1 }}
-              />
-              <button
-                className="btn ghost icon sm"
-                onClick={() => dispatch({ type: 'remove', kind: 'link', localId: lk.localId })}
-                title="Remove link"
-              >
-                {Icons.x}
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Non-printed parts editor (hardware, e.g. magnets/screws) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
-              Non-printed parts ({parts.length})
-            </span>
-            <button
-              className="btn ghost sm"
-              onClick={() => dispatch({ type: 'addPart' })}
-            >
-              + Add part
-            </button>
-          </div>
-          {parts.map(pt => (
-            <div key={pt.localId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                className="input"
-                placeholder="e.g. 3mm magnet"
-                value={pt.name}
-                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { name: e.target.value } })}
-                style={{ flex: 2 }}
-              />
-              <input
-                type="number"
-                className="input"
-                min={1}
-                value={pt.quantity}
-                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
-                style={{ width: 64, textAlign: 'center' }}
-              />
-              <input
-                type="number"
-                className="input"
-                min={0}
-                step="0.01"
-                placeholder="$ each"
-                aria-label="Unit cost"
-                value={pt.unitCost}
-                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { unitCost: e.target.value } })}
-                style={{ width: 84 }}
-              />
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                              fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                <input
-                  type="checkbox"
-                  checked={pt.allocated}
-                  onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { allocated: e.target.checked } })}
-                />
-                Allocated
-              </label>
-              <button
-                className="btn ghost icon sm"
-                onClick={() => dispatch({ type: 'remove', kind: 'part', localId: pt.localId })}
-                title="Remove part"
-              >
-                {Icons.x}
-              </button>
-            </div>
-          ))}
-        </div>
+        <ProjectMetaFields fields={draft} projectId={projectId} onChange={setFields} />
+        <ProjectLinksEditor links={links} dispatch={dispatch} />
+        <ProjectPartsEditor parts={parts} dispatch={dispatch} />
     </div>
   );
 
   const itemsTab = (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16, alignItems: 'start' }}>
       {/* Left: model file tree */}
-      <div className="card" style={{ padding: 10, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 0, maxHeight: '70vh' }}>
-        <div style={{ padding: '4px 6px 8px', fontSize: 11, fontWeight: 600,
-                      color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          STL Files
-        </div>
-        <input
-          className="input"
-          placeholder="Search files…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ marginBottom: 6, fontSize: 12 }}
-        />
-        {!searchLower && (
-          <StlFolderTree node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
-        )}
-        <div style={{ borderTop: '1px solid var(--border-1)', marginTop: 4, paddingTop: 6 }}>
-          {folderFiles.length === 0 && (
-            <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
-              {searchLower ? 'No matching STL files' : 'No STL files here'}
-            </div>
-          )}
-          {folderFiles.map(f => (
-            <button
-              key={f.id}
-              onClick={() => addFile(f)}
-              title={`Add ${f.original_filename}`}
-              style={{
-                width: '100%', padding: '5px 10px',
-                background: 'transparent', border: 'none',
-                color: 'var(--text-1)', cursor: 'pointer',
-                textAlign: 'left', fontSize: 12,
-                display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4,
-              }}
-            >
-              <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{Icons.files}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {f.original_filename}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <ModelPicker files={allFiles} onAdd={addFile} />
 
       <div className="col gap-3" style={{ minWidth: 0 }}>
         {banner(true, false)}
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Parts ({items.length})</span>
         {bulkAsk && (
-          <div className="card" style={{ padding: 12 }} data-testid="bulk-filament">
-            <div className="label">Filament for {bulkAsk.ids.length} selected</div>
-            <FilamentAskEditor id="bulk-ask" value={bulkAsk.value} onChange={v => setBulkAsk({ ...bulkAsk, value: v })}
-                               materials={materials} catalogEnabled={catalogEnabled} />
-            <div className="row gap-2" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
-              <button className="btn sm" onClick={() => setBulkAsk(null)}>Cancel</button>
-              <button className="btn primary sm" onClick={() => {
-                dispatch({ type: 'setItemsAsk', localIds: bulkAsk.ids, ask: bulkAsk.value });
-                setBulkAsk(null);
-              }}>Apply</button>
-            </div>
-          </div>
+          <BulkFilamentCard bulkAsk={bulkAsk} materials={materials} catalogEnabled={catalogEnabled}
+                            onChange={setBulkAsk} onCancel={() => setBulkAsk(null)}
+                            onApply={() => { dispatch({ type: 'setItemsAsk', localIds: bulkAsk.ids, ask: bulkAsk.value }); setBulkAsk(null); }} />
         )}
         <ItemSections items={items} groups={groups} filter={bannerSel} onBulk={onBulk}
           emptyHint={(
@@ -537,55 +281,8 @@ export function ProjectBuilderScreen() {
           renderRow={row => {
             const it = items.find(x => x.localId === row.localId)!;
             return (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 340px auto', gap: 8, alignItems: 'start' }}>
-                <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, paddingTop: 4 }}>
-                  <span style={{ fontSize: 13, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={it.file_name}>
-                    {it.file_name}
-                  </span>
-                  <ItemSourcePicker fileId={it.file_id} fileKind={fileById.get(it.file_id)?.kind ?? (it.kind === 'stl' ? 'stl' : '3mf')}
-                                    plateCount={fileById.get(it.file_id)?.plate_count ?? 1}
-                                    kind={it.kind} sourceRef={it.source_ref} packRule={it.pack_rule} fixedSource={!!it.serverId}
-                                    onChange={v => dispatch({ type: 'updateItem', localId: it.localId, patch: v })} />
-                  {it.serverId && (() => {
-                    const si = serverItems.get(it.serverId!);
-                    if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;
-                    return (
-                      <span style={{ fontSize: 11, color: si.quantity_failed > 0 ? 'var(--err)' : 'var(--text-3)', whiteSpace: 'nowrap' }}>
-                        {si.quantity_completed}/{si.quantity_completed + si.quantity_failed} ok
-                        {si.quantity_failed > 0 && ` · ${si.quantity_failed} failed`}
-                      </span>
-                    );
-                  })()}
-                </span>
-                <input
-                  type="number"
-                  className="input"
-                  aria-label={`Quantity of ${it.file_name}`}
-                  min={1} max={99}
-                  value={it.quantity}
-                  onChange={e => dispatch({ type: 'updateItem', localId: it.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
-                  style={{ textAlign: 'center' }}
-                />
-                <FilamentAskEditor
-                  id={`item-ask-${it.localId}`}
-                  value={askOf(it)}
-                  onChange={req => dispatch({ type: 'updateItem', localId: it.localId, patch: askOf(req) })}
-                  materials={materials}
-                  catalogEnabled={catalogEnabled}
-                />
-                <span style={{ display: 'flex', gap: 4 }}>
-                  {items.length > 1 && (
-                    <button className="btn ghost icon sm" onClick={() => dispatch({ type: 'applyFilamentToAll', ask: askOf(it) })}
-                            title="Apply this filament to every part">
-                      {Icons.copy}
-                    </button>
-                  )}
-                  <button className="btn ghost icon sm" onClick={() => dispatch({ type: 'removeItems', localIds: [it.localId] })} title="Remove">
-                    {Icons.x}
-                  </button>
-                </span>
-              </div>
+              <ItemRow item={it} file={fileById.get(it.file_id)} serverItem={it.serverId ? serverItems.get(it.serverId) : undefined}
+                       materials={materials} catalogEnabled={catalogEnabled} canApplyToAll={items.length > 1} dispatch={dispatch} />
             );
           }} />
       </div>
@@ -608,30 +305,11 @@ export function ProjectBuilderScreen() {
       <ReviewPanel review={review} loading={reviewLoading || saving} error={reviewError}
                    onGo={(t, ch) => { if (ch.group_id != null) setBannerSel(ch.group_id); setTab(t); }} />
       {generateResult && (
-        <div style={{
-          border: '1px solid var(--ok)', borderRadius: 8,
-          padding: '12px 16px', background: 'oklch(55% 0.15 142 / 0.06)',
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-        }}>
-          <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
-          <span style={{ fontSize: 14, flex: 1 }}>
-            {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} added to queue
-            {generateResult.warnings.map(w => <span key={w} className="tiny" style={{ display: 'block', color: 'var(--warn)' }}>{w}</span>)}
-          </span>
-          <button className="btn sm" onClick={() => navigate('/queue')}>Queue</button>
-          <button className="btn sm" onClick={() => navigate(`/projects/${projectId}`)}>Details</button>
-        </div>
+        <QueueSuccess jobCount={generateResult.jobCount} warnings={generateResult.warnings}
+                      onOpenQueue={() => navigate('/queue')} onOpenProject={() => navigate(`/projects/${projectId}`)} />
       )}
       {generateError && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
-          borderRadius: 6, padding: '10px 14px',
-        }}>
-          <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
-          <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
-          <button className="btn sm" onClick={handleQueue} disabled={generating || saving}>Retry</button>
-        </div>
+        <QueueError message={generateError} busy={generating || saving} onRetry={handleQueue} />
       )}
     </div>
   );
@@ -682,31 +360,12 @@ export function ProjectBuilderScreen() {
 
         {/* Saved toast */}
         {saveOk && (
-          <div style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 1000,
-            background: 'var(--ok)', color: '#fff',
-            padding: '10px 18px', borderRadius: 8,
-            display: 'flex', alignItems: 'center', gap: 8,
-            fontSize: 14, fontWeight: 500,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-            pointerEvents: 'none',
-          }}>
-            {Icons.check} Saved
-          </div>
+          <SavedToast />
         )}
 
         {/* Undo-removal toast */}
         {lastRemoved && (
-          <div style={{
-            position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
-            background: 'var(--bg-1)', border: '1px solid var(--border-1)', color: 'var(--text-1)',
-            padding: '10px 12px 10px 16px', borderRadius: 8,
-            display: 'flex', alignItems: 'center', gap: 10,
-            fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-          }}>
-            <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
-            <button className="btn sm" onClick={() => dispatch({ type: 'undo' })}>Undo</button>
-          </div>
+          <UndoToast label={lastRemoved.label || lastRemoved.kind} onUndo={() => dispatch({ type: 'undo' })} />
         )}
       </div>
     </FileDropZone>

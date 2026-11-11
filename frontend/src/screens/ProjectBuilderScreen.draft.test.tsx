@@ -163,6 +163,17 @@ describe('ProjectBuilderScreen - dirty tracking (edit mode)', () => {
   });
 });
 
+describe('ProjectBuilderScreen - print progress', () => {
+  it('shows each saved item\'s progress from the loaded project', async () => {
+    open('/projects/7/edit', {
+      'GET /api/v1/projects/7': { ...EXISTING, items: [{ ...EXISTING.items[0], quantity_completed: 1, quantity_failed: 2 }, EXISTING.items[1]] },
+    });
+    await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+    expect(within(rowOf('Bracket.stl')).getByText('1/3 ok · 2 failed')).toBeInTheDocument();
+    expect(within(rowOf('Widget.stl')).queryByText(/ ok/)).toBeNull();
+  });
+});
+
 describe('ProjectBuilderScreen - undo removal', () => {
   it('puts a removed item back, and the restored draft is clean', async () => {
     open('/projects/7/edit');
