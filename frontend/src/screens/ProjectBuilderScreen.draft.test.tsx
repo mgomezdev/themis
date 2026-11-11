@@ -231,6 +231,35 @@ describe('ProjectBuilderScreen - undo removal', () => {
 });
 
 describe('ProjectBuilderScreen - after a save', () => {
+  it('re-creates (not updates) a saved link whose removal was saved and then undone', async () => {
+    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/links': { id: 72 } });
+    await loadedDetails();
+    await userEvent.click(screen.getByTitle('Remove link'));
+    await save();
+    expect(api.to('DELETE', '/api/v1/projects/7/links/70')).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(dirty()).toBe(true);
+    await userEvent.click(saveBtn());
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/7/links')).toHaveLength(1));
+    expect(api.to('POST', '/api/v1/projects/7/links')[0].body).toEqual({ url: 'https://example.test/spec', label: 'Spec' });
+    expect(api.to('PUT', '/api/v1/projects/7/links/70')).toEqual([]);
+  });
+
+  it('re-creates (not updates) a saved item whose removal was saved and then undone', async () => {
+    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/items': { id: 60 } });
+    await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+    await userEvent.click(within(rowOf('Widget.stl')).getByTitle('Remove'));
+    await save();
+    expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await userEvent.click(saveBtn());
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1));
+    expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toMatchObject({ file_id: 2 });
+    expect(api.to('PUT', '/api/v1/projects/7/items/51')).toEqual([]);
+  });
+
   it('retries a failed save without repeating the deletes that already went through', async () => {
     let linkPuts = 0;
     const api = open('/projects/7/edit', {

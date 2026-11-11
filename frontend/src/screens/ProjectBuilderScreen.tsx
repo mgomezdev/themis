@@ -1,14 +1,14 @@
-import { ItemSourcePicker, RULES, initialSource } from '../components/ItemSourcePicker';
+import { ItemSourcePicker } from '../components/ItemSourcePicker';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { buildStlTree, filesInView, isPickableModel } from '../lib/stlTree';
-import {
-  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft,
-  type LocalItem, type LocalLink, type LocalPart, type OrderType, type RemovedSnapshot,
-} from '../lib/projectDraft';
+import { askOf, parseGenerateError, type OrderType } from '../lib/projectDraft';
+import { currentSnapshot, type HeaderFields } from '../lib/projectBuilderState';
+import { useAutoDismiss } from '../components/useAutoDismiss';
+import { useProjectDraft } from '../components/builder/useProjectDraft';
 import { StlFolderTree } from '../components/StlFolderTree';
 import { PrintGroupsCard } from '../components/PrintGroupsCard';
 import { GroupBanner, type BannerSelection } from '../components/builder/GroupBanner';
@@ -21,12 +21,9 @@ import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile } from '../data/types';
 import {
-  getProject, listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview, generateProject,
-  type ProjectGroup, type ProjectItem, type ProjectReview,
+  listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview, generateProject,
+  type ProjectGroup, type ProjectReview,
 } from '../api/projects';
-import { syncProject } from '../api/projectSync';
-
-const UNDO_TIMEOUT_MS = 6000;
 
 // ---------------------------------------------------------------------------
 // ProjectBuilderScreen
@@ -48,33 +45,16 @@ export function ProjectBuilderScreen() {
   // Section tabs (BIZ-363): one component, one state, so nothing is lost moving between them.
   const [tab, setTab] = useState<BuilderTab>(projectId ? 'items' : 'details');
 
-  // Project header fields
-  const [name, setName] = useState('');
-  const [customer, setCustomer] = useState('');
-  const [customerId, setCustomerId] = useState<number | null>(newForCustomerId);
-  const [orderType, setOrderType] = useState<OrderType>(newForCustomerId ? 'customer' : 'internal');
-  const [onHold, setOnHold] = useState(false);
-  const [dueDate, setDueDate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [price, setPrice] = useState('');
-  // Loaded, not edited here: a draft (customer request) can't generate jobs until promoted.
-  const [isDraft, setIsDraft] = useState(false);
+  const { state, dispatch, isDirty, save } = useProjectDraft(projectId, newForCustomerId);
+  const { draft, lastRemoved, serverItems, isDraftStage: isDraft } = state;
+  const { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts } = draft;
+  const setFields = (fields: Partial<HeaderFields>) => dispatch({ type: 'setFields', fields });
 
-  // Part items
-  const [items, setItems] = useState<LocalItem[]>([]);
-  const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
-  const [deletedItemIds, setDeletedItemIds] = useState<number[]>([]);
   // Print groups (BIZ-360) and the banner selection
   const [groups, setGroups] = useState<ProjectGroup[]>([]);
   const [bannerSel, setBannerSel] = useState<BannerSelection>('all');
   const [groupsTick, setGroupsTick] = useState(0);
   const [bulkAsk, setBulkAsk] = useState<{ ids: string[]; value: FilamentAsk } | null>(null);
-  // Links
-  const [links, setLinks] = useState<LocalLink[]>([]);
-  const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
-  // Non-printed parts (hardware, e.g. magnets/screws)
-  const [parts, setParts] = useState<LocalPart[]>([]);
-  const [deletedPartIds, setDeletedPartIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -85,53 +65,8 @@ export function ProjectBuilderScreen() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
-  // Undo toast for accidental removals (items, links, non-printed parts)
-  const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
-  const undoTimerRef = useRef<number | null>(null);
-  function scheduleUndoClear() {
-    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = window.setTimeout(() => setLastRemoved(null), UNDO_TIMEOUT_MS);
-  }
-  function undoRemove() {
-    if (!lastRemoved) return;
-    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    if (lastRemoved.kind === 'item') {
-      setItems(prev => {
-        const next = [...prev];
-        for (const { index, item } of [...lastRemoved.removed].sort((a, b) => a.index - b.index)) next.splice(index, 0, item);
-        return next;
-      });
-      const back = new Set(lastRemoved.removed.map(r => r.item.serverId).filter(Boolean));
-      setDeletedItemIds(prev => prev.filter(id => !back.has(id)));
-    } else if (lastRemoved.kind === 'link') {
-      setLinks(prev => {
-        const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.link);
-        return next;
-      });
-      if (lastRemoved.link.serverId) {
-        setDeletedLinkIds(prev => prev.filter(id => id !== lastRemoved.link.serverId));
-      }
-    } else {
-      setParts(prev => {
-        const next = [...prev];
-        next.splice(lastRemoved.index, 0, lastRemoved.part);
-        return next;
-      });
-      if (lastRemoved.part.serverId) {
-        setDeletedPartIds(prev => prev.filter(id => id !== lastRemoved.part.serverId));
-      }
-    }
-    setLastRemoved(null);
-  }
-
-  // Dirty tracking
-  const [cleanSnap, setCleanSnap] = useState('');
   const [saveOk, setSaveOk] = useState(false);
-
-  /** The dirty-tracking fingerprint of the draft as it is now (`del`: pending item deletes, default the current ones). */
-  const snapOf = (del: number[] = deletedItemIds) =>
-    draftSnapshot({ name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts }, del);
+  useAutoDismiss(saveOk, () => setSaveOk(false), 2000);
 
   // File tree state
   const { files: allFiles } = useFiles({});
@@ -144,22 +79,6 @@ export function ProjectBuilderScreen() {
   const folderTree = buildStlTree(stlFiles);
   const folderFiles = filesInView(stlFiles, selectedFolder, search);
 
-  // Load existing project
-  useEffect(() => {
-    if (!projectId) return;
-    getProject(projectId).then(p => {
-      const d = projectToDraft(p);
-      setName(d.name); setCustomer(d.customer); setCustomerId(d.customerId); setOrderType(d.orderType); setOnHold(d.onHold);
-      setDueDate(d.dueDate); setNotes(d.notes); setPrice(d.price); setIsDraft(p.stage === 'draft');
-      setItems(d.items); setLinks(d.links); setParts(d.parts);
-      setDeletedLinkIds([]);
-      setDeletedPartIds([]);
-      setDeletedItemIds([]);
-      setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(draftSnapshot(d));
-    }).catch(console.error);
-  }, [projectId]);
-
   // Print groups of a saved project, in queue order (the Default Group is created lazily by the list).
   useEffect(() => {
     if (!projectId) { setGroups([]); return; }
@@ -170,12 +89,11 @@ export function ProjectBuilderScreen() {
       setGroups(list);
       // A deleted group's items are the Default Group's now (the server moved them): never save a dead group id.
       const ids = new Set(list.map(g => g.id));
-      setItems(prev => (prev.some(it => it.group_id != null && !ids.has(it.group_id))
-        ? prev.map(it => (it.group_id != null && !ids.has(it.group_id) ? { ...it, group_id: null } : it)) : prev));
+      dispatch({ type: 'groupsListed', groupIds: [...ids] });
       setBannerSel(sel => (sel === 'all' || ids.has(sel) ? sel : 'all'));
     }).catch(() => {});
     return () => { alive = false; };
-  }, [projectId, groupsTick]);
+  }, [projectId, groupsTick, dispatch]);   // dispatch is stable
   const defaultGroupId = groups.find(g => g.is_default)?.id ?? null;
   // The Groups tab has no "All": it always edits one group.
   useEffect(() => {
@@ -184,74 +102,9 @@ export function ProjectBuilderScreen() {
     }
   }, [tab, bannerSel, groups, defaultGroupId]);
 
-  function addFile(f: LibraryFile) {
-    // New rows join the badge being shown (BIZ-363), else the Default Group.
-    const gid = typeof bannerSel === 'number' ? bannerSel : null;
-    setItems(prev => {
-      // A repeat pick of an STL adds a copy; a 3MF / gcode pick is its own row (another plate or object of it).
-      const existing = prev.find(it => it.file_id === f.id && it.kind === 'stl' && (it.group_id ?? defaultGroupId) === (gid ?? defaultGroupId));
-      if (existing) {
-        return prev.map(it =>
-          it.localId === existing.localId ? { ...it, quantity: it.quantity + 1 } : it,
-        );
-      }
-      return [
-        ...prev,
-        {
-          localId: newLocalId(),
-          file_id: f.id,
-          file_name: f.original_filename,
-          quantity: 1,
-          ...NO_ASK,
-          sort_order: prev.length,
-          group_id: gid,
-          ...initialSource(f.kind),
-        },
-      ];
-    });
-  }
-
-  function updateItem(localId: string, patch: Partial<LocalItem>) {
-    setItems(prev => prev.map(it => it.localId === localId ? { ...it, ...patch } : it));
-  }
-
-  function removeItems(localIds: string[]) {
-    const removed = items.map((item, index) => ({ item, index })).filter(r => localIds.includes(r.item.localId));
-    if (!removed.length) return;
-    setLastRemoved({ kind: 'item', label: removed.length === 1 ? removed[0].item.file_name : `${removed.length} items`, removed });
-    setItems(prev => prev.filter(it => !localIds.includes(it.localId)));
-    setDeletedItemIds(prev => [...prev, ...removed.map(r => r.item.serverId).filter((x): x is number => !!x)]);
-    scheduleUndoClear();
-  }
-  const removeItem = (localId: string) => removeItems([localId]);
-
-  function removeLink(localId: string) {
-    const index = links.findIndex(l => l.localId === localId);
-    if (index === -1) return;
-    const link = links[index];
-    if (link.serverId) setDeletedLinkIds(prev => [...prev, link.serverId!]);
-    setLastRemoved({ kind: 'link', label: link.label || link.url || 'link', index, link });
-    setLinks(prev => prev.filter(l => l.localId !== localId));
-    scheduleUndoClear();
-  }
-
-  function removePart(localId: string) {
-    const index = parts.findIndex(p => p.localId === localId);
-    if (index === -1) return;
-    const part = parts[index];
-    if (part.serverId) setDeletedPartIds(prev => [...prev, part.serverId!]);
-    setLastRemoved({ kind: 'part', label: part.name || 'part', index, part });
-    setParts(prev => prev.filter(p => p.localId !== localId));
-    scheduleUndoClear();
-  }
-
-  function setItemFilament(localId: string, req: FilamentAsk) {
-    updateItem(localId, askOf(req));
-  }
-
-  function applyFilamentToAll(req: FilamentAsk) {
-    setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
-  }
+  /** New rows join the badge being shown (BIZ-363), else the Default Group. */
+  const addFile = (file: LibraryFile) =>
+    dispatch({ type: 'addFile', file, groupId: typeof bannerSel === 'number' ? bannerSel : null, defaultGroupId });
 
   async function newGroup(moveIds: string[] = []) {
     if (!projectId) return;
@@ -260,7 +113,7 @@ export function ProjectBuilderScreen() {
     while (taken.has(`Group ${n}`)) n++;
     try {
       const g = await createProjectGroup(projectId, `Group ${n}`);
-      if (moveIds.length) setItems(prev => prev.map(it => (moveIds.includes(it.localId) ? { ...it, group_id: g.id } : it)));
+      if (moveIds.length) dispatch({ type: 'moveItems', localIds: moveIds, groupId: g.id });
       setBannerSel(g.id);
       setGroupsTick(t => t + 1);
     } catch (e) {
@@ -269,36 +122,14 @@ export function ProjectBuilderScreen() {
   }
 
   function onBulk(ids: string[], action: BulkAction) {
-    const pick = (fn: (it: LocalItem) => LocalItem) => setItems(prev => prev.map(it => (ids.includes(it.localId) ? fn(it) : it)));
-    if (action.kind === 'group') pick(it => ({ ...it, group_id: action.groupId }));
-    else if (action.kind === 'rule') pick(it => (RULES[it.kind].includes(action.rule) ? { ...it, pack_rule: action.rule } : it));
-    else if (action.kind === 'qty') pick(it => ({ ...it, quantity: action.quantity }));
-    else if (action.kind === 'remove') removeItems(ids);
+    if (action.kind === 'group') dispatch({ type: 'moveItems', localIds: ids, groupId: action.groupId });
+    else if (action.kind === 'rule') dispatch({ type: 'setItemsRule', localIds: ids, rule: action.rule });
+    else if (action.kind === 'qty') dispatch({ type: 'setItemsQuantity', localIds: ids, quantity: action.quantity });
+    else if (action.kind === 'remove') dispatch({ type: 'removeItems', localIds: ids });
     else {
       const first = items.find(it => ids.includes(it.localId));
       setBulkAsk({ ids, value: first ? askOf(first) : { ...NO_ASK } });
     }
-  }
-
-  /**
-   * Persist the draft. Each row created or deleted is recorded as its request succeeds (stamped with its server id,
-   * dropped from the pending deletes), so later saves update it and a retry after a partial failure doesn't repeat it.
-   */
-  function saveProject(): Promise<number> {
-    const draft = { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts };
-    return syncProject(projectId, draft, { itemIds: deletedItemIds, linkIds: deletedLinkIds, partIds: deletedPartIds }, e => {
-      if (e.type === 'created') {
-        const stamp = <R extends { localId: string }>(prev: R[]) => prev.map(r => (r.localId === e.localId ? { ...r, serverId: e.id } : r));
-        if (e.kind === 'item') setItems(stamp);
-        else if (e.kind === 'link') setLinks(stamp);
-        else setParts(stamp);
-      } else {
-        const drop = (prev: number[]) => prev.filter(id => id !== e.id);
-        if (e.kind === 'item') setDeletedItemIds(drop);
-        else if (e.kind === 'link') setDeletedLinkIds(drop);
-        else setDeletedPartIds(drop);
-      }
-    });
   }
 
   /** Save draft: stays in the Builder (a new project moves to its /edit route, so later saves update it). */
@@ -307,13 +138,8 @@ export function ProjectBuilderScreen() {
     setSaving(true);
     setSaveError('');
     try {
-      const pid = await saveProject();
-      setDeletedLinkIds([]);
-      setDeletedPartIds([]);
-      setDeletedItemIds([]);
-      setCleanSnap(snapOf([]));
+      const pid = await save();
       setSaveOk(true);
-      setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
       return pid;
     } catch (e) {
@@ -343,9 +169,7 @@ export function ProjectBuilderScreen() {
     setGenerateError('');
     setGenerateResult(null);
     try {
-      const pid = await saveProject();
-      setDeletedItemIds([]);
-      setCleanSnap(snapOf([]));
+      const pid = await save();
       setGenerating(true);
       const result = await generateProject(pid);
       setGenerateResult({ jobCount: result.jobs.length, warnings: (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w) });
@@ -358,8 +182,7 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  const currentSnap = snapOf();
-  const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
+  const currentSnap = currentSnapshot(state);
   const canSave = name.trim().length > 0 && !saving && !generating;
 
   // Entering Review saves what changed (the checks read the saved project), then runs the checks.
@@ -394,7 +217,7 @@ export function ProjectBuilderScreen() {
     <GroupBanner groups={groups} counts={counts} selected={bannerSel} onSelect={setBannerSel} showAll={showAll}
                  onDropItems={editing ? undefined : (ids, target) => {
                    if (target === 'new') newGroup(ids);
-                   else setItems(prev => prev.map(it => (ids.includes(it.localId) ? { ...it, group_id: target } : it)));
+                   else dispatch({ type: 'moveItems', localIds: ids, groupId: target });
                  }}
                  onNewGroup={() => newGroup()}
                  onReorder={editing && projectId ? async ids => {
@@ -413,7 +236,7 @@ export function ProjectBuilderScreen() {
     if (!projectId) return;
     try {
       await promoteProject(projectId, 'planning');
-      setIsDraft(false);
+      dispatch({ type: 'promoted' });
       setGroupsTick(t => t + 1);               // re-run the checks
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -445,7 +268,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="e.g. Gridfinity Tray Set"
               value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={e => setFields({ name: e.target.value })}
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -453,7 +276,7 @@ export function ProjectBuilderScreen() {
             <select
               className="select"
               value={orderType}
-              onChange={e => setOrderType(e.target.value as OrderType)}
+              onChange={e => setFields({ orderType: e.target.value as OrderType })}
             >
               <option value="internal">Internal</option>
               <option value="customer">Customer</option>
@@ -466,13 +289,13 @@ export function ProjectBuilderScreen() {
                 type="date"
                 className="input"
                 value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
+                onChange={e => setFields({ dueDate: e.target.value })}
                 style={{ flex: 1 }}
               />
               {dueDate && (
                 <button
                   className="btn ghost icon sm"
-                  onClick={() => setDueDate('')}
+                  onClick={() => setFields({ dueDate: '' })}
                   title="Clear due date"
                   style={{ flexShrink: 0 }}
                 >
@@ -490,7 +313,7 @@ export function ProjectBuilderScreen() {
               <label className="label">Customer</label>
               <CustomerPicker
                 value={{ customerId, customerText: customer }}
-                onChange={v => { setCustomerId(v.customerId); setCustomer(v.customerText); }}
+                onChange={v => setFields({ customerId: v.customerId, customer: v.customerText })}
               />
             </div>
           )}
@@ -500,7 +323,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="Optional notes"
               value={notes}
-              onChange={e => setNotes(e.target.value)}
+              onChange={e => setFields({ notes: e.target.value })}
             />
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
@@ -509,7 +332,7 @@ export function ProjectBuilderScreen() {
             <input
               type="checkbox"
               checked={onHold}
-              onChange={e => setOnHold(e.target.checked)}
+              onChange={e => setFields({ onHold: e.target.checked })}
             />
             On hold
           </label>
@@ -525,7 +348,7 @@ export function ProjectBuilderScreen() {
               className="input"
               placeholder="Quoted total"
               value={price}
-              onChange={e => setPrice(e.target.value)}
+              onChange={e => setFields({ price: e.target.value })}
             />
           </div>
           <div className="small muted" style={{ flex: 2, paddingBottom: 6 }}>
@@ -543,7 +366,7 @@ export function ProjectBuilderScreen() {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setLinks(prev => [...prev, { localId: newLocalId(), url: '', label: '' }])}
+              onClick={() => dispatch({ type: 'addLink' })}
             >
               + Add link
             </button>
@@ -554,19 +377,19 @@ export function ProjectBuilderScreen() {
                 className="input"
                 placeholder="https://..."
                 value={lk.url}
-                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, url: e.target.value } : l))}
+                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { url: e.target.value } })}
                 style={{ flex: 2 }}
               />
               <input
                 className="input"
                 placeholder="Label (optional)"
                 value={lk.label}
-                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, label: e.target.value } : l))}
+                onChange={e => dispatch({ type: 'updateLink', localId: lk.localId, patch: { label: e.target.value } })}
                 style={{ flex: 1 }}
               />
               <button
                 className="btn ghost icon sm"
-                onClick={() => removeLink(lk.localId)}
+                onClick={() => dispatch({ type: 'remove', kind: 'link', localId: lk.localId })}
                 title="Remove link"
               >
                 {Icons.x}
@@ -583,9 +406,7 @@ export function ProjectBuilderScreen() {
             </span>
             <button
               className="btn ghost sm"
-              onClick={() => setParts(prev => [
-                ...prev, { localId: newLocalId(), name: '', quantity: 1, allocated: false, unitCost: '' },
-              ])}
+              onClick={() => dispatch({ type: 'addPart' })}
             >
               + Add part
             </button>
@@ -596,7 +417,7 @@ export function ProjectBuilderScreen() {
                 className="input"
                 placeholder="e.g. 3mm magnet"
                 value={pt.name}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, name: e.target.value } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { name: e.target.value } })}
                 style={{ flex: 2 }}
               />
               <input
@@ -604,7 +425,7 @@ export function ProjectBuilderScreen() {
                 className="input"
                 min={1}
                 value={pt.quantity}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
                 style={{ width: 64, textAlign: 'center' }}
               />
               <input
@@ -615,7 +436,7 @@ export function ProjectBuilderScreen() {
                 placeholder="$ each"
                 aria-label="Unit cost"
                 value={pt.unitCost}
-                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, unitCost: e.target.value } : p))}
+                onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { unitCost: e.target.value } })}
                 style={{ width: 84 }}
               />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
@@ -623,13 +444,13 @@ export function ProjectBuilderScreen() {
                 <input
                   type="checkbox"
                   checked={pt.allocated}
-                  onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, allocated: e.target.checked } : p))}
+                  onChange={e => dispatch({ type: 'updatePart', localId: pt.localId, patch: { allocated: e.target.checked } })}
                 />
                 Allocated
               </label>
               <button
                 className="btn ghost icon sm"
-                onClick={() => removePart(pt.localId)}
+                onClick={() => dispatch({ type: 'remove', kind: 'part', localId: pt.localId })}
                 title="Remove part"
               >
                 {Icons.x}
@@ -697,7 +518,7 @@ export function ProjectBuilderScreen() {
             <div className="row gap-2" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
               <button className="btn sm" onClick={() => setBulkAsk(null)}>Cancel</button>
               <button className="btn primary sm" onClick={() => {
-                setItems(prev => prev.map(it => (bulkAsk.ids.includes(it.localId) ? { ...it, ...askOf(bulkAsk.value) } : it)));
+                dispatch({ type: 'setItemsAsk', localIds: bulkAsk.ids, ask: bulkAsk.value });
                 setBulkAsk(null);
               }}>Apply</button>
             </div>
@@ -725,7 +546,7 @@ export function ProjectBuilderScreen() {
                   <ItemSourcePicker fileId={it.file_id} fileKind={fileById.get(it.file_id)?.kind ?? (it.kind === 'stl' ? 'stl' : '3mf')}
                                     plateCount={fileById.get(it.file_id)?.plate_count ?? 1}
                                     kind={it.kind} sourceRef={it.source_ref} packRule={it.pack_rule} fixedSource={!!it.serverId}
-                                    onChange={v => updateItem(it.localId, v)} />
+                                    onChange={v => dispatch({ type: 'updateItem', localId: it.localId, patch: v })} />
                   {it.serverId && (() => {
                     const si = serverItems.get(it.serverId!);
                     if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;
@@ -743,24 +564,24 @@ export function ProjectBuilderScreen() {
                   aria-label={`Quantity of ${it.file_name}`}
                   min={1} max={99}
                   value={it.quantity}
-                  onChange={e => updateItem(it.localId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                  onChange={e => dispatch({ type: 'updateItem', localId: it.localId, patch: { quantity: Math.max(1, parseInt(e.target.value) || 1) } })}
                   style={{ textAlign: 'center' }}
                 />
                 <FilamentAskEditor
                   id={`item-ask-${it.localId}`}
                   value={askOf(it)}
-                  onChange={req => setItemFilament(it.localId, req)}
+                  onChange={req => dispatch({ type: 'updateItem', localId: it.localId, patch: askOf(req) })}
                   materials={materials}
                   catalogEnabled={catalogEnabled}
                 />
                 <span style={{ display: 'flex', gap: 4 }}>
                   {items.length > 1 && (
-                    <button className="btn ghost icon sm" onClick={() => applyFilamentToAll(askOf(it))}
+                    <button className="btn ghost icon sm" onClick={() => dispatch({ type: 'applyFilamentToAll', ask: askOf(it) })}
                             title="Apply this filament to every part">
                       {Icons.copy}
                     </button>
                   )}
-                  <button className="btn ghost icon sm" onClick={() => removeItem(it.localId)} title="Remove">
+                  <button className="btn ghost icon sm" onClick={() => dispatch({ type: 'removeItems', localIds: [it.localId] })} title="Remove">
                     {Icons.x}
                   </button>
                 </span>
@@ -884,7 +705,7 @@ export function ProjectBuilderScreen() {
             fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
           }}>
             <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
-            <button className="btn sm" onClick={undoRemove}>Undo</button>
+            <button className="btn sm" onClick={() => dispatch({ type: 'undo' })}>Undo</button>
           </div>
         )}
       </div>
