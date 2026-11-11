@@ -19,10 +19,10 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/**/*.d.ts'],
       reporter: ['text-summary', 'json-summary'],
-      // Floors sit ~1-2 points under the measured coverage (2026-10-15, after model slicer profiles / BIZ-294:
-      // statements 81.2, branches 74.2, functions 78.9, lines 83.9) so a regression fails CI;
+      // Floors sit ~1-2 points under the measured coverage (2026-11-11, after the ProjectBuilderScreen step-1 refactor:
+      // statements 83.5, branches 76.4, functions 81.5, lines 85.9) so a regression fails CI;
       // raise them as coverage improves.
-      thresholds: { statements: 80, branches: 73, functions: 77, lines: 82 },
+      thresholds: { statements: 82, branches: 75, functions: 80, lines: 84 },
     },
   },
 });

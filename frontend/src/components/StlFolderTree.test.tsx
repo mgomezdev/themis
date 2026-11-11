@@ -1,0 +1,64 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { StlFolderTree } from './StlFolderTree';
+import { buildStlTree } from '../lib/stlTree';
+
+const TREE = buildStlTree([{ folder: 'Toys/Cars' }, { folder: 'Toys/Balls' }, { folder: 'Tools' }]);
+const row = (name: string) => screen.queryByRole('button', { name });
+const rowNames = () => screen.getAllByRole('button').map(b => b.textContent);
+
+function renderTree(selected = '') {
+  const onSelect = vi.fn();
+  render(<StlFolderTree node={TREE} depth={0} selected={selected} onSelect={onSelect} />);
+  return onSelect;
+}
+
+describe('StlFolderTree', () => {
+  it('opens the root by default with its folders sorted, subfolders closed', () => {
+    renderTree();
+    expect(rowNames()).toEqual(['All files', 'Tools', 'Toys']);
+  });
+
+  it('selects a folder by its path and toggles its subfolders open and closed', async () => {
+    const onSelect = renderTree();
+    await userEvent.click(row('Toys')!);
+    expect(onSelect).toHaveBeenLastCalledWith('Toys');
+    expect(rowNames()).toEqual(['All files', 'Tools', 'Toys', 'Balls', 'Cars']);
+
+    await userEvent.click(row('Cars')!);
+    expect(onSelect).toHaveBeenLastCalledWith('Toys/Cars');
+
+    await userEvent.click(row('Toys')!);
+    expect(rowNames()).toEqual(['All files', 'Tools', 'Toys']);
+  });
+
+  it('selects a leaf folder without changing what is shown', async () => {
+    const onSelect = renderTree();
+    await userEvent.click(row('Tools')!);
+    expect(onSelect).toHaveBeenLastCalledWith('Tools');
+    expect(rowNames()).toEqual(['All files', 'Tools', 'Toys']);
+  });
+
+  it('collapses the root when clicked, and selects it (path "")', async () => {
+    const onSelect = renderTree('Tools');
+    await userEvent.click(row('All files')!);
+    expect(onSelect).toHaveBeenLastCalledWith('');
+    expect(rowNames()).toEqual(['All files']);
+  });
+
+  it('highlights only the selected folder', () => {
+    renderTree('Tools');
+    expect(row('Tools')!.style.color).toBe('var(--accent)');
+    expect(row('Toys')!.style.color).toBe('var(--text-2)');
+    expect(row('All files')!.style.color).toBe('var(--text-2)');
+  });
+
+  it('indents each level', async () => {
+    renderTree();
+    await userEvent.click(row('Toys')!);
+    expect(row('All files')!.style.paddingLeft).toBe('8px');
+    expect(row('Toys')!.style.paddingLeft).toBe('22px');
+    expect(row('Cars')!.style.paddingLeft).toBe('36px');
+  });
+});
