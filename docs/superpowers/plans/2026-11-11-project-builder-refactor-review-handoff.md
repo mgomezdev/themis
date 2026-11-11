@@ -16,7 +16,11 @@
 > and a concrete failing scenario. Don't fix anything unless asked; if you're asked to fix, follow CLAUDE.md's
 > workflow (a failing test first, then the fix). Be extremely concise.
 
-## What changed (step 1)
+## What changed
+
+All four steps are in. Step 1 in detail below; steps 2–4 in the plan file (per-step fix list).
+
+### Step 1
 
 | New | Holds | Moved from |
 |---|---|---|
@@ -90,15 +94,22 @@ npm run build
 - [ ] Check `docs/agent/frontend.md` against the code: the `StlFolderTree` row and the `ProjectBuilderScreen`
       note.
 
-### D. Later steps (when they land)
-Same method for each: per-step diff, existing screen tests unchanged, new unit tests falsifiable.
-- **Step 2 `syncProject`:** request **order** and bodies identical to the old `saveProject` for the create path,
-  the edit path, deleted links/parts, and unit cost (omitted on create when blank, `null` on update when cleared).
-- **Step 3 hooks / reducer:** undo restores the row at its original index **and** removes its id from the
-  deleted list. A second removal replaces the first snapshot and restarts the 6 s timer. The timer is cleared
-  on unmount (the old code doesn't do this; flag it if it's still missing).
-- **Step 4 JSX split:** no prop drilling of setters that bypass the reducer; labels, `title`s and
-  placeholders unchanged, because the tests select by them.
+### D. Steps 2–4
+Same method per step (`git log` the files; diff each commit against its parent). The intended behavior changes are
+exactly the fixes listed per step in the plan file; everything else must be equivalent.
+- [ ] **Step 2 `syncProject` (`frontend/src/api/projectSync.ts`):** request **order** and bodies identical to the
+      old `saveProject` for create and edit paths (unit cost omitted on create when blank, `null` on update when
+      cleared; create numbers items by position, edit keeps each item's `sort_order`). New: item DELETEs, and
+      `onEvent` fired only *after* a request succeeds. Check retry after a mid-save failure end to end.
+- [ ] **Step 3 reducer (`frontend/src/lib/projectBuilderState.ts`):** undo restores at the original index **and**
+      un-queues the delete; a delete that went through strips the undo row's `serverId`; `loaded` clears deletes +
+      undo; `save()` baseline = the draft *as it was when save started*, stamped with new ids (edits made during the
+      save stay dirty). `useAutoDismiss`: a new snapshot object restarts the 6 s timer; cleared on unmount.
+- [ ] **Step 4 JSX split:** markup verbatim (re-run the DOM comparison: render the step-3 screen from git next to
+      the current one on the same fixture and compare `innerHTML` after normalizing `item-ask-<n>` ids). No setter
+      bypasses the reducer; labels/titles/placeholders unchanged.
+- [ ] Known, **not** fixed (out of scope): a *new* project whose save fails after `POST /projects` succeeded creates
+      a second project on retry (the builder stays on `/projects/new`). Confirm it's still the only such gap.
 
 ## Report format
 ```

@@ -1,5 +1,7 @@
 # ProjectBuilderScreen refactor
 
+**Status:** all four steps done (990 → 153-line screen). Bugs found on the way are fixed with tests, listed per step.
+
 **Goal:** break `frontend/src/screens/ProjectBuilderScreen.tsx` (990 lines, ~25 `useState`, save/sync,
 undo, dirty tracking and ~450 lines of JSX in one component) into tested units, with **no user-visible
 behavior change** except the two bug fixes listed in Step 1.
@@ -13,7 +15,7 @@ behavior change** except the two bug fixes listed in Step 1.
 - Coverage of the moved code must not drop; global floors in `vitest.config.ts` never lowered.
 - Checks: `npx vitest run`, `npm run test:cov`, `npm run build` (`tsc -b`).
 
-## Step 1 — pure logic out of the screen (this PR)
+## Step 1 — pure logic out of the screen
 
 **Create**
 - `src/lib/stlTree.ts`
@@ -41,19 +43,26 @@ behavior change** except the two bug fixes listed in Step 1.
   edit-mode dirty tracking (no Save on load → appears on edit → hidden after reverting → hidden after save),
   folder navigation, undo of a removed part item / link / non-printed part.
 
-## Step 2 — `syncProject` into `api/projects.ts`
-Move `saveProject()`'s create-or-diff logic to `syncProject(projectId | null, draft, deleted)`; test request
-order/bodies directly with `stubFetch` (create path, edit path, deleted links/parts, unit-cost omission vs
-`null` clear). Screen keeps only `setSaving`/navigate.
+## Step 2 — `syncProject` (`src/api/projectSync.ts`)
+`syncProject(projectId | null, draft, deleted, onEvent)` replaces the screen's `saveProject` (own module rather than
+`api/projects.ts`, to avoid a type cycle with `lib/projectDraft`). Same request order/bodies; tested directly with
+`stubFetch`. **Fixes:** (a) removing a saved part item never deleted it server-side (now `DELETE /items/{id}`,
+undoable); (b) in edit mode a second save re-POSTed rows added since load (duplicates) — rows are stamped with
+their new server ids; (c) a save failing part-way re-sent creates (duplicates) and deletes (404 → every later
+save fails) on retry — `onEvent` reports each create/delete as it succeeds and the screen records it at once.
 
-## Step 3 — hooks
-`useUndoRemoval()` (timer + snapshot; spy on `setTimeout`, don't fake timers around `waitFor`) and
-`useProjectDraft(projectId)` (`useReducer`: load/add/update/remove/undo/markClean, exposes `isDirty`).
-Reducer unit-tested as a pure function; hook tested with `renderHook`.
+## Step 3 — reducer + hooks
+`lib/projectBuilderState.ts` (pure `builderReducer`: draft, pending deletes, clean baseline, undo snapshot;
+`isDirty`, `withServerIds`), `components/projectBuilder/useProjectDraft.ts` (reducer + load + undo timeout +
+`save()`), `components/useAutoDismiss.ts` (toast timers). **Fixes:** undo after a saved delete re-creates the
+row instead of PUTting a deleted id; a save before Generate now counts (no stale "Save changes"); a slow load for a
+project the builder moved off is ignored; toast timers are cleared on unmount; a reload clears the undo snapshot.
 
 ## Step 4 — JSX split
-`ProjectMetaFields`, `ProjectLinksEditor`, `ProjectPartsEditor`, `ProjectItemsTable`, `GeneratePanel`,
-`SavedToast`/`UndoToast`. Each gets a component test; screen target ≈150–200 lines of wiring.
+`components/projectBuilder/`: `StlPicker` (owns folder/search state), `ProjectMetaFields`, `ProjectLinksEditor`,
+`ProjectPartsEditor`, `ProjectItemsTable`, `GeneratePanel` (`GeneratePicker`/`GenerateSuccess`/`GenerateError`),
+`Toasts` (`SavedToast`/`UndoToast`). Markup moved verbatim: the step-3 and step-4 screens were rendered on the same
+project and their `innerHTML` compared equal. Each component has its own test file.
 
 ## Review
 Each step: one fresh reviewer pass against `docs/agent/frontend-review.md`. Independent second-opinion
