@@ -1,6 +1,6 @@
 """v051 (BIZ-291): saved slices keep matching after the provider became part of every cache key."""
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.migrations import v051_slice_cache_provider_keys as mig
@@ -53,7 +53,18 @@ async def test_v051_rewrites_keys_to_the_current_shape_and_down_restores_the_old
             # The migrated keys are byte-for-byte what the production key builder produces now.
             assert keys == [slice_cache.cache_key(_inputs(c)) for c in CASES]
             assert keys != [_legacy_key(c) for c in CASES]
-            await rollback_last(conn)                                  # v056 (newer than the migration under test)
+            await rollback_last(conn)                                  # v067 (newer than the migration under test)
+            await rollback_last(conn)                                  # v066
+            await rollback_last(conn)                                  # v065
+            await rollback_last(conn)                                  # v064
+            await rollback_last(conn)                                  # v063
+            await rollback_last(conn)                                  # v062
+            await rollback_last(conn)                                  # v061
+            await rollback_last(conn)                                  # v060
+            await rollback_last(conn)                                  # v059
+            await rollback_last(conn)                                  # v058
+            await rollback_last(conn)                                  # v057
+            await rollback_last(conn)                                  # v056
             await rollback_last(conn)                                  # v055
             await rollback_last(conn)                                  # v054
             await rollback_last(conn)                                  # v053 (newer than the migration under test)

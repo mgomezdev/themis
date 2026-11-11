@@ -92,7 +92,8 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
     try {
       const result = await confirmRemap(sync_id, resolutions);
       onDone(result);
-    } catch (err: any) {
+    } catch (caught: unknown) {
+      const err = caught as { status?: number; message?: string } | null;
       if (err?.status === 409) {
         setError('Sync superseded — run the catalog sync again');
       } else {

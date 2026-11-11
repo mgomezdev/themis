@@ -51,10 +51,12 @@ def sidecar():
             return httpx.Response(200, json={"status": "completed", "artifact": {"name": "out.gcode", "available": True}})
         if path == "/api/v1/jobs/job-1/artifact":
             return httpx.Response(200, content=sc.gcode)
-        if path == "/api/v1/arrange":
-            return httpx.Response(200, content=b"ARRANGED")
         if path == "/api/v1/pack":
             return httpx.Response(200, content=b"PACKED")
+        if path == "/api/v1/pack/mixed":
+            return httpx.Response(200, content=b"MIXED")
+        if path == "/api/v1/projects/inspect":
+            return httpx.Response(200, json={"objects": [{"id": 3, "name": "Gear", "instances": 2}, {"id": 8, "name": "Axle"}]})
         return httpx.Response(404)
 
     def record(request):
@@ -87,7 +89,8 @@ def _spec(tmp_path, **kw) -> SliceSpec:
 
 
 def test_capabilities_declared(provider):
-    assert provider.ARRANGE and provider.PACK_MODELS and provider.PREPARED_PROJECT
+    assert provider.PREPARED_PROJECT
+    assert not any(hasattr(provider, n) for n in ("ARRANGE", "PACK_MODELS", "arrange", "pack_models"))   # 3mf.construct now
     assert isinstance(provider.identity, str) and provider.identity
 
 
@@ -124,16 +127,6 @@ def test_slice_returns_artifact_path_with_bytes(provider, tmp_path):
     path = provider.slice(_spec(tmp_path), out)
     assert path.startswith(str(out))
     assert (out / path.rsplit("/", 1)[-1]).read_bytes()
-
-
-def test_arrange_and_pack_return_bytes(provider, tmp_path):
-    proj = tmp_path / "p.3mf"
-    proj.write_bytes(b"PK")
-    stl = tmp_path / "a.stl"
-    stl.write_bytes(b"solid")
-    assert provider.arrange(proj) == b"ARRANGED"
-    assert provider.pack_models([stl], machine_ref="m-1", process_ref="p-1", filament_refs=["f-1"]) == b"PACKED"
-    assert provider.pack_models([stl], bed=(220.0, 220.0, 250.0)) == b"PACKED"
 
 
 # ---- Laminus-adapter specifics ----
@@ -191,11 +184,6 @@ def test_laminus_http_errors_map_to_neutral_error(sidecar):
         LaminusSlicingProvider(URL).health()
     with pytest.raises(SlicingProviderError):
         LaminusSlicingProvider(URL).get_catalog()
-
-
-def test_laminus_pack_without_presets_or_bed_is_rejected(sidecar, tmp_path):
-    with pytest.raises(SlicingProviderError):
-        LaminusSlicingProvider(URL).pack_models([tmp_path / "a.stl"])
 
 
 # ---- accessor ----

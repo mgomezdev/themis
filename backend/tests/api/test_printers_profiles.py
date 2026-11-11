@@ -1,6 +1,6 @@
+from tests.printer_ips import ip_config
 from tests.catalog_helpers import catalog_from_dict, prime_catalog
 from app.services import catalog_service
-import pytest
 from unittest.mock import AsyncMock, patch
 
 _FAKE_CATALOG = {
@@ -24,7 +24,7 @@ _FAKE_CAT = catalog_from_dict(_FAKE_CATALOG)
 async def test_get_profiles_no_active_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
+        "connection_config": ip_config(),
         "orca_printer_profiles": [], "machine_profile_override": None,
     })
     pid = create.json()["id"]
@@ -36,7 +36,7 @@ async def test_get_profiles_no_active_preset(client):
 async def test_get_profiles_with_active_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
+        "connection_config": ip_config(),
         "orca_printer_profiles": ["Bambu Lab P1S 0.4 nozzle"],
         "machine_profile_override": "Bambu Lab P1S 0.4 nozzle",
     })
@@ -53,7 +53,7 @@ async def test_get_profiles_sidecar_unavailable(client):
     """When the sidecar is down, return empty lists (not local files or hardcoded values)."""
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
+        "connection_config": ip_config(),
         "orca_printer_profiles": ["Bambu Lab P1S 0.4 nozzle"],
         "machine_profile_override": "Bambu Lab P1S 0.4 nozzle",
     })

@@ -1,8 +1,6 @@
+from tests.printer_ips import ip_config
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy import select
-from app.models import Printer
-from app.services.abstract_printer_client import PrinterCapabilities
+from unittest.mock import MagicMock
 
 
 async def test_get_printer_types(client):
@@ -57,7 +55,7 @@ async def test_get_printer_not_found(client):
 async def test_update_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Old Name", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     response = await client.patch(f"/api/v1/printers/{printer_id}", json={"name": "New Name"})
@@ -67,7 +65,7 @@ async def test_update_printer(client):
 
 async def test_patch_can_clear_and_omit_current_preset(client):
     create = await client.post("/api/v1/printers", json={
-        "name": "P", "printer_type": "bambu", "connection_config": {},
+        "name": "P", "printer_type": "bambu", "connection_config": ip_config(),
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
         "machine_profile_override": "Bambu Lab P1S 0.4",
     })
@@ -85,7 +83,7 @@ async def test_patch_can_clear_and_omit_current_preset(client):
 async def test_delete_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Temp", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     response = await client.delete(f"/api/v1/printers/{printer_id}")
@@ -101,7 +99,7 @@ async def test_delete_printer_refuses_with_active_job(client, session_factory, c
 
     create = await client.post("/api/v1/printers", json={
         "name": "Busy", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -127,7 +125,7 @@ async def test_delete_printer_disconnects_live_client(client):
 
     create = await client.post("/api/v1/printers", json={
         "name": "Live", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
 
@@ -148,7 +146,7 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_
 
     create = await client.post("/api/v1/printers", json={
         "name": "P", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -172,7 +170,7 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, session_fac
 
     create = await client.post("/api/v1/printers", json={
         "name": "OnlyOne", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })
     printer_id = create.json()["id"]
     job_id = await create_job(printer_id=printer_id)
@@ -192,7 +190,7 @@ async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(c
 
     printer_id = (await client.post("/api/v1/printers", json={
         "name": "Doomed", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
+        "connection_config": ip_config(), "orca_printer_profiles": [], "machine_profile_override": None,
     })).json()["id"]
     job_id = await create_job(printer_id=printer_id)
     async with session_factory() as session:
@@ -206,9 +204,6 @@ async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(c
         assert (await session.get(Job, job_id)).printed_on_printer_id is None
 
 
-import pytest
-from unittest.mock import MagicMock
-from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
@@ -232,8 +227,8 @@ class _FakeConnClient:
 
 async def test_test_connection_success(client, monkeypatch):
     import app.api.routes.printers as pr
-    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.5)
-    monkeypatch.setattr(pr, "create_client_from_config", lambda *a, **k: _FakeConnClient(connects=True))
+    monkeypatch.setattr(pr.printer_setup, "TEST_CONNECT_POLL_S", 0.5)
+    monkeypatch.setattr(pr.printer_setup, "create_client_from_config", lambda *a, **k: _FakeConnClient(connects=True))
     r = await client.post("/api/v1/printers/test-connection",
                           json={"printer_type": "bambu", "connection_config": {}})
     assert r.status_code == 200
@@ -242,9 +237,9 @@ async def test_test_connection_success(client, monkeypatch):
 
 async def test_test_connection_unreachable_gives_hint(client, monkeypatch):
     import app.api.routes.printers as pr
-    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.3)
+    monkeypatch.setattr(pr.printer_setup, "TEST_CONNECT_POLL_S", 0.3)
     # 127.0.0.1:59999 is closed → the probe classifies it as unreachable.
-    monkeypatch.setattr(pr, "create_client_from_config",
+    monkeypatch.setattr(pr.printer_setup, "create_client_from_config",
                         lambda *a, **k: _FakeConnClient(connects=False, endpoint=("127.0.0.1", 59999)))
     r = await client.post("/api/v1/printers/test-connection",
                           json={"printer_type": "bambu", "connection_config": {}})
@@ -315,7 +310,7 @@ async def test_patch_loaded_filaments_replaces_and_persists(client):
 
 async def _printer_for_slicer(client):
     r = await client.post("/api/v1/printers", json={
-        "name": "S", "printer_type": "bambu", "connection_config": {}, "orca_printer_profiles": [],
+        "name": "S", "printer_type": "bambu", "connection_config": ip_config(), "orca_printer_profiles": [],
         "machine_profile_override": None})
     return r.json()["id"]
 
@@ -347,7 +342,7 @@ async def test_preferred_slicer_must_be_a_gcode_produce_plugin(client):
 
 async def test_the_legacy_current_orca_printer_profile_key_is_still_accepted_as_the_machine_profile_override(client):
     """BIZ-294 renamed the field, but external API clients (the e2e suite, scripts) still send the old key on create and edit."""
-    created = await client.post("/api/v1/printers", json={"name": "Old client", "printer_type": "bambu", "connection_config": {},
+    created = await client.post("/api/v1/printers", json={"name": "Old client", "printer_type": "bambu", "connection_config": ip_config(),
                                                           "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle"})
     assert created.status_code == 201, created.text
     assert created.json()["machine_profile_override"] == "Bambu Lab P1S 0.4 nozzle"

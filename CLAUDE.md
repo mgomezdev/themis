@@ -45,6 +45,9 @@ uvicorn app.main:app --reload --port 8001
 # Run all tests (CI runs `pytest -v -ra --cov`, which enforces the coverage floor)
 pytest -v
 
+# Lint (CI runs it; rules in pyproject.toml [tool.ruff])
+ruff check .
+
 # Run a single test
 pytest tests/api/test_printers_api.py::test_create_printer -v
 ```
@@ -57,6 +60,7 @@ cd frontend
 npm install          # first time
 npm run dev          # dev server on :5173, proxies /api to :8001
 npm run build        # production build → frontend/dist/ (`tsc -b` is the real type-check)
+npm run lint         # ESLint (eslint.config.js); errors fail CI, warnings don't
 npx vitest run       # unit tests (CI: `npm run test:cov`, enforces the coverage floor)
 npm run test:e2e     # Playwright specs against a mocked API
 ```

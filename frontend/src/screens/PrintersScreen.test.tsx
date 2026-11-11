@@ -40,9 +40,9 @@ const mockTypes = [
   printerType({
     plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
-      { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
-      { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
-      { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
+      { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '', quick_add: false },
+      { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+      { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
     ],
   }),
 ];
@@ -188,7 +188,7 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   machine_profile_reason: null,
   model_label: null,
   enabled: true,
-  queue_on: true,
+  queue_on: true, configured: true, config_error: null,
   connected: true,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
   build_plate_type: null,
@@ -196,7 +196,7 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   bed_x_mm: 256,
   bed_y_mm: 256,
   machine_rate_per_hour: null,
-  preferred_slicer_plugin_id: null,
+  preferred_slicer_plugin_id: null, default_process_profile: null, single_colour_only: false, bed_z_mm: null, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null,
   quiet_start: null,
   quiet_end: null,
 };
@@ -205,7 +205,7 @@ const INTEGRATION_TYPES: PrinterType[] = [
   printerType({
     plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
-      { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
+      { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '', quick_add: false },
     ],
   }),
 ];

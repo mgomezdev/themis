@@ -83,7 +83,7 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 ## Change queue / print behavior
 
 - **Eligibility** (when a printer may claim): `printer_manager.is_printer_ready` and
-  `queue_engine._try_claim_for_printer`. Head-of-line — a mismatch blocks the job, it does not skip ahead.
+  `queue_engine._try_claim_for_printer` (both refuse an unconfigured printer, BIZ-369). Head-of-line — a mismatch blocks the job, it does not skip ahead.
 - **Filament matching / AMS mapping**: `queue_engine._matching_loaded_filament` + the loaded-slot dict
   shape. AMS mapping flows from the matched slot's `ams_tray_id` into `StartPrintOptions.ams_mapping`.
 - **Slice→upload→print sequence**: `queue_engine._run_slice_and_print`. Sets `awaiting_plate_clear=True`
@@ -98,7 +98,7 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 1. Broadcast from the backend hub (the WS manager `main.py` exposes; `printer_manager`/`queue_engine`
    call it). Message shape `{type, data}`.
 2. Frontend: handle the new `type` in the `openLiveSocket` message handler of the relevant hook (`useQueue`/`useOrders`/
-   `useFleetData`). Existing types: `job_update`, `queue_update`, `printer_state`, `plate_clear_required`.
+   `useFleetData`). Existing types: `job_update`, `queue_update`, `printer_state`, `plate_clear_required`, `printer_configured`.
 
 ## Add a per-printer print option (e.g. a new calibration toggle)
 

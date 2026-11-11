@@ -9,7 +9,8 @@ import { useFiles, getFiles, getSlicedVersions, type SlicedVersion } from '../ap
 import { useProjects } from '../api/projects';
 import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
-import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey } from '../components/ModelTargets';
+import { buildEligibility, isModelKey, modelConfigSource, modelKey } from '../components/ModelTargets';
+import { PrinterTargetPicker } from '../components/PrinterTargetPicker';
 import { OverridePanel } from '../components/OverridePanel';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { fileKindOf, isPreslicedKind, type FileKind } from '../lib/fileKind';
@@ -50,11 +51,6 @@ interface FileInfo {
 // Misc helpers
 // ============================================================
 
-const BADGE: Record<string, string> = {
-  elegoo_centauri: 'ECC',
-  bambu: 'P1S',
-};
-
 // ============================================================
 // Printer list hook
 // ============================================================
@@ -89,25 +85,6 @@ function StepNum({ n, done }: { n: number; done: boolean }) {
     }}>
       {done ? React.cloneElement(Icons.check as React.ReactElement<{ size?: number }>, { size: 12 }) : n}
     </span>
-  );
-}
-
-function Checkbox({ checked, disabled }: { checked: boolean; disabled?: boolean }) {
-  return (
-    <div style={{
-      width: 18, height: 18, flexShrink: 0,
-      borderRadius: 5,
-      border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
-      background: checked ? 'var(--accent)' : 'transparent',
-      display: 'grid', placeItems: 'center',
-      opacity: disabled ? 0.5 : 1,
-    }}>
-      {checked && (
-        <span style={{ color: 'white', display: 'inline-flex' }}>
-          {React.cloneElement(Icons.check as React.ReactElement<{ size?: number; stroke?: number }>, { size: 12, stroke: 3 })}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -342,69 +319,6 @@ function ProjectPicker({ selectedProjectId, onChange }: {
 }
 
 // ============================================================
-// PrinterPicker — uses real ApiPrinter list
-// ============================================================
-
-function PrinterPicker({ printers, selectedPrinters, onToggle }: {
-  printers: ApiPrinter[];
-  selectedPrinters: string[];
-  onToggle: (id: string) => void;
-}) {
-  if (printers.length === 0) {
-    return (
-      <div className="tiny muted" style={{ padding: '12px 0' }}>
-        No printers configured. Add a printer in the Printers screen first.
-      </div>
-    );
-  }
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-      gap: 10,
-    }}>
-      {printers.map(printer => {
-        const sid = String(printer.id);
-        const selected = selectedPrinters.includes(sid);
-        const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
-        return (
-          <button
-            key={printer.id}
-            onClick={() => onToggle(sid)}
-            style={{
-              padding: 12,
-              background: selected ? 'var(--bg-2)' : 'var(--bg-0)',
-              border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
-              boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
-              borderRadius: 10, textAlign: 'left',
-              cursor: 'pointer',
-              color: 'var(--text-1)', fontFamily: 'inherit',
-              position: 'relative',
-            }}>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
-              <span className={`elig ${selected ? 'on' : 'off'}`}
-                    style={selected ? { background: 'var(--accent-tint)' } : undefined}>
-                {badge}
-              </span>
-              <div className="col" style={{ flex: 1, minWidth: 0 }}>
-                <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
-                <div className="tiny muted">{printer.printer_type}</div>
-              </div>
-              <Checkbox checked={selected} />
-            </div>
-            {printer.machine_profile && (
-              <div className="tiny" style={{ marginTop: 8, color: 'var(--text-3)' }}>
-                {printer.machine_profile}
-              </div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ============================================================
 // PlateThumbnail — shared image for a plate across all screens
 // ============================================================
 
@@ -508,12 +422,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelF
               </div>
             </div>
             {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
-            <PrinterPicker
-              printers={printers}
-              selectedPrinters={config.selectedPrinters}
-              onToggle={onTogglePrinter}
-            />
-            <ModelPicker printers={printers} selected={config.selectedPrinters} onToggle={onTogglePrinter} />
+            <PrinterTargetPicker printers={printers} selected={config.selectedPrinters} onToggle={onTogglePrinter} />
             {config.selectedPrinters.length > 0 && (
               <div className="col gap-3" style={{ marginTop: 14 }}>
                 {config.selectedPrinters.map(pid => {
@@ -1066,7 +975,7 @@ export function NewJobScreen() {
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
       // A pre-sliced gcode job has no print profile — naming the printer(s) or model(s) is enough.
-      return !!pp && (isPreslicedKind(file?.type) || !!pp.printProfile);
+      return !!pp && (isPreslicedKind(file?.type) || pp.printProfile != null);   // "" = Printer default
     });
   };
 

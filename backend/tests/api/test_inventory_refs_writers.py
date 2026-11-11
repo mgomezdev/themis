@@ -1,12 +1,7 @@
 """One test per writer of the legacy ids (BIZ-217): every path that stores a spool binding must write the provider-namespaced
 form next to the legacy one. Each fails if its writer skips the normalizer."""
-import pytest
 
-from app.models import Job, JobModelTarget, JobPrinterConfig, Printer, ProjectItem
 from app.services.printer_manager import printer_manager
-from sqlalchemy import select
-from tests.fake_providers import FakeInventoryProvider
-from tests.inventory_helpers import use_provider
 
 INV7 = {"provider": "spoolman", "spool_ref": "7"}
 

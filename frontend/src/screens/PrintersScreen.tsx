@@ -1,3 +1,4 @@
+import { WaivedPartsCard } from '../components/WaivedPartsCard';
 import { useState, useEffect, Fragment } from 'react';
 import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';
@@ -23,6 +24,7 @@ import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
+import { stripBlank } from '../components/quickAdd';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -136,6 +138,11 @@ export function EditForm({
   const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
+  const [processProfiles, setProcessProfiles] = useState<string[]>([]);
+  const [defaultProcess, setDefaultProcess] = useState<string>(printer.default_process_profile ?? '');
+  const [singleColourOnly, setSingleColourOnly] = useState<boolean>(printer.single_colour_only);
+  const [bedZ, setBedZ] = useState<string>(printer.bed_z_mm != null ? String(printer.bed_z_mm) : '');
+  const [thresholds, setThresholds] = useState({ waiver_flag_at: printer.waiver_flag_at ?? 0, waiver_stop_at: printer.waiver_stop_at ?? 0 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,10 +152,11 @@ export function EditForm({
 
   useEffect(() => {
     setFilamentProfiles([]);
+    setProcessProfiles([]);
     let alive = true;
     getPrinterProfiles(printer.id)
-      .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
-      .catch(() => { if (alive) setFilamentProfiles([]); });
+      .then(p => { if (alive) { setFilamentProfiles(p.filament_profiles); setProcessProfiles(p.print_profiles ?? []); } })
+      .catch(() => { if (alive) { setFilamentProfiles([]); setProcessProfiles([]); } });
     return () => { alive = false; };
   }, [printer.id, printer.machine_profile]);
 
@@ -171,6 +179,10 @@ export function EditForm({
         nozzle_variant: nozzle,
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
+        default_process_profile: defaultProcess || null,
+        single_colour_only: singleColourOnly,
+        bed_z_mm: Number(bedZ) > 0 ? Number(bedZ) : null,     // blank (or not a positive number) = the machine profile's height
+        ...thresholds,
       });
       onSave();
     } catch (e) {
@@ -203,6 +215,39 @@ export function EditForm({
 
         <NozzleVariantPicker modelUuid={printer.model_uuid} value={nozzle} onChange={setNozzle}
                              resolvedProfile={printer.machine_profile} reason={printer.machine_profile_reason} />
+
+        <div>
+          <label className="label" htmlFor={`default-process-${printer.id}`}>Default process profile</label>
+          <select
+            id={`default-process-${printer.id}`}
+            className="input"
+            value={defaultProcess}
+            onChange={e => setDefaultProcess(e.target.value)}
+          >
+            <option value="">— none —</option>
+            {/* a stored default the catalog no longer lists stays visible rather than silently dropping */}
+            {defaultProcess && !processProfiles.includes(defaultProcess) && <option value={defaultProcess}>{defaultProcess}</option>}
+            {processProfiles.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <div className="tiny muted" style={{ marginTop: 4 }}>Used by any job set to “Printer default”.</div>
+        </div>
+
+        <div>
+          <label className="label" htmlFor={`bed-z-${printer.id}`}>Build height (mm)</label>
+          <input id={`bed-z-${printer.id}`} className="input" type="number" min={1} style={{ maxWidth: 140 }}
+                 placeholder="from profile" value={bedZ} onChange={e => setBedZ(e.target.value)} />
+          <div className="tiny muted" style={{ marginTop: 4 }}>
+            Bed {printer.bed_x_mm} × {printer.bed_y_mm} mm. Blank = the machine profile's height; the project Review checks parts against it.
+          </div>
+        </div>
+
+        <label className="row gap-2" style={{ alignItems: 'center' }}>
+          <input type="checkbox" checked={singleColourOnly} onChange={e => setSingleColourOnly(e.target.checked)} />
+          <span>Single colour only <span className="tiny muted">— takes any loaded colour, never multicolour jobs</span></span>
+        </label>
+
+        <WaivedPartsCard printerId={printer.id} flagAt={thresholds.waiver_flag_at} stopAt={thresholds.waiver_stop_at}
+                         onThresholds={setThresholds} />
 
         <div>
           <label className="label">Build plate</label>
@@ -277,11 +322,15 @@ export function PrinterAddForm({
   onCancel,
   onCreated,
   backLabel = 'Printers',
+  discovered,
+  onPrinterAdded,
 }: {
   types: PrinterType[];
   onCancel: () => void;
   onCreated: () => void;
   backLabel?: string;
+  discovered?: DiscoveredPrinter;
+  onPrinterAdded?: () => void;      // a printer was added straight from the scan's quick-add rows
 }) {
   const [step, setStep] = useState(1);
   const [modelUnconfirmed, setModelUnconfirmed] = useState(false);   // a discovered printer whose model we could not tell
@@ -336,6 +385,12 @@ export function PrinterAddForm({
     setStep(matched ? 2 : 1);
   }
 
+  useEffect(() => {
+    if (discovered) applyDiscovered(discovered);
+    // Apply once when the settings panel opens the wizard. Model edits remain local after that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discovered]);
+
   async function handleFinish() {
     if (!data.printerType) return;
     setFinishing(true);
@@ -346,7 +401,7 @@ export function PrinterAddForm({
         plugin_id: data.printerType.plugin_id,
         manufacturer_id: data.printerType.manufacturer_id,
         model_id: data.printerType.model_id,
-        connection_config: withDefaults(data.printerType, data.connectionConfig),
+        connection_config: stripBlank(withDefaults(data.printerType, data.connectionConfig)),
         ...(data.printerType.custom ? {
           bed_x_mm: positive(data.bedX, data.printerType.bed_mm[0]),
           bed_y_mm: positive(data.bedY, data.printerType.bed_mm[1]),
@@ -404,7 +459,7 @@ export function PrinterAddForm({
         {/* Step 1: Printer type */}
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
-            <DiscoverPrinters onPick={applyDiscovered} />
+            {!discovered && <DiscoverPrinters types={types} onMoreSettings={applyDiscovered} onAdded={onPrinterAdded} />}
             <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
             {modelUnconfirmed && (
               <div className="small" role="status" style={{ marginBottom: 12, color: 'var(--warn)' }}>
@@ -642,6 +697,7 @@ export function PrintersScreen() {
         types={types}
         onCancel={() => setAdding(false)}
         onCreated={() => { setAdding(false); load(); }}
+        onPrinterAdded={() => void load()}
       />
     );
   }

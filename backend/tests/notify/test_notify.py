@@ -3,17 +3,15 @@ are independent, and enabling/disabling/uninstalling is honoured."""
 import asyncio
 import logging
 
-import httpx
 import pytest
 from pydantic import Field
 
 from app import plugins
-from app.plugins.capabilities.notify_channel import CAPABILITY, ChannelMessage, ChannelResult, ChannelSettings, FilteredChannel
+from app.plugins.capabilities.notify_channel import CAPABILITY, ChannelMessage, ChannelSettings, FilteredChannel
 from app.plugins.host import plugin_host
 from app.plugins.manifest import HOST_API, PluginManifest, Provide
 from app.services import notify as notify_mod
 from app.services.notify import notify
-from tests.waiting import wait_until
 
 
 class FakeSettings(ChannelSettings):

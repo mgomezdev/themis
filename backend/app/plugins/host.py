@@ -30,7 +30,7 @@ from .context import PluginContext, wants_context
 from .defaults import core_overrides_of, defaults_of
 from . import migrations as plugin_migrations
 from .capabilities import CORE
-from .capabilities.definition import BUILDS_ALL, CapabilityDef, RoutedCapability
+from .capabilities.definition import BUILDS_ALL, RoutedCapability
 from .manifest import PluginManifest, Provide
 
 logger = logging.getLogger("app")

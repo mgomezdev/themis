@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate
 from app.services.providers.format_provider import FormatProvider
 from app.plugins.capabilities.filament_inventory import (
-    ALL_CAPABILITIES,
     FilamentInventoryProvider,
     InventoryProviderError,
     InvMaterial,
@@ -105,8 +104,6 @@ def make_catalog(machines=(("Printer A", "m-1"),), processes=(("0.20mm Standard"
 
 
 class FakeSlicingProvider(SlicingProvider):
-    ARRANGE = True
-    PACK_MODELS = True
     PREPARED_PROJECT = True
 
     def __init__(self, catalog: Catalog | None = None, identity: str = "fake://slicer") -> None:
@@ -161,19 +158,14 @@ class FakeSlicingProvider(SlicingProvider):
         self._enter("merged_config", machine_ref, process_ref, list(filament_refs))
         return self.merged
 
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop=None) -> str:
         self._enter("slice", spec)
+        if should_stop is not None and should_stop():
+            raise SlicingProviderError("fake slice cancelled")
         dest = Path(output_dir) / self.artifact_name
         dest.write_bytes(self.artifact_bytes)
         return str(dest)
 
-    def arrange(self, project_path, arrange=True, orient=True, timeout=130.0) -> bytes:
-        self._enter("arrange", project_path)
-        return b"ARRANGED"
-
-    def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None) -> bytes:
-        self._enter("pack_models", list(paths), machine_ref, bed)
-        return b"PACKED"
 
 
 class FakeFormatProvider(FormatProvider):
@@ -198,12 +190,13 @@ class FakeFormatProvider(FormatProvider):
         return self.inspection
 
 
-def fake_packer(packed: bytes) -> FakeSlicingProvider:
-    """A fake slicing provider whose `pack_models` is a MagicMock returning `packed` (for call assertions)."""
+def fake_packer(packed: bytes) -> "FakeProjectConstructor":
+    """A ready fake `3mf.construct` provider whose every `construct` writes `packed`. `construct` is a MagicMock wrapping the fake
+    (call counts) and `calls` records the requests."""
     from unittest.mock import MagicMock
 
-    fake = FakeSlicingProvider()
-    fake.pack_models = MagicMock(return_value=packed)
+    fake = FakeProjectConstructor(output=packed)
+    fake.construct = MagicMock(wraps=fake.construct)
     return fake
 
 
@@ -370,21 +363,32 @@ class FakeGcodeProducer(_c.GcodeProducer):
 
 
 class FakeProjectConstructor(_c.ProjectConstructor):
-    def __init__(self, state: _c.Readiness = _c.Readiness.READY) -> None:
-        self.state = state
+    """`outputs` scripts successive `construct` calls (bytes are written, an exception is raised); when it runs out, `output`
+    is written. `calls` records each request that got past the cancel/input checks; `status_detail` explains a non-READY state."""
+
+    def __init__(self, state: _c.Readiness = _c.Readiness.READY, *, output: bytes = b"3mf", outputs=(),
+                 status_detail: str = "") -> None:
+        self.state, self.output, self.outputs, self.status_detail = state, output, list(outputs), status_detail
         self.calls: list[_c.ConstructRequest] = []
+        self.status_calls = 0
 
     @property
     def identity(self) -> _c.ProviderIdentity:
         return _c.ProviderIdentity("fake-constructor", "0.1")
 
     def status(self, timeout=_c.DEFAULT_HEALTH_TIMEOUT_S) -> _c.ProviderStatus:
-        return _c.ProviderStatus(self.state, self.identity)
+        self.status_calls += 1
+        return _c.ProviderStatus(self.state, self.identity, self.status_detail)
 
     def construct(self, request, output_dir, *, timeout=_c.DEFAULT_PRODUCE_TIMEOUT_S, cancel=None):
+        if cancel is not None and cancel.cancelled:
+            raise _c.ProviderError(_c.ErrorCode.CANCELLED)
         if not request.inputs:
             raise _c.ProviderError(_c.ErrorCode.UNSUPPORTED_INPUT, "no inputs")
         self.calls.append(request)
+        nxt = self.outputs.pop(0) if self.outputs else self.output
+        if isinstance(nxt, BaseException):
+            raise nxt
         out = output_dir / "project.3mf"
-        out.write_bytes(b"3mf")
+        out.write_bytes(nxt)
         return _c.Artifact(out, _c.ArtifactKind.PROJECT_3MF, self.identity)

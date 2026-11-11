@@ -30,6 +30,11 @@ export interface ProjectItem {
   filament_subtype: string | null;
   filament_color: string | null;
   sort_order: number;
+  group_id: number | null;        // its print group (BIZ-360)
+  quantity_held: number;          // failed parts held for a person after too many printers (BIZ-364)
+  kind: 'stl' | '3mf_object' | '3mf_plate' | 'gcode';   // BIZ-356
+  source_ref: string | null;      // object id, or plate number
+  pack_rule: 'split' | 'together' | 'solo' | 'locked';
 }
 
 export interface ProjectLink {
@@ -124,6 +129,8 @@ export interface GenerateOut {
   eligible_printer_ids: number[];
   pack_bed_x: number;
   pack_bed_y: number;
+  /** Per print group (BIZ-360): its pack bed (none for a pool), and why its jobs may sit unclaimed. */
+  groups?: { id: number; pack_bed_x?: number | null; pack_bed_y?: number | null; pool?: boolean; warning?: string }[];
 }
 
 export interface ProjectCreate {
@@ -147,6 +154,73 @@ export interface ProjectItemCreate extends Partial<FilamentAsk> {
   file_id: number;
   quantity: number;
   sort_order?: number;
+  group_id?: number;              // a print group of the project (BIZ-360 move; BIZ-363 create, default: the Default Group)
+  /** BIZ-356: what of the file the item is (create only; omitted = inferred from the file) and its packing rule. */
+  kind?: 'stl' | '3mf_object' | '3mf_plate' | 'gcode';
+  source_ref?: string | null;
+  pack_rule?: 'split' | 'together' | 'solo' | 'locked';
+}
+
+/** One eligibility entry of a print group: a PrinterTargetPicker key and its process profile ("" = Printer default). */
+export interface ProjectGroupTarget {
+  target_key: string;
+  process_profile: string;
+}
+
+/** A print group (BIZ-360): its items print on its targets, packed for its envelope (null = auto), in group order. */
+export interface ProjectGroup {
+  id: number;
+  project_id: number;
+  name: string;
+  sort_order: number;
+  is_default: boolean;
+  strategy: string;
+  envelope_x: number | null;
+  envelope_y: number | null;
+  mix_colours: boolean;
+  targets: ProjectGroupTarget[];
+  max_parts: number | null;                 // pool: parts per claimed plate cap (null = as many as fit)
+  pool: { done: number; printing: number; left: number } | null;   // pool groups only (BIZ-362)
+  pool_warning: string | null;
+}
+
+export interface ProjectGroupPatch {
+  name?: string;
+  envelope_x?: number | null;
+  envelope_y?: number | null;
+  mix_colours?: boolean;
+  targets?: ProjectGroupTarget[];
+  strategy?: 'fixed' | 'pool';
+  max_parts?: number | null;
+}
+
+/** One reported failure (BIZ-364): what failed where and when, and what happened to the failed parts. */
+export interface ProjectFailure {
+  id: number;
+  project_item_id: number;
+  file_name: string | null;
+  job_id: number;
+  printer_id: number | null;
+  printer_name: string | null;
+  quantity_failed: number;
+  created_at: string | null;
+  resolution: string | null;      // requeued | held | reprinted | dropped
+}
+
+export const listProjectFailures = (projectId: number) => request<ProjectFailure[]>(`/api/v1/projects/${projectId}/failures`);
+export const resolveHeldParts = (projectId: number, itemId: number, action: 'reprint' | 'drop') =>
+  request<{ requeued_job_ids: number[] }>(`/api/v1/projects/${projectId}/items/${itemId}/held`, json('POST', { action }));
+
+export const listProjectGroups = (projectId: number) => request<ProjectGroup[]>(`/api/v1/projects/${projectId}/groups`);
+export const createProjectGroup = (projectId: number, name: string) =>
+  request<ProjectGroup>(`/api/v1/projects/${projectId}/groups`, json('POST', { name }));
+export const patchProjectGroup = (projectId: number, groupId: number, body: ProjectGroupPatch) =>
+  request<ProjectGroup>(`/api/v1/projects/${projectId}/groups/${groupId}`, json('PATCH', body));
+export const orderProjectGroups = (projectId: number, groupIds: number[]) =>
+  request<ProjectGroup[]>(`/api/v1/projects/${projectId}/groups/order`, json('PUT', { group_ids: groupIds }));
+export async function deleteProjectGroup(projectId: number, groupId: number): Promise<void> {
+  const resp = await apiFetch(`/api/v1/projects/${projectId}/groups/${groupId}`, { method: 'DELETE' });   // 204: no body
+  if (!resp.ok) throw new Error(`${resp.status} ${await resp.text().catch(() => resp.statusText)}`);
 }
 
 export const getProjects = () => request<Project[]>('/api/v1/projects');
@@ -157,6 +231,22 @@ export const patchProject = (id: number, body: Partial<ProjectCreate>) =>
   request<Project>(`/api/v1/projects/${id}`, json('PATCH', body));
 export const deleteProject = (id: number) =>
   request<{ deleted: number }>(`/api/v1/projects/${id}`, { method: 'DELETE' });
+/** One Builder Review check (BIZ-363): `error` blocks queueing; `tab` is the Builder tab that fixes it. */
+export interface ReviewCheck {
+  level: 'error' | 'note' | 'ok';
+  tab: 'details' | 'items' | 'groups';
+  message: string;
+  group_id: number | null;
+  item_id: number | null;
+}
+
+export interface ProjectReview {
+  checks: ReviewCheck[];
+  open: number;                   // errors still open: "Queue project" waits for 0
+}
+
+export const getProjectReview = (projectId: number) => request<ProjectReview>(`/api/v1/projects/${projectId}/review`);
+
 export const addProjectItem = (projectId: number, body: ProjectItemCreate) =>
   request<ProjectItem>(`/api/v1/projects/${projectId}/items`, json('POST', body));
 export const updateProjectItem = (
@@ -176,11 +266,19 @@ export interface GenerateCacheOptions {
   saveSlice?: boolean;
 }
 
+/** Groups of printers eligible alongside the specific ones (BIZ-357): any printer of these models, or any printer at all. */
+export interface GenerateGroups {
+  modelUuids?: string[];
+  anyPrinter?: boolean;
+}
+
 export const generateProject = (
   projectId: number, eligiblePrinterIds: number[] = [], processPreset: string | null = null,
-  cache: GenerateCacheOptions = {},
+  cache: GenerateCacheOptions = {}, groups: GenerateGroups = {},
 ) => request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', {
   eligible_printer_ids: eligiblePrinterIds,
+  eligible_model_uuids: groups.modelUuids ?? [],
+  eligible_any_printer: groups.anyPrinter ?? false,
   process_preset: processPreset,
   allow_cached: cache.allowCached ?? true,
   save_slice: cache.saveSlice ?? false,

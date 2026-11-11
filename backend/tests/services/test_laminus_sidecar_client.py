@@ -4,7 +4,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
+from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarCancelled, SidecarError, SidecarTimeout
+from app.services.providers.contract import ConstructInput
 
 
 def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:
@@ -105,9 +106,37 @@ def test_poll_status_raises_on_timeout():
         return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
 
     c = _client(httpx.MockTransport(handler))
-    with pytest.raises(SidecarError, match="timed out"):
+    with pytest.raises(SidecarTimeout, match="timed out"):
         # timeout=0 expires immediately on first pending response
         c.poll_status("job1", poll_interval=0.0, timeout=0.0)
+
+
+def test_poll_status_maps_a_transport_timeout_to_sidecar_timeout():
+    def handler(req):
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(SidecarTimeout):
+        _client(httpx.MockTransport(handler)).poll_status("job1", poll_interval=0.0, timeout=5.0)
+
+
+def test_poll_status_stops_as_soon_as_asked_and_polls_no_more():
+    polls = {"n": 0}
+
+    def handler(req):
+        polls["n"] += 1
+        return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
+
+    stop = {"now": False}
+
+    def should_stop():
+        if polls["n"] >= 2:
+            stop["now"] = True
+        return stop["now"]
+
+    c = _client(httpx.MockTransport(handler))
+    with pytest.raises(SidecarCancelled):
+        c.poll_status("job1", poll_interval=0.0, timeout=10.0, should_stop=should_stop)
+    assert polls["n"] == 2
 
 
 # ── download ───────────────────────────────────────────────────────────────────
@@ -149,8 +178,52 @@ def test_pack_stls_returns_bytes(tmp_path):
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
-    result = c.pack_stls([stl1, stl2], bed_x=220.0, bed_y=220.0)
+    result = c.pack_stls([ConstructInput(stl1, 1, "1"), ConstructInput(stl2, 1, "2")], bed_x=220.0, bed_y=220.0)
     assert result == packed
+
+
+def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
+    import json
+    import re
+    (tmp_path / "x").mkdir()
+    (tmp_path / "y").mkdir()
+    a1, a2 = tmp_path / "x" / "bracket.stl", tmp_path / "y" / "bracket.stl"   # same basename, different library files
+    a1.write_bytes(b"solid 1\nendsolid 1\n")
+    a2.write_bytes(b"solid 2\nendsolid 2\n")
+    seen = {}
+
+    def handler(req):
+        body = req.content.decode("latin-1")
+        seen["names"] = re.findall(r'name="files"; filename="([^"]+)"', body)
+        seen["items"] = json.loads(re.search(r'name="items"\r\n\r\n(.*?)\r\n--', body, re.S).group(1))
+        return httpx.Response(200, content=b"PACKED")
+
+    c = _client(httpx.MockTransport(handler))
+    assert c.pack_stls([ConstructInput(a1, 5, "7"), ConstructInput(a2, 1, "9")], 220.0, 220.0) == b"PACKED"
+    assert seen["names"] == ["7_bracket.stl", "9_bracket.stl"]            # 5 copies, but one upload each; names unique
+    assert seen["items"] == [{"file": "7_bracket.stl", "quantity": 5}, {"file": "9_bracket.stl", "quantity": 1}]
+
+
+def test_pack_upload_names_drop_characters_the_sidecar_cannot_match(tmp_path):
+    import json
+    import re
+    from app.services.providers.laminus.sidecar_client import _UNSAFE_UPLOAD_CHARS
+    # quotes can't be Windows filenames, so the sanitizer is checked directly with one
+    assert _UNSAFE_UPLOAD_CHARS.sub("_", "a" + chr(34) + "b;c" + chr(10) + "d" + chr(13) + "e" + chr(0) + "f" + chr(9) + "g" + chr(127) + "h") == "a_b_c_d_e_f_g_h"
+    stl = tmp_path / "my; part.stl"
+    stl.write_bytes(b"solid x\nendsolid x\n")
+    seen = {}
+
+    def handler(req):
+        body = req.content.decode("latin-1")
+        seen["names"] = re.findall(r'name="files"; filename="([^"]+)"', body)
+        seen["items"] = json.loads(re.search(r'name="items"\r\n\r\n(.*?)\r\n--', body, re.S).group(1))
+        return httpx.Response(200, content=b"PACKED")
+
+    c = _client(httpx.MockTransport(handler))
+    assert c.pack_stls([ConstructInput(stl, 2, "4")], bed_x=100.0, bed_y=100.0) == b"PACKED"
+    assert seen["names"] == ["4_my_ part.stl"]
+    assert seen["items"] == [{"file": "4_my_ part.stl", "quantity": 2}]   # same sanitized name on the wire and in items
 
 
 def test_pack_stls_raises_on_error(tmp_path):
@@ -162,7 +235,7 @@ def test_pack_stls_raises_on_error(tmp_path):
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
-        c.pack_stls([stl], bed_x=100.0, bed_y=100.0)
+        c.pack_stls([ConstructInput(stl, 1, "1")], bed_x=100.0, bed_y=100.0)
 
 
 # ── v1 contract ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FleetScreen } from './FleetScreen';
 import type { FleetPrinter } from '../api/fleet';
@@ -138,6 +138,24 @@ describe('FleetScreen', () => {
     expect(screen.getByText('Forge')).toBeInTheDocument();
     expect(screen.queryByText('Hijacked')).toBeNull();
     expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();       // and it did not add a printer either
+  });
+
+  it('a printer whose setup is incomplete carries the setup badge and card; a live printer_configured event clears both (BIZ-369)', async () => {
+    mockFetch([{ ...PRINTER_1, configured: false, config_error: 'Missing Access Code' }, { ...PRINTER_1, id: 2, name: 'Held', queue_on: false }]);
+    render(<FleetScreen />);
+    await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
+    expect(screen.getAllByTestId('setup-badge')).toHaveLength(1);
+    expect(screen.getAllByTestId('queue-off-badge')).toHaveLength(1);
+    expect(screen.getByTestId('setup-card').textContent).toMatch(/Missing Access Code/);
+
+    act(() => {
+      MockWS.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'printer_configured', data: { printer_id: 1, configured: true, config_error: null } }),
+      });
+    });
+    expect(screen.queryByTestId('setup-badge')).toBeNull();
+    expect(screen.queryByTestId('setup-card')).toBeNull();
+    expect(screen.getAllByTestId('queue-off-badge')).toHaveLength(1);
   });
 
   it('shows an alarm badge linking to that printer\'s alarms, only while it has unacknowledged alarms', async () => {
@@ -569,6 +587,24 @@ describe('FleetScreen — ready-for-work gate and reconnect', () => {
     expect(screen.queryByRole('button', { name: /ready for new work/i })).toBeNull();
   });
 
+  it('flags a printer that collected waived parts, and says when it stopped taking work (BIZ-365)', async () => {
+    let p: FleetPrinter = { ...PRINTER_1, waived_parts: 2, waiver_flag: true, waiver_stopped: false } as FleetPrinter;
+    stubFleetApi(() => p);
+    const { unmount } = render(<FleetScreen />);
+    expect((await screen.findAllByTestId('waiver-badge'))[0].textContent).toBe('Check: 2 waived');
+    unmount();
+    p = { ...p, waiver_stopped: true } as FleetPrinter;
+    render(<FleetScreen />);
+    expect((await screen.findAllByTestId('waiver-badge'))[0].textContent).toBe('Stopped: 2 waived');
+  });
+
+  it('shows no waiver badge below the thresholds', async () => {
+    stubFleetApi(() => ({ ...PRINTER_1, waived_parts: 2, waiver_flag: false, waiver_stopped: false }) as FleetPrinter);
+    render(<FleetScreen />);
+    await screen.findAllByText('Forge');
+    expect(screen.queryByTestId('waiver-badge')).toBeNull();
+  });
+
   it('keeps offering "Ready for new work" after the card is expanded', async () => {
     stubFleetApi(() => AWAITING);
     render(<FleetScreen />);
@@ -590,6 +626,33 @@ describe('FleetScreen — ready-for-work gate and reconnect', () => {
 
     await waitFor(() => expect(calls).toContainEqual({ url: '/api/v1/printers/1/plate-cleared', method: 'POST' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: /ready for new work/i })).toBeNull());
+  });
+
+  it('"Ready for new work" on a plate with a project job asks for print results and reports them with the clear (BIZ-364)', async () => {
+    const posts: { url: string; body: unknown }[] = [];
+    let cleared = false;
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (method === 'POST') {
+        posts.push({ url, body: init?.body ? JSON.parse(init.body as string) : null });
+        cleared = true;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, requeued_job_ids: [9], held: [] }) });
+      }
+      if (url === '/api/v1/printers/1/plate-results') return Promise.resolve({ ok: true, json: () => Promise.resolve(
+        { job_id: 5, project_id: 7, parts: [{ project_item_id: 50, file_name: 'Bracket.stl', quantity: 4 }] }) });
+      if (url === '/api/v1/maintenance/status') return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([{ ...AWAITING, awaiting_plate_clear: !cleared }]) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /ready for new work/i }))[0]);
+    const dialog = await screen.findByRole('dialog', { name: 'Print results' });
+    expect(posts).toEqual([]);                                             // nothing is cleared until the results are in
+    fireEvent.change(within(dialog).getByLabelText('Failed Bracket.stl'), { target: { value: '1' } });
+    expect(within(dialog).getByTestId('succeeded-Bracket.stl').textContent).toBe('3');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear plate' }));
+    await waitFor(() => expect(posts).toEqual([{ url: '/api/v1/printers/1/plate-cleared',
+      body: { job_id: 5, results: [{ project_item_id: 50, quantity_failed: 1 }] } }]));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Print results' })).toBeNull());
   });
 
   it('an offline printer offers Reconnect, which POSTs reconnect and refetches the fleet', async () => {

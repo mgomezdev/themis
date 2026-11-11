@@ -39,6 +39,8 @@ def _fleet_dict(p: Printer) -> dict:
         "printer_type": p.printer_type,
         "enabled": p.enabled,
         "queue_on": p.queue_on,
+        "configured": p.configured,
+        "config_error": p.config_error,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "quiet_start": p.quiet_start,
@@ -76,10 +78,15 @@ async def list_fleet(session: AsyncSession = Depends(get_session)) -> list[dict]
     )).all():
         count, worst = badge.get(pid, (0, "info"))
         badge[pid] = (count + n, sev if rank(sev) > rank(worst) else worst)
+    from ...services import part_waivers
+    waived = await part_waivers.counts(session)
     out = []
     for p in result.scalars().all():
         count, worst = badge.get(p.id, (0, None))
-        out.append({**_fleet_dict(p), "alarm_count": count, "alarm_severity": worst})
+        n = waived.get(p.id, 0)
+        out.append({**_fleet_dict(p), "alarm_count": count, "alarm_severity": worst,
+                    # BIZ-365: waived parts, and whether that reached the printer's flag (wash/maintain) or stop threshold
+                    "waived_parts": n, "waiver_flag": part_waivers.flagged(p, n), "waiver_stopped": part_waivers.stopped(p, n)})
     return out
 
 

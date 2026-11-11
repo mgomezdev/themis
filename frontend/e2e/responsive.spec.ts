@@ -167,6 +167,25 @@ test.describe('desktop is unchanged', () => {
   });
 });
 
+test.describe('short desktop window', () => {
+  test.use({ viewport: { width: 1280, height: 560 } });
+
+  test('the expanded Settings sub-items scroll into reach in the sidebar', async ({ page }) => {
+    await setup(page);
+    await page.goto('/settings/about');
+    await expect(page.locator('.sidebar')).toBeVisible();
+    const last = page.locator('.sidebar').getByRole('link', { name: 'About' });   // the last Settings sub-item
+    await expect(last).toBeAttached();
+    const below = () => last.evaluate(e => e.getBoundingClientRect().bottom > window.innerHeight);
+    expect(await below()).toBe(true);                              // the window is short enough to overflow
+    await page.locator('.sidebar .nav-section').first().hover();
+    await page.mouse.wheel(0, 2000);                               // a user scroll, not a programmatic scrollIntoView
+    await expect.poll(below).toBe(false);
+    const toggle = await page.locator('.sidebar-toggle').boundingBox();
+    expect(toggle!.y + toggle!.height).toBeLessThanOrEqual(page.viewportSize()!.height);  // the collapse toggle stays pinned in view
+  });
+});
+
 test('the app is installable: manifest linked and served', async ({ page, request }) => {
   await setup(page);
   await page.goto('/fleet');

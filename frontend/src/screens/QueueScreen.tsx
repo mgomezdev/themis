@@ -11,6 +11,7 @@ import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFai
 import { useFleetData } from '../api/fleet';
 import { useProjects } from '../api/projects';
 import { JobProjectControl } from '../components/JobProjectControl';
+import { QueuePools } from '../components/QueuePools';
 import type { StatusKey } from '../data/types';
 import { apiFetch } from '../api/client';
 import { startsIn } from '../lib/schedule';
@@ -37,6 +38,7 @@ interface DisplayJob {
   fileName: string | null;
   projectId: number | null;
   projectName: string | null;
+  poolName: string | null;           // BIZ-362: the print pool this plate was packed from
   plateName: string;
   status: string;
   blockReason: string | null;
@@ -220,7 +222,7 @@ function JobCardRich({
               {job.projectName && (
                 <div className="tiny" style={{ color: 'var(--accent-hi)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                      title={`Project: ${job.projectName}`}>
-                  {Icons.layers} {job.projectName}
+                  {Icons.layers} {job.projectName}{job.poolName && ` · pool ${job.poolName}`}
                 </div>
               )}
             </div>
@@ -781,6 +783,7 @@ export function QueueScreen() {
 
   const { projects, refetch: refetchProjects } = useProjects();
   const projectNames = useMemo(() => new Map(projects.map(p => [p.id, p.name])), [projects]);
+  const [poolNames, setPoolNames] = useState<Map<number, string>>(new Map());
 
   // Map ApiJob → DisplayJob
   const jobs: DisplayJob[] = useMemo(() => {
@@ -822,6 +825,7 @@ export function QueueScreen() {
         fileName: fileName ?? null,
         projectId: j.project_id ?? null,
         projectName: j.project_id != null ? (projectNames.get(j.project_id) ?? `Project #${j.project_id}`) : null,
+        poolName: j.pool_group_id != null ? (poolNames.get(j.pool_group_id) ?? 'group') : null,
         sliceCache: {
           status: j.status, save_slice: j.save_slice ?? false, sliced_version_id: j.sliced_version_id ?? null,
           slice_cache_info: j.slice_cache_info ?? null,
@@ -856,7 +860,7 @@ export function QueueScreen() {
       const rank = queueable.findIndex(j => j.id === job.id);
       return { ...job, ordinalRank: rank >= 0 ? rank + 1 : 0 };
     });
-  }, [rawJobs, getPlate, getFileName, printers]);
+  }, [rawJobs, getPlate, getFileName, printers, poolNames]);
 
   const filtered = jobs.filter(j => {
     if (filter === 'all') return true;
@@ -944,6 +948,8 @@ export function QueueScreen() {
             <button className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setActionError(null)}>{Icons.x}</button>
           </div>
         )}
+
+        <QueuePools refreshKey={rawJobs} onPools={ps => setPoolNames(new Map(ps.map(p => [p.group_id, p.name])))} />
 
         {/* Laminus health banner */}
         {laminusDown && (

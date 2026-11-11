@@ -1,9 +1,8 @@
 """System-level plugin scenarios (BIZ-304): interactions across the host, the registry, the HTTP API and core-owned records, using
 fake plugins only (no printers, no network). Single-boundary behaviour is held by each component's own tests; the full scenario ->
 test mapping is docs/plugin-test-matrix.md, and `test_plugin_matrix_doc.py` fails when a row names a test that does not exist."""
-import pytest
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app import plugins
 from app.models import Job, JobSpoolSnapshot, Printer

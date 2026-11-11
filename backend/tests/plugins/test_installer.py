@@ -1,6 +1,5 @@
 """Plugin installation pipeline (BIZ-223): safe extraction, validation, subprocess dry-run, commit/upgrade/rollback/uninstall,
 GitHub fetch (stubbed HTTP). A failed install must leave nothing on disk and no row."""
-import json
 import stat
 import tarfile
 import zipfile

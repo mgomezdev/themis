@@ -142,7 +142,7 @@ async def test_a_held_conflict_blocks_later_writes_for_that_spool_only(client, s
     fake, wid = await _held(client, session_factory)
     fake.spools["2"] = spool("2", 50.0)
     later = await _queue(session_factory, ref="1", pre=80.0, target=70.0)
-    other = await _queue(session_factory, ref="2", pre=50.0, target=40.0)
+    await _queue(session_factory, ref="2", pre=50.0, target=40.0)
 
     assert (await client.post(f"{BASE}/pending-writes/flush")).json() == {"applied": 1}
     assert fake.writes == [("2", 40.0)]
@@ -201,7 +201,7 @@ async def test_correcting_the_weight_by_hand_supersedes_a_held_conflict(client, 
 
 
 async def test_a_completion_records_the_start_weight_the_write_was_computed_from(client, session_factory):
-    from app.services.inventory import deduction, snapshots
+    from app.services.inventory import deduction
     from app.models import JobSpoolSnapshot
     fake = FakeInventoryProvider(spools=[spool("1", 100.0)])
     await use_provider(fake)

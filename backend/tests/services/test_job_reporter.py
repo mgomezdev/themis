@@ -297,3 +297,97 @@ async def test_a_dead_printers_late_completion_cannot_touch_the_job_that_now_pri
 
     assert (await rows(session_factory, Job))[0].status == "printing"                       # B's print is untouched
     assert len(await rows(session_factory, EventOutbox)) == outbox_before
+
+
+async def _attempt(session_factory, job_id):
+    from app.services import job_details
+    async with session_factory() as session:
+        return (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+
+
+def _v2(attempt_id, revision, slots=((0, 4.0),)):
+    return {"version": 2, "attempt_id": attempt_id, "revision": revision, "final": True, "source": "reported",
+            "slots": [{"slot": s, "grams": g} for s, g in slots]}
+
+
+async def test_usage_reports_are_attempt_bound_ordered_and_kept_after_completion(env, session_factory):
+    from app.services import job_details
+    from app.services.job_reporter import REPORT_FIELD
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)
+    assert not await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)           # duplicate
+    assert not await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)           # older
+    with pytest.raises(JobReportError, match="another or unknown print attempt"):
+        await reporter.report_usage(job_id, _v2("old-print", 3), printer_id=printer_id)
+    with pytest.raises(JobReportError, match="invalid filament usage report"):
+        await reporter.report_usage(job_id, {**_v2(attempt, 3), "version": 1}, printer_id=printer_id)
+    assert await reporter.report(job_id, "complete")
+    value = (await job_details.get_details(job_id, [REPORT_FIELD]))[REPORT_FIELD]["value"]
+    assert value["revision"] == 2 and value["slots"] == [{"slot": 0, "grams": 4.0}]
+    with pytest.raises(JobReportError, match="no longer printing"):                 # late, not a duplicate: the plugin is told
+        await reporter.report_usage(job_id, _v2(attempt, 3), printer_id=printer_id)
+
+
+async def test_a_reprint_is_a_new_attempt_whose_revisions_start_again_and_the_old_attempt_is_closed(env, session_factory):
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    first = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report_usage(job_id, _v2(first, 5), printer_id=printer_id)
+    assert await env.engine.requeue_dead_print(job_id, printer_id, "offline")
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.status, job.assigned_printer_id = "sliced", printer_id
+        await s.commit()
+    assert await reporter.report(job_id, "started")
+    second = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert second != first
+    assert await reporter.report_usage(job_id, _v2(second, 0), printer_id=printer_id)               # revision 0 is fine again
+    with pytest.raises(JobReportError, match="another or unknown print attempt"):
+        await reporter.report_usage(job_id, _v2(first, 6), printer_id=printer_id)
+
+
+async def test_a_cancelled_print_takes_its_final_report_until_it_is_settled_after_the_grace(env, session_factory):
+    """BIZ-366 v2: a cancel's attempt is settled CANCEL_SETTLE_GRACE_S later, so the plugin's final summary still counts."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from app.models import EventDelivery, EventOutbox
+    from app.services import completion_events, job_details
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    async with session_factory() as s:                                          # the cancel route's transaction
+        await completion_events.enqueue_attempt_ended(s, job_id, printer_id, result="cancelled")
+        job = await s.get(Job, job_id)
+        job.status = "cancelled"
+        await s.commit()
+        row = (await s.execute(select(EventOutbox).where(EventOutbox.name == "job.attempt_ended"))).scalar_one()
+        due = [d.next_attempt_at for d in (await s.execute(select(EventDelivery).where(EventDelivery.outbox_id == row.id))).scalars()]
+    soon = datetime.now(timezone.utc) + timedelta(seconds=completion_events.CANCEL_SETTLE_GRACE_S - 10)
+    assert due and all(datetime.fromisoformat(d) > soon for d in due)             # held for the grace period
+    assert await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)   # the final summary, after the cancel
+    async with session_factory() as s:                                          # once settled, the attempt is closed
+        await job_details.set_details(s, job_id, "core", {"filament_accounting": {"attempts": {attempt: {"grams": 4.0}}, "total_grams": 4.0}})
+        await s.commit()
+    with pytest.raises(JobReportError, match="no longer printing"):
+        await reporter.report_usage(job_id, _v2(attempt, 2), printer_id=printer_id)
+
+
+async def test_a_failed_print_is_settled_at_once_and_takes_no_late_report(env, session_factory):
+    from sqlalchemy import select
+    from app.models import EventDelivery, EventOutbox
+    job_id, printer_id = await seed(session_factory, env.tmp, status="sliced")
+    reporter = JobReporter("prn_a")
+    assert await reporter.report(job_id, "started")
+    attempt = (await _attempt(session_factory, job_id))["attempt_id"]
+    assert await reporter.report(job_id, "failed", reason="spaghetti")
+    async with session_factory() as s:
+        row = (await s.execute(select(EventOutbox).where(EventOutbox.name == "job.attempt_ended"))).scalar_one()
+        (d,) = (await s.execute(select(EventDelivery).where(EventDelivery.outbox_id == row.id))).scalars()
+        assert row.envelope["payload"]["result"] == "failed" and d.next_attempt_at <= qe_module._now()
+    with pytest.raises(JobReportError, match="no longer printing"):
+        await reporter.report_usage(job_id, _v2(attempt, 1), printer_id=printer_id)

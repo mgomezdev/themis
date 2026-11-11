@@ -20,6 +20,16 @@ class JobStartedPayload(BaseModel):
     loaded_filaments: list[dict] = []
 
 
+class JobAttemptEndedPayload(BaseModel):
+    """`job.attempt_ended`: a started physical print ended without completing (BIZ-366 v2). `loaded_filaments` = the printer's slots
+    at that moment (a spool loaded mid-print is found there)."""
+    model_config = ConfigDict(extra="forbid")
+    result: Literal["failed", "cancelled", "requeued"]
+    attempt_id: str
+    context: dict = {}                    # the attempt's start context (filament_usage_context) at the moment it ended
+    loaded_filaments: list[dict] = []
+
+
 class JobCompletePayload(BaseModel):
     """`job.complete`: `source` is `queue` (a real print finished) or `manual` (an admin completed it without printing, which
     fires no webhooks or notifications). `loaded_filaments` is the printer's filament slots at completion (the loaded slot may change

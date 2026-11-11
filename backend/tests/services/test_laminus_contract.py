@@ -20,7 +20,7 @@ def test_construct_resolves_to_the_single_active_provider_and_produces_a_project
     p = FakeProjectConstructor()
     out = c.resolve_construct(p, p.status())
     assert (out.action, out.provider_id) == (c.Action.PROCEED, "fake-constructor")
-    art = p.construct(c.ConstructRequest((tmp_path / "a.stl",), c.TargetPrinter(BED)), tmp_path)
+    art = p.construct(c.ConstructRequest((c.ConstructInput(tmp_path / "a.stl", 1, "1"),), c.TargetPrinter(BED)), tmp_path)
     assert art.kind is c.ArtifactKind.PROJECT_3MF and art.path.read_bytes() == b"3mf"
     assert p.calls[0].target.model_uuid is None and p.calls[0].target.bed_mm == BED   # bed-only target is valid
 
