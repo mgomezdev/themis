@@ -1,4 +1,4 @@
-// The Project builder's STL folder tree: one row per folder, the root open by default, a folder with
+// The Project Builder's model folder tree: one row per folder, the root open by default, a folder with
 // subfolders toggling open/closed when clicked. Selecting is the caller's (`onSelect(path)`).
 import { useState } from 'react';
 import { Icons } from './icons';
@@ -22,9 +22,9 @@ export function StlFolderTree({
         style={{
           width: '100%',
           padding: `5px 8px 5px ${8 + depth * 14}px`,
-          background: isActive ? 'oklch(87% 0.185 95 / 0.10)' : 'transparent',
+          background: isActive ? 'var(--accent-tint)' : 'transparent',
           border: 'none',
-          color: isActive ? 'var(--accent)' : 'var(--text-2)',
+          color: isActive ? 'var(--accent)' : 'var(--text-1)',
           cursor: 'pointer',
           textAlign: 'left',
           fontSize: 12,

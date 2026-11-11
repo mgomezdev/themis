@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStlTree, isPickableStl, normalizeFolder, stlFilesInView } from './stlTree';
+import { buildStlTree, filesInView, isPickableModel, normalizeFolder } from './stlTree';
 import type { FolderNode } from '../data/types';
 
 const f = (original_filename: string, folder = '', missing = false) => ({ original_filename, folder, missing });
@@ -27,17 +27,19 @@ describe('normalizeFolder', () => {
   });
 });
 
-describe('isPickableStl', () => {
+describe('isPickableModel', () => {
   it.each([
     [f('part.stl'), true],
     [f('PART.STL'), true],
-    [f('part.Stl'), true],
+    [f('plate.3mf'), true],
+    [f('Sliced.GCODE'), true],
     [f('part.stl', '', true), false],      // missing on disk
-    [f('part.3mf'), false],
-    [f('part.stl.gcode'), false],
+    [f('notes.txt'), false],
+    [f('part.stl.zip'), false],
     [f('stl'), false],
+    [f('part.gcode.3mf'), true],          // a pre-sliced 3MF is a 3MF file
   ])('%j -> %s', (file, expected) => {
-    expect(isPickableStl(file)).toBe(expected);
+    expect(isPickableModel(file)).toBe(expected);
   });
 });
 
@@ -80,7 +82,7 @@ describe('buildStlTree', () => {
   });
 });
 
-describe('stlFilesInView', () => {
+describe('filesInView', () => {
   const FILES = [
     f('Root.stl', ''),
     f('Ball.stl', 'Toys'),
@@ -91,29 +93,29 @@ describe('stlFilesInView', () => {
   const names = (out: { original_filename: string }[]) => out.map(x => x.original_filename);
 
   it('shows every file at the root', () => {
-    expect(names(stlFilesInView(FILES, '', ''))).toEqual(names(FILES));
+    expect(names(filesInView(FILES, '', ''))).toEqual(names(FILES));
   });
 
   it('shows only the files directly in the selected folder, not its subfolders', () => {
-    expect(names(stlFilesInView(FILES, 'Toys', ''))).toEqual(['Ball.stl']);
-    expect(names(stlFilesInView(FILES, 'Toys/Cars', ''))).toEqual(['Car.stl']);
+    expect(names(filesInView(FILES, 'Toys', ''))).toEqual(['Ball.stl']);
+    expect(names(filesInView(FILES, 'Toys/Cars', ''))).toEqual(['Car.stl']);
   });
 
   it('matches a selected folder however the file\'s folder is slashed', () => {
-    expect(names(stlFilesInView(FILES, 'Tools', ''))).toEqual(['Slash.stl', 'Bolt.stl']);
+    expect(names(filesInView(FILES, 'Tools', ''))).toEqual(['Slash.stl', 'Bolt.stl']);
   });
 
   it('searches names case-insensitively across all folders, ignoring the selected one', () => {
-    expect(names(stlFilesInView(FILES, 'Tools', 'CAR'))).toEqual(['Car.stl']);
-    expect(names(stlFilesInView(FILES, '', 'l.stl'))).toEqual(['Ball.stl']);
+    expect(names(filesInView(FILES, 'Tools', 'CAR'))).toEqual(['Car.stl']);
+    expect(names(filesInView(FILES, '', 'l.stl'))).toEqual(['Ball.stl']);
   });
 
   it('trims the search, and treats a blank one as no search', () => {
-    expect(names(stlFilesInView(FILES, '', '  bolt '))).toEqual(['Bolt.stl']);
-    expect(names(stlFilesInView(FILES, 'Toys', '   '))).toEqual(['Ball.stl']);
+    expect(names(filesInView(FILES, '', '  bolt '))).toEqual(['Bolt.stl']);
+    expect(names(filesInView(FILES, 'Toys', '   '))).toEqual(['Ball.stl']);
   });
 
   it('is empty for a folder with no files of its own', () => {
-    expect(stlFilesInView(FILES, 'Nope', '')).toEqual([]);
+    expect(filesInView(FILES, 'Nope', '')).toEqual([]);
   });
 });

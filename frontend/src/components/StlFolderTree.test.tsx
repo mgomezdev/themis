@@ -68,8 +68,8 @@ describe('StlFolderTree', () => {
     expect(icon('Tools')).toBe('var(--accent-hi)');
     expect(icon('Toys')).toBe('var(--text-3)');
     expect(row('Tools')!.style.color).toBe('var(--accent)');
-    expect(row('Toys')!.style.color).toBe('var(--text-2)');
-    expect(row('All files')!.style.color).toBe('var(--text-2)');
+    expect(row('Toys')!.style.color).toBe('var(--text-1)');
+    expect(row('All files')!.style.color).toBe('var(--text-1)');
   });
 
   it('indents each level', async () => {

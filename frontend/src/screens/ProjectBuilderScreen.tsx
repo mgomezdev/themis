@@ -1,9 +1,15 @@
-import { ItemSourcePicker, RULES, initialSource, type ItemKind, type PackRule } from '../components/ItemSourcePicker';
+import { ItemSourcePicker, RULES, initialSource } from '../components/ItemSourcePicker';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
+import { buildStlTree, filesInView, isPickableModel } from '../lib/stlTree';
+import {
+  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft, unitCostValue,
+  type LocalItem, type LocalLink, type LocalPart, type OrderType, type RemovedSnapshot,
+} from '../lib/projectDraft';
+import { StlFolderTree } from '../components/StlFolderTree';
 import { PrintGroupsCard } from '../components/PrintGroupsCard';
 import { GroupBanner, type BannerSelection } from '../components/builder/GroupBanner';
 import { ItemSections, type BulkAction } from '../components/builder/ItemSections';
@@ -13,7 +19,7 @@ import { FileDropZone } from '../components/FileDropZone';
 import { promoteProject } from '../api/customers';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
-import type { LibraryFile, FolderNode } from '../data/types';
+import type { LibraryFile } from '../data/types';
 import {
   getProject, createProject, patchProject,
   addProjectItem, updateProjectItem, deleteProjectItem,
@@ -24,143 +30,7 @@ import {
   type ProjectGroup, type ProjectItem, type ProjectReview,
 } from '../api/projects';
 
-// ---------------------------------------------------------------------------
-// STL file tree helpers
-// ---------------------------------------------------------------------------
-
-function buildStlTree(files: LibraryFile[]): FolderNode {
-  const root: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
-  for (const f of files) {
-    const parts = f.folder.replace(/^\//, '').split('/').filter(Boolean);
-    let node = root;
-    for (const part of parts) {
-      if (!node.children[part]) {
-        node.children[part] = {
-          name: part,
-          path: parts.slice(0, parts.indexOf(part) + 1).join('/'),
-          count: 0,
-          children: {},
-        };
-      }
-      node = node.children[part];
-    }
-  }
-  return root;
-}
-
-function FolderRow({
-  node, depth, selected, onSelect,
-}: {
-  node: FolderNode;
-  depth: number;
-  selected: string;
-  onSelect: (path: string) => void;
-}) {
-  const [open, setOpen] = useState(depth === 0);
-  const childKeys = Object.keys(node.children).sort();
-  const isActive = selected === node.path;
-  return (
-    <div>
-      <button
-        onClick={() => { onSelect(node.path); if (childKeys.length) setOpen(o => !o); }}
-        style={{
-          width: '100%',
-          padding: `5px 8px 5px ${8 + depth * 14}px`,
-          background: isActive ? 'var(--accent-tint)' : 'transparent',
-          border: 'none',
-          color: isActive ? 'var(--accent)' : 'var(--text-1)',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontSize: 12,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          borderRadius: 4,
-        }}
-      >
-        <span style={{ color: 'var(--text-4)', width: 12 }}>
-          {childKeys.length ? (open ? Icons.chevD : Icons.chevR) : null}
-        </span>
-        <span style={{ color: isActive ? 'var(--accent-hi)' : 'var(--text-3)' }}>{Icons.files}</span>
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {node.name}
-        </span>
-      </button>
-      {open && childKeys.map(k => (
-        <FolderRow key={k} node={node.children[k]} depth={depth + 1}
-                   selected={selected} onSelect={onSelect} />
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Local item row state (before saving)
-// ---------------------------------------------------------------------------
-
-interface LocalItem extends FilamentAsk {
-  localId: string;
-  serverId?: number;
-  file_id: number;
-  file_name: string;
-  quantity: number;
-  sort_order: number;
-  kind: ItemKind;                 // BIZ-356: STL, a 3MF plate or object, or gcode
-  source_ref: string | null;
-  pack_rule: PackRule;
-  group_id: number | null;        // BIZ-363: its print group (null = the Default Group)
-}
-
-const askOf = (it: FilamentAsk): FilamentAsk => ({
-  filament_manufacturer: it.filament_manufacturer, filament_type: it.filament_type,
-  filament_subtype: it.filament_subtype, filament_color: it.filament_color,
-});
-
-interface LocalLink {
-  localId: string;
-  serverId?: number;
-  url: string;
-  label: string;
-}
-
-interface LocalPart {
-  localId: string;
-  serverId?: number;
-  name: string;
-  quantity: number;
-  allocated: boolean;
-  unitCost: string;   // '' = no cost entered (the field is optional)
-}
-
-/** The API value for a part's unit cost: null when blank, so an edited part can have its cost cleared. */
-const unitCostValue = (pt: { unitCost: string }): number | null => (pt.unitCost.trim() === '' ? null : Number(pt.unitCost));
-
-let _lid = 0;
-const newLocalId = () => String(++_lid);
-
-type RemovedSnapshot =
-  | { kind: 'item'; label: string; removed: { index: number; item: LocalItem }[] }
-  | { kind: 'link'; label: string; index: number; link: LocalLink }
-  | { kind: 'part'; label: string; index: number; part: LocalPart };
-
 const UNDO_TIMEOUT_MS = 6000;
-
-// ---------------------------------------------------------------------------
-// Error banner
-// ---------------------------------------------------------------------------
-
-const GENERATE_ERRORS: Record<number, string> = {
-  422: 'Add at least one part before generating.',
-  502: 'Orca sidecar is offline. Check the container.',
-  504: 'Generation timed out. Try fewer parts or reduce quantities.',
-};
-
-function parseGenerateError(msg: string): string {
-  const code = parseInt(msg);
-  if (!isNaN(code) && GENERATE_ERRORS[code]) return GENERATE_ERRORS[code];
-  if (msg.includes('STL') || msg.includes('stl')) return 'One or more STL files are missing. Remove and re-add them.';
-  return `Generation failed: ${msg}`;
-}
 
 // ---------------------------------------------------------------------------
 // ProjectBuilderScreen
@@ -186,7 +56,7 @@ export function ProjectBuilderScreen() {
   const [name, setName] = useState('');
   const [customer, setCustomer] = useState('');
   const [customerId, setCustomerId] = useState<number | null>(newForCustomerId);
-  const [orderType, setOrderType] = useState<'internal' | 'customer'>(newForCustomerId ? 'customer' : 'internal');
+  const [orderType, setOrderType] = useState<OrderType>(newForCustomerId ? 'customer' : 'internal');
   const [onHold, setOnHold] = useState(false);
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -263,95 +133,34 @@ export function ProjectBuilderScreen() {
   const [cleanSnap, setCleanSnap] = useState('');
   const [saveOk, setSaveOk] = useState(false);
 
-  function computeSnap(
-    n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
-    its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
-    pr: string = price,
-    cid: number | null = customerId,
-    del: number[] = deletedItemIds,
-  ) {
-    return JSON.stringify({
-      name: n, customer: ot === 'customer' ? c : '', customerId: ot === 'customer' ? cid : null, orderType: ot,
-      onHold: oh, dueDate: dd, notes: no, price: pr,
-      items: its.map(i => ({
-        fid: i.file_id, qty: i.quantity, rule: i.pack_rule, gid: i.group_id,
-        fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
-      })),
-      del,
-      // Server ids are left out: a save fills them in, and that is not an edit.
-      links: lks.map(l => ({ url: l.url, label: l.label })),
-      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost })),
-    });
-  }
+  /** The dirty-tracking fingerprint of the draft as it is now (`del`: pending item deletes, default the current ones). */
+  const snapOf = (del: number[] = deletedItemIds) =>
+    draftSnapshot({ name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts }, del);
 
   // File tree state
   const { files: allFiles } = useFiles({});
   // Every model and pre-sliced file can be an item (BIZ-356): STLs, 3MF plates/objects, gcode plates.
-  const stlFiles = allFiles.filter(f => /\.(stl|3mf|gcode)$/i.test(f.original_filename) && !f.missing);
+  const stlFiles = allFiles.filter(isPickableModel);
   const fileById = new Map(allFiles.map(f => [f.id, f]));
   const [selectedFolder, setSelectedFolder] = useState('');
   const [search, setSearch] = useState('');
   const searchLower = search.trim().toLowerCase();
   const folderTree = buildStlTree(stlFiles);
-  const folderFiles = searchLower
-    ? stlFiles.filter(f => f.original_filename.toLowerCase().includes(searchLower))
-    : stlFiles.filter(f => {
-        const norm = f.folder.replace(/^\//, '');
-        return selectedFolder === '' ? true : norm === selectedFolder;
-      });
+  const folderFiles = filesInView(stlFiles, selectedFolder, search);
 
   // Load existing project
   useEffect(() => {
     if (!projectId) return;
     getProject(projectId).then(p => {
-      const n = p.name;
-      const c = p.customer ?? '';
-      // A project linked to an account is a customer project, whatever its old type said —
-      // otherwise an unrelated save would unlink it.
-      const ot = p.customer_id != null ? 'customer' : (p.order_type as 'internal' | 'customer') ?? 'internal';
-      const oh = p.on_hold ?? false;
-      const dd = p.due_date ?? '';
-      const no = p.notes ?? '';
-      const pr = p.price != null ? String(p.price) : '';
-      const cid = p.customer_id;
-      // A linked account's current name wins over whatever was typed before it was linked.
-      const cName = cid != null && p.customer_name ? p.customer_name : c;
-      const its: LocalItem[] = p.items.map(it => ({
-        localId: newLocalId(),
-        serverId: it.id,
-        file_id: it.file_id,
-        file_name: it.file_name,
-        quantity: it.quantity,
-        kind: it.kind ?? 'stl', source_ref: it.source_ref ?? null, pack_rule: it.pack_rule ?? 'split',
-        group_id: it.group_id ?? null,
-        filament_manufacturer: it.filament_manufacturer,
-        filament_type: it.filament_type,
-        filament_subtype: it.filament_subtype,
-        filament_color: it.filament_color,
-        sort_order: it.sort_order,
-      }));
-      const lks: LocalLink[] = (p.links ?? []).map(l => ({
-        localId: newLocalId(),
-        serverId: l.id,
-        url: l.url,
-        label: l.label ?? '',
-      }));
-      const prts: LocalPart[] = (p.parts ?? []).map(pt => ({
-        localId: newLocalId(),
-        serverId: pt.id,
-        name: pt.name,
-        quantity: pt.quantity,
-        allocated: pt.allocated,
-        unitCost: pt.unit_cost != null ? String(pt.unit_cost) : '',
-      }));
-      setName(n); setCustomer(cName); setCustomerId(cid); setOrderType(ot); setOnHold(oh);
-      setDueDate(dd); setNotes(no); setPrice(pr); setIsDraft(p.stage === 'draft');
-      setItems(its); setLinks(lks); setParts(prts);
+      const d = projectToDraft(p);
+      setName(d.name); setCustomer(d.customer); setCustomerId(d.customerId); setOrderType(d.orderType); setOnHold(d.onHold);
+      setDueDate(d.dueDate); setNotes(d.notes); setPrice(d.price); setIsDraft(p.stage === 'draft');
+      setItems(d.items); setLinks(d.links); setParts(d.parts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setDeletedItemIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, cName, ot, oh, dd, no, its, lks, prts, pr, cid, []));
+      setCleanSnap(draftSnapshot(d));
     }).catch(console.error);
   }, [projectId]);
 
@@ -587,7 +396,7 @@ export function ProjectBuilderScreen() {
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setDeletedItemIds([]);
-      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts, price, customerId, []));
+      setCleanSnap(snapOf([]));
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
@@ -621,7 +430,7 @@ export function ProjectBuilderScreen() {
     try {
       const pid = await saveProject();
       setDeletedItemIds([]);
-      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts, price, customerId, []));
+      setCleanSnap(snapOf([]));
       setGenerating(true);
       const result = await generateProject(pid);
       setGenerateResult({ jobCount: result.jobs.length, warnings: (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w) });
@@ -634,7 +443,7 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  const currentSnap = computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts);
+  const currentSnap = snapOf();
   const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
   const canSave = name.trim().length > 0 && !saving && !generating;
 
@@ -729,7 +538,7 @@ export function ProjectBuilderScreen() {
             <select
               className="select"
               value={orderType}
-              onChange={e => setOrderType(e.target.value as 'internal' | 'customer')}
+              onChange={e => setOrderType(e.target.value as OrderType)}
             >
               <option value="internal">Internal</option>
               <option value="customer">Customer</option>
@@ -932,7 +741,7 @@ export function ProjectBuilderScreen() {
           style={{ marginBottom: 6, fontSize: 12 }}
         />
         {!searchLower && (
-          <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
+          <StlFolderTree node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
         )}
         <div style={{ borderTop: '1px solid var(--border-1)', marginTop: 4, paddingTop: 6 }}>
           {folderFiles.length === 0 && (

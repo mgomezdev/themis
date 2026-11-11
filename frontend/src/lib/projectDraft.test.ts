@@ -6,6 +6,7 @@ import {
 
 const ITEM = {
   localId: 'L1', serverId: 50, file_id: 1, file_name: 'Bracket.stl', quantity: 2, sort_order: 0,
+  kind: 'stl' as const, source_ref: null, pack_rule: 'split' as const, group_id: 1,
   filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null,
 };
 const LINK = { localId: 'L2', serverId: 70, url: 'https://example.test', label: 'Spec' };
@@ -43,12 +44,19 @@ describe('newLocalId', () => {
 });
 
 describe('draftSnapshot', () => {
-  it('is the same for equal drafts, whatever their local ids', () => {
+  it('is the same for equal drafts, whatever their local and server ids (a save filling ids in is no edit)', () => {
     const relabelled = {
       ...DRAFT,
-      items: [{ ...ITEM, localId: 'X' }], links: [{ ...LINK, localId: 'Y' }], parts: [{ ...PART, localId: 'Z' }],
+      items: [{ ...ITEM, localId: 'X', serverId: undefined }],
+      links: [{ ...LINK, localId: 'Y', serverId: 99 }], parts: [{ ...PART, localId: 'Z', serverId: undefined }],
     };
     expect(draftSnapshot(relabelled)).toBe(draftSnapshot(DRAFT));
+  });
+
+  it('counts saved items pending deletion (removing then re-adding a file is still a change)', () => {
+    expect(draftSnapshot(DRAFT, [51])).not.toBe(draftSnapshot(DRAFT));
+    expect(draftSnapshot(DRAFT, [])).toBe(draftSnapshot(DRAFT));
+    expect(draftSnapshot(DRAFT, [51])).not.toBe(draftSnapshot(DRAFT, [52]));
   });
 
   it.each<[string, Partial<ProjectDraft>]>([
@@ -67,17 +75,18 @@ describe('draftSnapshot', () => {
     ['item subtype', { items: [{ ...ITEM, filament_subtype: 'silk' }] }],
     ['item colour', { items: [{ ...ITEM, filament_color: '#FF0000' }] }],
     ['item order', { items: [{ ...ITEM, sort_order: 1 }] }],
+    ['item packing rule', { items: [{ ...ITEM, pack_rule: 'solo' }] }],
+    ['item group', { items: [{ ...ITEM, group_id: 2 }] }],
+    ['item moved to the Default Group', { items: [{ ...ITEM, group_id: null }] }],
     ['an added item', { items: [ITEM, { ...ITEM, localId: 'L9', file_id: 2 }] }],
     ['a removed item', { items: [] }],
     ['link url', { links: [{ ...LINK, url: 'https://other.test' }] }],
     ['link label', { links: [{ ...LINK, label: '' }] }],
-    ['link saved-ness', { links: [{ ...LINK, serverId: undefined }] }],
     ['a removed link', { links: [] }],
     ['part name', { parts: [{ ...PART, name: 'screw' }] }],
     ['part quantity', { parts: [{ ...PART, quantity: 5 }] }],
     ['part allocated', { parts: [{ ...PART, allocated: true }] }],
     ['part unit cost', { parts: [{ ...PART, unitCost: '' }] }],
-    ['part saved-ness', { parts: [{ ...PART, serverId: undefined }] }],
     ['a removed part', { parts: [] }],
   ])('changes with the %s', (_field, change) => {
     expect(draftSnapshot({ ...DRAFT, ...change })).not.toBe(draftSnapshot(DRAFT));
@@ -94,6 +103,7 @@ describe('draftSnapshot', () => {
       name: 'Gridfinity', customer: 'typed name', customerId: null, orderType: 'internal', onHold: true,
       dueDate: '2026-12-01', notes: 'rush', price: '40',
       items: [{ localId: 'a', serverId: 50, file_id: 1, file_name: 'Bracket.stl', quantity: 2, sort_order: 3,
+                kind: '3mf_plate', source_ref: '2', pack_rule: 'together', group_id: 4,
                 filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#FF0000' }],
       links: [{ localId: 'b', serverId: 70, url: 'https://example.test', label: '' }],
       parts: [
@@ -111,6 +121,7 @@ const LOADED: LoadedProject = {
   items: [{
     id: 50, project_id: 7, file_id: 1, file_name: 'Bracket.stl', quantity: 2, quantity_completed: 1, quantity_failed: 0,
     filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#FF0000', sort_order: 3,
+    kind: '3mf_plate', source_ref: '2', pack_rule: 'together', group_id: 4,
   } as LoadedProject['items'][number]],
   links: [{ id: 70, project_id: 7, url: 'https://example.test', label: null, sort_order: 0, created_at: '' }],
   parts: [
@@ -128,6 +139,7 @@ describe('projectToDraft', () => {
     });
     expect(d.items).toEqual([{
       localId: expect.any(String), serverId: 50, file_id: 1, file_name: 'Bracket.stl', quantity: 2, sort_order: 3,
+      kind: '3mf_plate', source_ref: '2', pack_rule: 'together', group_id: 4,
       filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#FF0000',
     }]);
     expect(d.links).toEqual([{ localId: expect.any(String), serverId: 70, url: 'https://example.test', label: '' }]);
@@ -149,6 +161,12 @@ describe('projectToDraft', () => {
       on_hold: undefined as unknown as boolean, order_type: undefined as unknown as string, links: undefined, parts: null,
     });
     expect(d).toMatchObject({ dueDate: '', notes: '', price: '', customer: '', onHold: false, orderType: 'internal', links: [], parts: [] });
+  });
+
+  it('defaults an item saved before 3MF sources and groups to a split STL in the Default Group', () => {
+    const legacy = { ...LOADED.items[0], kind: undefined, source_ref: undefined, pack_rule: undefined, group_id: undefined };
+    expect(projectToDraft({ ...LOADED, items: [legacy as unknown as LoadedProject['items'][number]] }).items[0])
+      .toMatchObject({ kind: 'stl', source_ref: null, pack_rule: 'split', group_id: null });
   });
 
   it('keeps a zero price (it is a quote, not "no price")', () => {

@@ -1,4 +1,4 @@
-// The Project builder's STL picker: which library files it offers, the folder tree it shows them in,
+// The Project Builder's model picker: which library files it offers, the folder tree it shows them in,
 // and which files are in view for the selected folder / search.
 import type { FolderNode, LibraryFile } from '../data/types';
 
@@ -7,9 +7,9 @@ export function normalizeFolder(folder: string): string {
   return folder.split('/').filter(Boolean).join('/');
 }
 
-/** Files the builder can add as a part: an `.stl` (any case) that still exists on disk. */
-export function isPickableStl(f: Pick<LibraryFile, 'original_filename' | 'missing'>): boolean {
-  return f.original_filename.toLowerCase().endsWith('.stl') && !f.missing;
+/** Files the Builder can add as an item (BIZ-356): an STL, 3MF or gcode file (any case) that still exists on disk. */
+export function isPickableModel(f: Pick<LibraryFile, 'original_filename' | 'missing'>): boolean {
+  return /\.(stl|3mf|gcode)$/i.test(f.original_filename) && !f.missing;
 }
 
 /** The folder tree of `files`, rooted at "All files" (path `''`). Each node's `path` is its canonical folder path. */
@@ -32,11 +32,11 @@ export function buildStlTree(files: Pick<LibraryFile, 'folder'>[]): FolderNode {
  * The files listed under the tree. A non-blank search matches file names (case-insensitive) in every folder;
  * otherwise the root (`''`) shows everything and any other folder shows only the files directly in it.
  */
-export function stlFilesInView<F extends Pick<LibraryFile, 'folder' | 'original_filename'>>(
-  stlFiles: F[], selectedFolder: string, search: string,
+export function filesInView<F extends Pick<LibraryFile, 'folder' | 'original_filename'>>(
+  files: F[], selectedFolder: string, search: string,
 ): F[] {
   const q = search.trim().toLowerCase();
-  if (q) return stlFiles.filter(f => f.original_filename.toLowerCase().includes(q));
-  if (selectedFolder === '') return stlFiles;
-  return stlFiles.filter(f => normalizeFolder(f.folder) === selectedFolder);
+  if (q) return files.filter(f => f.original_filename.toLowerCase().includes(q));
+  if (selectedFolder === '') return files;
+  return files.filter(f => normalizeFolder(f.folder) === selectedFolder);
 }

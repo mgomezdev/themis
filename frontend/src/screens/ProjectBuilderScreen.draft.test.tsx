@@ -1,5 +1,5 @@
-// Characterization tests for the builder's local draft state: dirty tracking, undo of removals, and the
-// STL folder tree. Written before the ProjectBuilderScreen refactor (docs/superpowers/plans/
+// Characterization tests for the Builder's local draft state: dirty tracking, undo of removals, repeat saves,
+// and the model folder tree. Written before the ProjectBuilderScreen refactor (docs/superpowers/plans/
 // 2026-11-11-project-builder-refactor.md) so every step of it is held to the same screen behavior.
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -10,9 +10,14 @@ import { Reply, stubFetch } from '../test/fetchStub';
 
 const file = (id: number, name: string, folder = '', extra: object = {}) => ({
   id, original_filename: name, relative_path: name, folder, size_bytes: 1, plate_count: 1, uploaded_at: '',
-  missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [], ...extra,
+  missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [], kind: 'stl', ...extra,
 });
 const FILES = [file(1, 'Bracket.stl'), file(2, 'Widget.stl')];
+const item = (id: number, file_id: number, file_name: string, extra: object = {}) => ({
+  id, project_id: 7, file_id, file_name, quantity: 1, quantity_completed: 0, quantity_failed: 0,
+  filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0,
+  kind: 'stl', source_ref: null, pack_rule: 'split', group_id: null, ...extra,
+});
 
 const EXISTING = {
   id: 7, name: 'Gridfinity', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
@@ -20,10 +25,8 @@ const EXISTING = {
   links: [{ id: 70, project_id: 7, url: 'https://example.test/spec', label: 'Spec', sort_order: 0, created_at: '' }],
   parts: [{ id: 80, project_id: 7, name: '3mm magnet', quantity: 4, allocated: false, unit_cost: 0.25, sort_order: 0, created_at: '' }],
   items: [
-    { id: 50, project_id: 7, file_id: 1, file_name: 'Bracket.stl', quantity: 2, quantity_completed: 0, quantity_failed: 0,
-      filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, sort_order: 0 },
-    { id: 51, project_id: 7, file_id: 2, file_name: 'Widget.stl', quantity: 1, quantity_completed: 0, quantity_failed: 0,
-      filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 1 },
+    item(50, 1, 'Bracket.stl', { quantity: 2, filament_type: 'PLA', filament_subtype: 'any' }),
+    item(51, 2, 'Widget.stl', { sort_order: 1 }),
   ],
 };
 
@@ -34,13 +37,14 @@ function open(path: string, over: Record<string, unknown> = {}) {
     'GET /api/v1/printers': [],
     'GET /api/v1/customers': [],
     'GET /api/v1/projects/7': EXISTING,
+    'GET /api/v1/projects/7/groups': [],
     'PATCH /api/v1/projects/7': EXISTING,
     'PUT /api/v1/projects/7/items/50': EXISTING.items[0],
     'PUT /api/v1/projects/7/items/51': EXISTING.items[1],
-    'PUT /api/v1/projects/7/links/70': EXISTING.links[0],
-    'DELETE /api/v1/projects/7/links/70': null,
     'DELETE /api/v1/projects/7/items/50': { deleted: 50 },
     'DELETE /api/v1/projects/7/items/51': { deleted: 51 },
+    'PUT /api/v1/projects/7/links/70': EXISTING.links[0],
+    'DELETE /api/v1/projects/7/links/70': null,
     'PUT /api/v1/projects/7/parts/80': EXISTING.parts[0],
     'DELETE /api/v1/projects/7/parts/80': null,
     ...over,
@@ -57,46 +61,53 @@ function open(path: string, over: Record<string, unknown> = {}) {
 }
 const writes = (api: ReturnType<typeof stubFetch>) =>
   api.calls.filter(c => c.method !== 'GET').map(c => `${c.method} ${c.url}`);
-const saveChanges = () => screen.queryByRole('button', { name: 'Save changes' });
-/** File names of the project's part-item rows, in order. */
-const itemRows = () => screen.queryAllByText(/\.stl$/, { selector: 'span[title]' }).map(e => e.textContent);
-/** Label of every file button in the STL picker, in order. */
+const toTab = (name: RegExp) => userEvent.click(screen.getByRole('tab', { name }));
+const saveBtn = () => screen.getByRole('button', { name: /^(Save draft|Saving…)$/ }) as HTMLButtonElement;
+const dirty = () => !saveBtn().disabled;
+async function save() {
+  await userEvent.click(saveBtn());
+  await screen.findByText('Saved');
+}
+/** File names of the project's item rows. */
+const itemRows = () => screen.queryAllByText(/\.(stl|3mf|gcode)$/i, { selector: 'span[title]' }).map(e => e.textContent);
+/** Label of every file button in the model picker, in order. */
 const pickerFiles = () => screen.queryAllByTitle(/^Add /).map(e => e.getAttribute('title')!.slice(4));
+const rowOf = (fileName: string) => screen.getByLabelText(`Quantity of ${fileName}`).parentElement!;
 
-async function loaded() {
-  await screen.findByDisplayValue('Gridfinity');
+/** An existing project, loaded, on its Details tab. */
+async function loadedDetails() {
+  await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+  await toTab(/^Details/);
   await screen.findByDisplayValue('https://example.test/spec');
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('ProjectBuilderScreen - dirty tracking (edit mode)', () => {
-  it('offers Save only while the draft differs from what was loaded or last saved', async () => {
+  it('enables Save draft only while the draft differs from what was loaded or last saved', async () => {
     const api = open('/projects/7/edit');
-    await loaded();
-    expect(saveChanges()).toBeNull();
+    await loadedDetails();
+    expect(dirty()).toBe(false);
 
     const notes = screen.getByPlaceholderText('Optional notes');
     await userEvent.type(notes, 'x');
-    expect(saveChanges()).not.toBeNull();
+    expect(dirty()).toBe(true);
 
     await userEvent.clear(notes);           // back to the loaded value
-    expect(saveChanges()).toBeNull();
+    expect(dirty()).toBe(false);
 
     await userEvent.type(notes, 'rush');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(saveChanges()).toBeNull();
+    await save();
+    expect(dirty()).toBe(false);
     expect(api.to('PATCH', '/api/v1/projects/7')[0].body).toMatchObject({ notes: 'rush' });
   });
 
   it('hides the Saved toast after 2 seconds', async () => {
     open('/projects/7/edit');
-    await loaded();
+    await loadedDetails();
     await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
     const timeouts = vi.spyOn(window, 'setTimeout');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
+    await save();
     const call = timeouts.mock.calls.find(c => c[1] === 2000)!;
     timeouts.mockRestore();
     act(() => (call[0] as () => void)());
@@ -111,99 +122,131 @@ describe('ProjectBuilderScreen - dirty tracking (edit mode)', () => {
     ['adding a link', () => userEvent.click(screen.getByRole('button', { name: '+ Add link' }))],
   ])('treats a change to %s as unsaved', async (_label, change) => {
     open('/projects/7/edit');
-    await loaded();
+    await loadedDetails();
     await change();
-    expect(saveChanges()).not.toBeNull();
+    expect(dirty()).toBe(true);
   });
 
-  it('always offers Save on a new project once it has a name', async () => {
+  it.each([
+    ['an item quantity', async () => {
+      const qty = screen.getByLabelText('Quantity of Widget.stl');
+      await userEvent.clear(qty);
+      await userEvent.type(qty, '3');
+    }],
+    ['an added item', () => userEvent.click(screen.getByTitle('Add Bracket.stl'))],
+  ])('treats %s as unsaved', async (_label, change) => {
+    open('/projects/7/edit');
+    await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+    expect(dirty()).toBe(false);
+    await change();
+    expect(dirty()).toBe(true);
+  });
+
+  it('stays unsaved after removing a saved item and re-adding the same file (a delete is pending)', async () => {
+    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/items': { id: 60 } });
+    await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+    await userEvent.click(within(rowOf('Widget.stl')).getByTitle('Remove'));
+    await userEvent.click(screen.getByTitle('Add Widget.stl'));
+    expect(itemRows().sort()).toEqual(['Bracket.stl', 'Widget.stl']);
+    expect(dirty()).toBe(true);
+    await save();
+    expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
+    expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1);
+  });
+
+  it('can save a new project once it has a name', async () => {
     open('/projects/new');
-    await screen.findByTitle('Add Bracket.stl');
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    await screen.findByLabelText(/Project name/);
+    expect(saveBtn()).toBeDisabled();
     await userEvent.type(screen.getByLabelText(/Project name/), 'Shelf');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(saveBtn()).not.toBeDisabled();
   });
 });
 
-describe('ProjectBuilderScreen - saving twice (edit mode)', () => {
-  const EMPTY = { ...EXISTING, items: [], links: [], parts: [] };
+describe('ProjectBuilderScreen - undo removal', () => {
+  it('puts a removed item back, and the restored draft is clean', async () => {
+    open('/projects/7/edit');
+    await screen.findByText('Bracket.stl', { selector: 'span[title]' });
+    expect(itemRows().sort()).toEqual(['Bracket.stl', 'Widget.stl']);
 
-  it('adds a new row once, then updates it under its new id', async () => {
-    const api = open('/projects/7/edit', {
-      'GET /api/v1/projects/7': EMPTY, 'PATCH /api/v1/projects/7': EMPTY,
-      'POST /api/v1/projects/7/items': { id: 60 }, 'PUT /api/v1/projects/7/items/60': { id: 60 },
-      'POST /api/v1/projects/7/links': { id: 71 }, 'PUT /api/v1/projects/7/links/71': { id: 71 },
-      'POST /api/v1/projects/7/parts': { id: 81 }, 'PUT /api/v1/projects/7/parts/81': { id: 81 },
-    });
-    await screen.findByDisplayValue('Gridfinity');
-    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
-    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
-    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://a.test');
-    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
-    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), 'screw');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(saveChanges()).toBeNull();          // the saved draft (now with server ids) is the clean one
+    await userEvent.click(within(rowOf('Bracket.stl')).getByTitle('Remove'));
+    expect(itemRows()).toEqual(['Widget.stl']);
+    expect(screen.getByText('Removed Bracket.stl')).toBeInTheDocument();
+    expect(dirty()).toBe(true);
 
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
-    await userEvent.click(saveChanges()!);
-    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7')).toHaveLength(2));
-    await waitFor(() => expect(api.to('PUT', '/api/v1/projects/7/parts/81')).toHaveLength(1));
-    expect(writes(api)).toEqual([
-      'PATCH /api/v1/projects/7', 'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/links', 'POST /api/v1/projects/7/parts',
-      'PATCH /api/v1/projects/7', 'PUT /api/v1/projects/7/items/60', 'PUT /api/v1/projects/7/links/71', 'PUT /api/v1/projects/7/parts/81',
-    ]);
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(itemRows().sort()).toEqual(['Bracket.stl', 'Widget.stl']);
+    expect(screen.queryByText(/^Removed /)).toBeNull();
+    expect(dirty()).toBe(false);
   });
 
-  it('retries a failed save without repeating the deletes and creates that already went through', async () => {
-    let linkPosts = 0;
-    const api = open('/projects/7/edit', {
-      'POST /api/v1/projects/7/items': { id: 60 },
-      'PUT /api/v1/projects/7/items/60': { id: 60 },
-      'PUT /api/v1/projects/7/links/70': () => (++linkPosts === 1 ? new Reply(500, 'disk full') : EXISTING.links[0]),
-    });
-    await loaded();
-    await userEvent.click(screen.getAllByTitle('Remove')[1]);            // saved Widget.stl (51)
-    await userEvent.click(screen.getByTitle('Add Widget.stl'));          // ...re-added as a new row
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
-    await userEvent.click(saveChanges()!);
-    await waitFor(() => expect(linkPosts).toBe(1));
-    await waitFor(() => expect(saveChanges()).not.toBeDisabled());
-    expect(screen.queryByText('Saved')).toBeNull();
+  it('deletes a removed saved link on save, but not once the removal is undone', async () => {
+    const api = open('/projects/7/edit');
+    await loadedDetails();
+    await userEvent.click(screen.getByTitle('Remove link'));
+    expect(screen.getByText('Removed Spec')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByDisplayValue('https://example.test/spec')).toBeInTheDocument();
+    expect(dirty()).toBe(false);
 
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
-    expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1);
-    expect(api.to('PUT', '/api/v1/projects/7/items/60')).toHaveLength(1);
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
+    await save();
+    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/links/70');
+    expect(writes(api)).toContain('PUT /api/v1/projects/7/links/70');
+
+    await userEvent.click(screen.getByTitle('Remove link'));
+    await save();
+    expect(writes(api).filter(w => w === 'DELETE /api/v1/projects/7/links/70')).toHaveLength(1);
+  });
+
+  it('deletes a removed saved non-printed part on save, but not once the removal is undone', async () => {
+    const api = open('/projects/7/edit');
+    await loadedDetails();
+    await userEvent.click(screen.getByTitle('Remove part'));
+    expect(screen.getByText('Removed 3mm magnet')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByDisplayValue('3mm magnet')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
+    await save();
+    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/parts/80');
+
+    await userEvent.click(screen.getByTitle('Remove part'));
+    await save();
+    expect(writes(api)).toContain('DELETE /api/v1/projects/7/parts/80');
+  });
+
+  it('labels an unnamed link by its URL and a blank one generically', async () => {
+    open('/projects/new');
+    await screen.findByLabelText(/Project name/);
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://a.test');
+    await userEvent.click(screen.getByTitle('Remove link'));
+    expect(screen.getByText('Removed https://a.test')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.click(screen.getByTitle('Remove link'));
+    expect(screen.getByText('Removed link')).toBeInTheDocument();
   });
 });
 
 describe('ProjectBuilderScreen - after a save', () => {
-  it('re-creates (not updates) a saved link whose removal was saved and then undone', async () => {
-    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/links': { id: 72 } });
-    await loaded();
-    await userEvent.click(screen.getByTitle('Remove link'));
-    await userEvent.click(saveChanges()!);
+  it('retries a failed save without repeating the deletes that already went through', async () => {
+    let linkPuts = 0;
+    const api = open('/projects/7/edit', {
+      'PUT /api/v1/projects/7/links/70': () => (++linkPuts === 1 ? new Reply(500, 'disk full') : EXISTING.links[0]),
+    });
+    await loadedDetails();
+    await userEvent.click(screen.getByTitle('Remove part'));
+    await toTab(/^Items/);
+    await userEvent.click(within(rowOf('Widget.stl')).getByTitle('Remove'));
+    await userEvent.click(saveBtn());
+    await screen.findByText(/Save failed/);
+
+    await userEvent.click(saveBtn());
     await screen.findByText('Saved');
-    expect(api.to('DELETE', '/api/v1/projects/7/links/70')).toHaveLength(1);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    await userEvent.click(saveChanges()!);
-    await waitFor(() => expect(api.to('POST', '/api/v1/projects/7/links')).toHaveLength(1));
-    expect(api.to('POST', '/api/v1/projects/7/links')[0].body).toEqual({ url: 'https://example.test/spec', label: 'Spec' });
-    expect(api.to('PUT', '/api/v1/projects/7/links/70')).toEqual([]);
-  });
-
-  it('counts the save before a generate: nothing is left to save afterwards', async () => {
-    open('/projects/7/edit', { 'POST /api/v1/projects/7/generate': { project_id: 7, jobs: [{ id: 1 }], files: [] } });
-    await loaded();
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
-    expect(saveChanges()).not.toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
-    await screen.findByText('1 job added to queue');
-    expect(saveChanges()).toBeNull();
+    expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
+    expect(api.to('DELETE', '/api/v1/projects/7/parts/80')).toHaveLength(1);
   });
 });
 
@@ -224,8 +267,7 @@ describe('ProjectBuilderScreen - loading a linked customer project', () => {
   const customerSelect = () => screen.getByRole('combobox', { name: 'Customer' }) as HTMLSelectElement;
   const typeSelect = () => screen.getByDisplayValue(/^(Internal|Customer)$/) as HTMLSelectElement;
   async function loadedLinked() {
-    await loaded();
-    await screen.findByRole('option', { name: 'Choose a customer…' });
+    await loadedDetails();
     await waitFor(() => expect(screen.getAllByRole('option', { name: 'Acme Ltd' })).toHaveLength(2));
   }
 
@@ -237,26 +279,25 @@ describe('ProjectBuilderScreen - loading a linked customer project', () => {
     expect(screen.getByRole('checkbox', { name: /On hold/ })).toBeChecked();
     expect(screen.getByDisplayValue('2026-12-01')).toHaveAttribute('type', 'date');
     expect(screen.getByLabelText('Price')).toHaveValue(40);
-    expect(saveChanges()).toBeNull();
+    expect(dirty()).toBe(false);
   });
 
   it.each([
     ['on hold', () => userEvent.click(screen.getByRole('checkbox', { name: /On hold/ }))],
-    ['due date', () => userEvent.clear(screen.getByDisplayValue('2026-12-01'))],
+    ['due date', () => userEvent.click(screen.getByTitle('Clear due date'))],
   ])('treats a change to %s as unsaved', async (_label, change) => {
     openLinked();
     await loadedLinked();
     await change();
-    expect(saveChanges()).not.toBeNull();
+    expect(dirty()).toBe(true);
   });
 
   it('treats switching to another account with the same name as a change, and saves the new account', async () => {
     const api = openLinked();
     await loadedLinked();
     await userEvent.selectOptions(customerSelect(), '4');
-    expect(saveChanges()).not.toBeNull();
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
+    expect(dirty()).toBe(true);
+    await save();
     expect(api.to('PATCH', '/api/v1/projects/7')[0].body).toMatchObject({ customer_id: 4, customer: 'Acme Ltd', order_type: 'customer' });
   });
 
@@ -265,9 +306,8 @@ describe('ProjectBuilderScreen - loading a linked customer project', () => {
     await loadedLinked();
     await userEvent.selectOptions(customerSelect(), 'Other (no account)');
     await userEvent.type(screen.getByRole('textbox', { name: 'Customer name' }), 'Acme Ltd');
-    expect(saveChanges()).not.toBeNull();
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
+    expect(dirty()).toBe(true);
+    await save();
     expect(api.to('PATCH', '/api/v1/projects/7')[0].body).toMatchObject({ customer_id: null, customer: 'Acme Ltd' });
   });
 
@@ -275,134 +315,50 @@ describe('ProjectBuilderScreen - loading a linked customer project', () => {
     openLinked();
     await loadedLinked();
     await userEvent.selectOptions(typeSelect(), 'internal');
-    expect(saveChanges()).not.toBeNull();
+    expect(dirty()).toBe(true);
     await userEvent.selectOptions(typeSelect(), 'customer');
-    expect(saveChanges()).toBeNull();
+    expect(dirty()).toBe(false);
   });
 });
 
-describe('ProjectBuilderScreen - undo removal', () => {
-  it('puts a removed part item back at its original position', async () => {
-    open('/projects/7/edit');
-    await loaded();
-    expect(itemRows()).toEqual(['Bracket.stl', 'Widget.stl']);
-
-    await userEvent.click(screen.getAllByTitle('Remove')[0]);
-    expect(itemRows()).toEqual(['Widget.stl']);
-    expect(screen.getByText('Removed Bracket.stl')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(itemRows()).toEqual(['Bracket.stl', 'Widget.stl']);
-    expect(screen.queryByText(/^Removed /)).toBeNull();
-    expect(saveChanges()).toBeNull();       // restored draft equals the loaded one
-  });
-
-  it('deletes a removed saved part item on save, but not once the removal is undone', async () => {
-    const api = open('/projects/7/edit');
-    await loaded();
-    await userEvent.click(screen.getAllByTitle('Remove')[0]);
-    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/items/50');
-    expect(writes(api)).toContain('PUT /api/v1/projects/7/items/50');
-
-    const before = api.calls.length;
-    await userEvent.click(screen.getAllByTitle('Remove')[0]);
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    const second = api.calls.slice(before).filter(c => c.method !== 'GET').map(c => `${c.method} ${c.url}`);
-    expect(second).toContain('DELETE /api/v1/projects/7/items/50');
-    expect(second).not.toContain('PUT /api/v1/projects/7/items/50');   // ...and isn't updated after being deleted
-  });
-
-  it('deletes a removed saved link on save, but not once the removal is undone', async () => {
-    const api = open('/projects/7/edit');
-    await loaded();
-    await userEvent.click(screen.getByTitle('Remove link'));
-    expect(screen.getByText('Removed Spec')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(screen.getByDisplayValue('https://example.test/spec')).toBeInTheDocument();
-    expect(saveChanges()).toBeNull();
-
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/links/70');
-    expect(writes(api)).toContain('PUT /api/v1/projects/7/links/70');
-
-    await userEvent.click(screen.getByTitle('Remove link'));
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(writes(api).filter(w => w === 'DELETE /api/v1/projects/7/links/70')).toHaveLength(1);
-  });
-
-  it('deletes a removed saved non-printed part on save, but not once the removal is undone', async () => {
-    const api = open('/projects/7/edit');
-    await loaded();
-    await userEvent.click(screen.getByTitle('Remove part'));
-    expect(screen.getByText('Removed 3mm magnet')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(screen.getByDisplayValue('3mm magnet')).toBeInTheDocument();
-
-    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/parts/80');
-
-    await userEvent.click(screen.getByTitle('Remove part'));
-    await userEvent.click(saveChanges()!);
-    await screen.findByText('Saved');
-    expect(writes(api)).toContain('DELETE /api/v1/projects/7/parts/80');
-  });
-
-  it('labels an unnamed link by its URL and a blank one generically', async () => {
-    open('/projects/new');
-    await screen.findByTitle('Add Bracket.stl');
-    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
-    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://a.test');
-    await userEvent.click(screen.getByTitle('Remove link'));
-    expect(screen.getByText('Removed https://a.test')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
-    await userEvent.click(screen.getByTitle('Remove link'));
-    expect(screen.getByText('Removed link')).toBeInTheDocument();
-  });
-});
-
-describe('ProjectBuilderScreen - STL folder tree', () => {
+describe('ProjectBuilderScreen - model folder tree', () => {
   const TREE_FILES = [
     file(1, 'Root.stl', ''),
     file(2, 'Car.stl', '/Toys/Cars'),
     file(3, 'Ball.stl', 'Toys'),
     file(4, 'Gone.stl', 'Toys', { missing: true }),
-    file(5, 'Plate.3mf', 'Toys'),
+    file(5, 'Plate.3mf', 'Toys', { kind: '3mf' }),
     file(6, 'Deep.stl', 'a/x/a'),
     file(7, 'Slash.stl', 'Tools/'),
     file(8, 'LOUD.STL', 'Toys'),
+    file(9, 'notes.txt', 'Toys'),
+    file(10, 'Sliced.gcode', 'Toys', { kind: 'gcode' }),
   ];
   const tree = () => screen.getByText('STL Files').parentElement!;
   const folder = (name: string) => within(tree()).queryAllByRole('button').filter(b => b.textContent === name);
-
-  it('lists every pickable STL at the root, and only a folder\'s own files once it is selected', async () => {
+  const openTree = async () => {
     open('/projects/new', { 'GET /api/v1/files': TREE_FILES });
+    await toTab(/^Items/);
     await screen.findByTitle('Add Root.stl');
-    expect(pickerFiles().sort()).toEqual(['Ball.stl', 'Car.stl', 'Deep.stl', 'LOUD.STL', 'Root.stl', 'Slash.stl']);
+  };
+
+  it('lists every pickable model at the root, and only a folder\'s own files once it is selected', async () => {
+    await openTree();
+    expect(pickerFiles().sort()).toEqual(
+      ['Ball.stl', 'Car.stl', 'Deep.stl', 'LOUD.STL', 'Plate.3mf', 'Root.stl', 'Slash.stl', 'Sliced.gcode']);
 
     await userEvent.click(folder('Toys')[0]);
-    expect(pickerFiles().sort()).toEqual(['Ball.stl', 'LOUD.STL']);
+    expect(pickerFiles().sort()).toEqual(['Ball.stl', 'LOUD.STL', 'Plate.3mf', 'Sliced.gcode']);
 
     await userEvent.click(folder('Cars')[0]);
     expect(pickerFiles()).toEqual(['Car.stl']);
 
     await userEvent.click(folder('All files')[0]);
-    expect(pickerFiles()).toHaveLength(6);
+    expect(pickerFiles()).toHaveLength(8);
   });
 
   it('selects a nested folder that repeats an ancestor\'s name by its own path', async () => {
-    open('/projects/new', { 'GET /api/v1/files': TREE_FILES });
-    await screen.findByTitle('Add Root.stl');
+    await openTree();
     await userEvent.click(folder('a')[0]);
     await userEvent.click(folder('x')[0]);
     const [, nested] = folder('a');
@@ -411,15 +367,13 @@ describe('ProjectBuilderScreen - STL folder tree', () => {
   });
 
   it('shows a file stored with a trailing slash in its folder', async () => {
-    open('/projects/new', { 'GET /api/v1/files': TREE_FILES });
-    await screen.findByTitle('Add Root.stl');
+    await openTree();
     await userEvent.click(folder('Tools')[0]);
     expect(pickerFiles()).toEqual(['Slash.stl']);
   });
 
   it('hides the tree while searching and says when nothing matches', async () => {
-    open('/projects/new', { 'GET /api/v1/files': TREE_FILES });
-    await screen.findByTitle('Add Root.stl');
+    await openTree();
     await userEvent.type(screen.getByPlaceholderText('Search files…'), 'zzz');
     expect(folder('All files')).toHaveLength(0);
     expect(screen.getByText('No matching STL files')).toBeInTheDocument();

@@ -1,9 +1,10 @@
-// The Project builder's unsaved local copy of a project ("draft"), and the pure helpers around it:
-// mapping a loaded project in, fingerprinting it for dirty tracking, and wording generate errors.
+// The Project Builder's unsaved local copy of a project ("draft"), and the pure helpers around it:
+// mapping a loaded project in, fingerprinting it for dirty tracking, and wording queue errors.
 import type { FilamentAsk } from './filamentAsk';
 import type { Project } from '../api/projects';
+import type { ItemKind, PackRule } from '../components/ItemSourcePicker';
 
-/** A part item (one STL + quantity + filament ask) as edited before saving. `serverId` is set once it exists server-side. */
+/** An item (a model source × quantity + filament ask) as edited before saving. `serverId` is set once it exists server-side. */
 export interface LocalItem extends FilamentAsk {
   localId: string;
   serverId?: number;
@@ -11,6 +12,10 @@ export interface LocalItem extends FilamentAsk {
   file_name: string;
   quantity: number;
   sort_order: number;
+  kind: ItemKind;                 // BIZ-356: STL, a 3MF plate or object, or gcode
+  source_ref: string | null;
+  pack_rule: PackRule;
+  group_id: number | null;        // BIZ-363: its print group (null = the Default Group)
 }
 
 export interface LocalLink {
@@ -30,15 +35,15 @@ export interface LocalPart {
   unitCost: string;   // '' = no cost entered (the field is optional)
 }
 
-/** What the undo toast needs to put a removed row back where it was. */
+/** What the undo toast needs to put removed rows back where they were (items can go several at once). */
 export type RemovedSnapshot =
-  | { kind: 'item'; label: string; index: number; item: LocalItem }
+  | { kind: 'item'; label: string; removed: { index: number; item: LocalItem }[] }
   | { kind: 'link'; label: string; index: number; link: LocalLink }
   | { kind: 'part'; label: string; index: number; part: LocalPart };
 
 export type OrderType = 'internal' | 'customer';
 
-/** Every field the builder edits. Form values stay strings (`''` = empty) until saved. */
+/** Every field the Builder edits. Form values stay strings (`''` = empty) until saved. */
 export interface ProjectDraft {
   name: string;
   customer: string;
@@ -68,20 +73,22 @@ let _lid = 0;
 export const newLocalId = () => String(++_lid);
 
 /**
- * A fingerprint of everything Save would persist: equal fingerprints ⇒ nothing to save. Local ids are left out,
- * and the customer (name + account) only counts for a customer project, since Save drops it for an internal one.
+ * A fingerprint of everything Save would persist: equal fingerprints ⇒ nothing to save. Local and server ids are
+ * left out (a save fills server ids in, and that is not an edit), but the saved items pending deletion count. The
+ * customer (name + account) only counts for a customer project, since Save drops it for an internal one.
  */
-export function draftSnapshot(d: ProjectDraft): string {
+export function draftSnapshot(d: ProjectDraft, deletedItemIds: readonly number[] = []): string {
   const isCustomer = d.orderType === 'customer';
   return JSON.stringify({
     name: d.name, customer: isCustomer ? d.customer : '', customerId: isCustomer ? d.customerId : null, orderType: d.orderType,
     onHold: d.onHold, dueDate: d.dueDate, notes: d.notes, price: d.price,
     items: d.items.map(i => ({
-      fid: i.file_id, qty: i.quantity,
+      fid: i.file_id, qty: i.quantity, rule: i.pack_rule, gid: i.group_id,
       fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
     })),
-    links: d.links.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
-    parts: d.parts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
+    del: deletedItemIds,
+    links: d.links.map(l => ({ url: l.url, label: l.label })),
+    parts: d.parts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost })),
   });
 }
 
@@ -89,7 +96,7 @@ export type LoadedProject = Pick<
   Project, 'name' | 'customer' | 'order_type' | 'on_hold' | 'due_date' | 'notes' | 'price' | 'customer_id' | 'customer_name' | 'items'
 > & { links?: Project['links'] | null; parts?: Project['parts'] | null };
 
-/** A loaded project as an editable draft. */
+/** A loaded project as an editable draft. Items saved before BIZ-356/363 default to an STL, split, in the Default Group. */
 export function projectToDraft(p: LoadedProject): ProjectDraft {
   const customerId = p.customer_id;
   return {
@@ -110,6 +117,8 @@ export function projectToDraft(p: LoadedProject): ProjectDraft {
       file_id: it.file_id,
       file_name: it.file_name,
       quantity: it.quantity,
+      kind: it.kind ?? 'stl', source_ref: it.source_ref ?? null, pack_rule: it.pack_rule ?? 'split',
+      group_id: it.group_id ?? null,
       ...askOf(it),
       sort_order: it.sort_order,
     })),
@@ -131,7 +140,7 @@ export const GENERATE_ERRORS: Record<number, string> = {
   504: 'Generation timed out. Try fewer parts or reduce quantities.',
 };
 
-/** User-facing wording for a generate failure (`msg` is the API error, which starts with the HTTP status). */
+/** User-facing wording for a queue (generate) failure (`msg` is the API error, which starts with the HTTP status). */
 export function parseGenerateError(msg: string): string {
   const code = parseInt(msg);
   if (!isNaN(code) && GENERATE_ERRORS[code]) return GENERATE_ERRORS[code];
