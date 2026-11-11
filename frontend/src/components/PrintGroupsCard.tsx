@@ -125,7 +125,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
   };
 
   return (
-    <div className="card" style={{ padding: 12, background: 'var(--bg-1)' }} data-testid={`group-${group.id}`}>
+    <div className="card" style={{ padding: 12, background: 'var(--bg-0)' }} data-testid={`group-${group.id}`}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 10 }}>
         <input className="input" aria-label="Group name" value={name} onChange={e => setName(e.target.value)}
                onBlur={() => { if (name.trim() && name !== group.name) onPatch({ name: name.trim() }); }}
@@ -174,7 +174,7 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
         </div>
       )}
       {pool && group.pool_warning && (
-        <div className="tiny" role="alert" style={{ color: 'var(--warn, #f59e0b)', marginTop: 4 }}>{group.pool_warning}</div>
+        <div className="tiny" role="alert" style={{ color: 'var(--warn)', marginTop: 4 }}>{group.pool_warning}</div>
       )}
 
       {!pool && (

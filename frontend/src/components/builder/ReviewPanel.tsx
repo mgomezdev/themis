@@ -25,7 +25,7 @@ export function ReviewPanel({ review, loading, error, onGo }: {
       <div className="label">Checks</div>
       {checks.map((ch, i) => (
         <div key={i} className="row gap-3" data-testid={`check-${ch.level}`}
-             style={{ alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}>
+             style={{ alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border-1)', borderRadius: 6 }}>
           <span className={PILL[ch.level].cls}>{PILL[ch.level].label}</span>
           <span className="small" style={{ flex: 1 }}>{ch.message}</span>
           {ch.level === 'error'
@@ -50,7 +50,7 @@ export function BuilderTabs({ tab, onTab, counts }: {
     ['review', 'Review', counts.toFix ? `${counts.toFix} to fix` : null],
   ];
   return (
-    <div className="row gap-1" role="tablist" aria-label="Project sections" style={{ borderBottom: '1px solid var(--border)' }}>
+    <div className="row gap-1" role="tablist" aria-label="Project sections" style={{ borderBottom: '1px solid var(--border-1)' }}>
       {tabs.map(([key, label, n]) => (
         <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => onTab(key)}
                 style={{ padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14,

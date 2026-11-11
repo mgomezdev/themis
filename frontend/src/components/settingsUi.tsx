@@ -39,7 +39,7 @@ export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: 
       onClick={() => onChange(!checked)}
       style={{
         width: 38, height: 22, borderRadius: 999,
-        background: checked ? 'var(--accent)' : 'var(--bg-3)',
+        background: checked ? 'var(--accent)' : 'var(--bg-2)',
         border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
         position: 'relative',
         cursor: 'pointer',

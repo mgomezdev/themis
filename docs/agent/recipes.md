@@ -52,11 +52,11 @@ A vendor is a bundled plugin package; core names none (`tests/test_vendor_extrac
 1. Compose existing utility/component classes (`styling.md` vocabulary) + tokens; prefer the
    `components/ui.tsx` components (`Card`, `StatusPill`, `Progress`, `SectionHeader`, `Empty`, `Kv`…).
 2. Only add a new class to `frontend/src/styles/app.css` if nothing fits; reference tokens
-   (`var(--bg-2)`, `var(--accent)`, `var(--pad-3)`), never raw hex/px, so density/accent theming works.
+   (`var(--bg-2)`, `var(--accent)`, `var(--pad-3)`), never raw hex/px, so density theming works.
 3. **New styled status** → add the key to `StatusKey` (`data/types.ts`) AND the tone map in
-   `components/ui.tsx` (pick an `ok/warn/err/info/idle/accent` tone), else it renders as a grey pill.
-4. **New design token** → define in `:root`; add `[data-density]`/`[data-accent]` overrides if it
-   should react to theming.
+   `components/ui.tsx` (pick an `ok/warn/err/info/idle` tone), else it renders as a grey pill.
+4. **New design token** → define in `:root`; add a `[data-density]` override if it should react to
+   density. Derive tints with `color-mix` instead of adding a colour token.
 
 ## Add a table or column
 

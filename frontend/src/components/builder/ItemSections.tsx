@@ -103,7 +103,7 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
       {chosen.length > 0 && (
         <div className="row gap-2" role="toolbar" aria-label="Bulk edit" data-testid="bulk-bar"
              style={{ flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderRadius: 6,
-                      border: '1px solid var(--accent)', background: 'oklch(87% 0.185 95 / 0.08)' }}>
+                      border: '1px solid var(--accent)', background: 'color-mix(in oklch, var(--accent) 8%, transparent)' }}>
           <b className="small">{chosen.length} selected</b>
           <select className="select" aria-label="Move selected to group" value=""
                   onChange={e => { if (e.target.value) onBulk(ids, { kind: 'group', groupId: Number(e.target.value) }); }}>
@@ -131,7 +131,7 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
         const parts = sec.rows.reduce((n, r) => n + r.quantity, 0);
         return (
           <div key={key} className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid={`section-${key}`}>
-            <div className="row gap-2" style={{ padding: '8px 12px', alignItems: 'center', cursor: 'pointer', background: 'var(--bg-2)' }}
+            <div className="row gap-2" style={{ padding: '8px 12px', alignItems: 'center', cursor: 'pointer', background: 'var(--bg-1)' }}
                  onClick={() => setCollapsed(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; })}>
               <TriBox ids={rowIds} selected={selected} onChange={toggle} label={`Select all in ${sec.title}`} />
               <span aria-hidden>{open ? '▾' : '▸'}</span>

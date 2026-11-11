@@ -79,21 +79,21 @@ function ProjectCard({
         {project.order_type === 'customer' && (
           <span style={{
             fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-            background: 'var(--bg-3)', color: 'var(--text-3)',
+            background: 'var(--bg-2)', color: 'var(--text-3)',
             textTransform: 'uppercase', letterSpacing: '0.04em',
           }}>Customer</span>
         )}
         {project.on_hold && (
           <span style={{
             fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-            background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
+            background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
             textTransform: 'uppercase', letterSpacing: '0.04em',
           }}>On hold</span>
         )}
         {project.stage !== 'queued' && (
           <span style={{
             fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-            background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
+            background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
             textTransform: 'uppercase', letterSpacing: '0.04em',
           }}>{project.stage}</span>
         )}

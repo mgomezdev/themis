@@ -75,7 +75,7 @@ function StepNum({ n, done }: { n: number; done: boolean }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       width: 20, height: 20,
-      background: done ? 'var(--accent)' : 'var(--bg-3)',
+      background: done ? 'var(--accent)' : 'var(--bg-2)',
       color: done ? 'white' : 'var(--text-3)',
       border: `1px solid ${done ? 'var(--accent)' : 'var(--border-1)'}`,
       borderRadius: 6,
@@ -93,7 +93,7 @@ function SummaryDot({ done }: { done: boolean }) {
     <span style={{
       width: 16, height: 16, flexShrink: 0,
       borderRadius: '50%',
-      background: done ? 'var(--accent)' : 'var(--bg-3)',
+      background: done ? 'var(--accent)' : 'var(--bg-2)',
       border: `1px solid ${done ? 'var(--accent)' : 'var(--border-1)'}`,
       display: 'inline-grid', placeItems: 'center', marginTop: 1,
     }}>
@@ -151,7 +151,7 @@ function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDrop, onCl
       onDrop={onDrop}
       style={{
         border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-2)'}`,
-        background: dragOver ? 'var(--accent-glow)' : 'var(--bg-1)',
+        background: dragOver ? 'var(--accent-glow)' : 'var(--bg-0)',
         borderRadius: 12,
         padding: '32px 24px',
         textAlign: 'center',
@@ -160,7 +160,7 @@ function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDrop, onCl
       }}>
       <div style={{
         width: 48, height: 48, borderRadius: 12,
-        background: 'var(--bg-3)', color: dragOver ? 'var(--accent-hi)' : 'var(--text-3)',
+        background: 'var(--bg-2)', color: dragOver ? 'var(--accent-hi)' : 'var(--text-3)',
         display: 'grid', placeItems: 'center', margin: '0 auto 12px',
       }}>
         {React.cloneElement(Icons.upload as React.ReactElement<{ size?: number }>, { size: 22 })}
@@ -187,12 +187,12 @@ function FileCard({ file, plateCount, selectedCount, onClear }: {
 }) {
   return (
     <div className="row gap-3" style={{
-      padding: '14px 16px', background: 'var(--bg-1)',
+      padding: '14px 16px', background: 'var(--bg-0)',
       border: '1px solid var(--border-1)', borderRadius: 10,
     }}>
       <div style={{
         width: 44, height: 44, borderRadius: 8,
-        background: 'linear-gradient(135deg, #1e3a8a, #3b82f6)',
+        background: 'linear-gradient(135deg, var(--bg-2), var(--border-2))',
         color: 'white',
         display: 'grid', placeItems: 'center',
         fontWeight: 700, fontSize: 10.5,
@@ -247,7 +247,7 @@ function QueueToggle({ checked, onChange }: { checked: boolean; onChange: (v: bo
       </div>
       <div style={{
         width: 36, height: 20, borderRadius: 999,
-        background: checked ? 'var(--accent)' : 'var(--bg-3)',
+        background: checked ? 'var(--accent)' : 'var(--bg-2)',
         border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
         position: 'relative',
         transition: 'background 120ms, border-color 120ms',
@@ -290,7 +290,7 @@ function ProjectPicker({ selectedProjectId, onChange }: {
               title={p.stage === 'queued' ? undefined : `Jobs start once ${p.name} is moved to Queued`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-                background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
+                background: selected ? 'var(--bg-2)' : 'var(--bg-0)',
                 border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
                 boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
                 borderRadius: 999, cursor: 'pointer', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 12,
@@ -337,7 +337,7 @@ function PlateThumbnail({
   return (
     <div style={{
       borderRadius: 8, flexShrink: 0,
-      background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
+      background: 'linear-gradient(135deg, var(--bg-2), var(--border-2))',
       border: '1px solid var(--border-2)',
       display: 'grid', placeItems: 'center',
       overflow: 'hidden',
@@ -562,7 +562,7 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
                   boxShadow: complete ? '0 0 4px var(--ok)' : 'none',
                 }} />
                 <span className="tiny" style={{
-                  color: isActive ? 'var(--text-1)' : 'var(--text-2)',
+                  color: isActive ? 'var(--text-1)' : 'var(--text-1)',
                   fontWeight: isActive ? 500 : 400,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   flex: 1, minWidth: 0,
@@ -584,7 +584,7 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
           <div className="tag-key">Fulfills</div>
           <div className="row gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
             {Array.from(allProjects).map(id => (
-              <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-2)' }}>#{id}</span>
+              <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-1)' }}>#{id}</span>
             ))}
           </div>
         </>
@@ -598,7 +598,7 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
       </div>
       <div className="row between" style={{ marginTop: 6 }}>
         <span className="tag-key">Slicing</span>
-        <span className="small" style={{ color: 'var(--text-2)' }}>On claim</span>
+        <span className="small" style={{ color: 'var(--text-1)' }}>On claim</span>
       </div>
     </div>
   );
@@ -1042,7 +1042,7 @@ export function NewJobScreen() {
       {successMsg && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+          background: 'color-mix(in oklch, var(--ok) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)',
           color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
         }}>
           {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
@@ -1051,7 +1051,7 @@ export function NewJobScreen() {
       {eligibilityPrompt && (
         <div role="alert" data-testid="eligibility-prompt" style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 13,
+          background: 'color-mix(in oklch, var(--warn) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', fontSize: 13,
         }}>
           <div>{eligibilityPrompt}</div>
           <div className="row gap-2" style={{ marginTop: 8 }}>
@@ -1063,7 +1063,7 @@ export function NewJobScreen() {
       {error && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
           color: 'var(--err)', fontSize: 13,
         }}>
           {error}
@@ -1215,10 +1215,10 @@ export function NewJobScreen() {
                         onClick={() => setActivePlateId(plate.id)}
                         style={{
                           padding: '12px 16px',
-                          background: isActive ? 'var(--bg-2)' : 'transparent',
+                          background: isActive ? 'var(--bg-1)' : 'transparent',
                           border: 'none',
                           borderBottom: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
-                          color: isActive ? 'var(--text-1)' : queued ? 'var(--text-2)' : 'var(--text-4)',
+                          color: isActive ? 'var(--text-1)' : queued ? 'var(--text-1)' : 'var(--text-4)',
                           fontFamily: 'inherit',
                           fontSize: 13,
                           fontWeight: isActive ? 500 : 400,

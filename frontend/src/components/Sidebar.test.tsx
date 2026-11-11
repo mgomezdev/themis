@@ -80,7 +80,7 @@ describe('Queue badges — individual types', () => {
     const badge = screen.getByTestId('badge-active');
     expect(badge.textContent).toBe('3');
     expect(badge.style.color).toBe('var(--ok)');
-    expect(badge.style.background).toBe('var(--ok-bg)');
+    expect(badge.style.background).toBe('color-mix(in oklch, var(--ok) 12%, transparent)');
     expect(screen.queryByTestId('badge-pending')).toBeNull();
     expect(screen.queryByTestId('badge-blocked')).toBeNull();
   });
