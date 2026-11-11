@@ -5,8 +5,8 @@ import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { buildStlTree, isPickableStl, stlFilesInView } from '../lib/stlTree';
 import {
-  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft, unitCostValue,
-  type LocalItem, type LocalLink, type LocalPart, type OrderType, type RemovedSnapshot,
+  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft,
+  type LocalItem, type LocalLink, type LocalPart, type OrderType, type ProjectDraft, type RemovedSnapshot,
 } from '../lib/projectDraft';
 import { StlFolderTree } from '../components/StlFolderTree';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
@@ -15,14 +15,8 @@ import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile } from '../data/types';
-import {
-  getProject, createProject, patchProject,
-  addProjectItem, updateProjectItem,
-  addProjectLink, updateProjectLink, deleteProjectLink,
-  addProjectPart, updateProjectPart, deleteProjectPart,
-  generateProject,
-  type ProjectItem,
-} from '../api/projects';
+import { getProject, generateProject, type ProjectItem } from '../api/projects';
+import { syncProject } from '../api/projectSync';
 
 const UNDO_TIMEOUT_MS = 6000;
 
@@ -58,6 +52,7 @@ export function ProjectBuilderScreen() {
   // Part items
   const [items, setItems] = useState<LocalItem[]>([]);
   const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
+  const [deletedItemIds, setDeletedItemIds] = useState<number[]>([]);
   // Links
   const [links, setLinks] = useState<LocalLink[]>([]);
   const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
@@ -88,6 +83,9 @@ export function ProjectBuilderScreen() {
         next.splice(lastRemoved.index, 0, lastRemoved.item);
         return next;
       });
+      if (lastRemoved.item.serverId) {
+        setDeletedItemIds(prev => prev.filter(id => id !== lastRemoved.item.serverId));
+      }
     } else if (lastRemoved.kind === 'link') {
       setLinks(prev => {
         const next = [...prev];
@@ -131,6 +129,7 @@ export function ProjectBuilderScreen() {
       setName(d.name); setCustomer(d.customer); setCustomerId(d.customerId); setOrderType(d.orderType); setOnHold(d.onHold);
       setDueDate(d.dueDate); setNotes(d.notes); setPrice(d.price); setIsDraft(p.stage === 'draft');
       setItems(d.items); setLinks(d.links); setParts(d.parts);
+      setDeletedItemIds([]);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
@@ -167,7 +166,9 @@ export function ProjectBuilderScreen() {
   function removeItem(localId: string) {
     const index = items.findIndex(it => it.localId === localId);
     if (index === -1) return;
-    setLastRemoved({ kind: 'item', label: items[index].file_name, index, item: items[index] });
+    const item = items[index];
+    if (item.serverId) setDeletedItemIds(prev => [...prev, item.serverId!]);
+    setLastRemoved({ kind: 'item', label: item.file_name, index, item });
     setItems(prev => prev.filter(it => it.localId !== localId));
     scheduleUndoClear();
   }
@@ -200,98 +201,41 @@ export function ProjectBuilderScreen() {
     setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
   }
 
-  const currentSnap = draftSnapshot({ name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts });
+  const draft: ProjectDraft = { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts };
+  const currentSnap = draftSnapshot(draft);
 
-  async function saveProject(): Promise<number> {
-    const projectFields = {
-      name,
-      customer: orderType === 'customer' ? customer : '',
-      order_type: orderType,
-      on_hold: onHold,
-      due_date: dueDate || null,
-      notes: notes || null,
-      price: price.trim() ? Number(price) : null,
-      // Switching to Internal unlinks the customer account too.
-      customer_id: orderType === 'customer' ? customerId : null,
-    };
-    if (projectId) {
-      await patchProject(projectId, projectFields);
-      const existing = items.filter(i => i.serverId);
-      const newOnes = items.filter(i => !i.serverId);
-      for (const it of existing) {
-        await updateProjectItem(projectId, it.serverId!, {
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: it.sort_order,
-        });
+  /**
+   * Save the draft; returns the project id and the snapshot of what was saved (the new clean state). Rows are
+   * stamped with their server ids, and dropped from the pending deletes, as each request succeeds — so a retry
+   * after a partial failure picks up where it stopped.
+   */
+  async function saveProject(): Promise<{ pid: number; savedSnap: string }> {
+    const ids = new Map<string, number>();
+    const stamp = <R extends { localId: string; serverId?: number }>(rows: R[]) =>
+      rows.map(r => (ids.has(r.localId) ? { ...r, serverId: ids.get(r.localId) } : r));
+    const pid = await syncProject(projectId, draft, { itemIds: deletedItemIds, linkIds: deletedLinkIds, partIds: deletedPartIds }, e => {
+      if (e.type === 'created') {
+        ids.set(e.localId, e.id);
+        const set = (r: { localId: string }) => r.localId === e.localId;
+        if (e.kind === 'item') setItems(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
+        else if (e.kind === 'link') setLinks(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
+        else setParts(prev => prev.map(r => (set(r) ? { ...r, serverId: e.id } : r)));
+      } else {
+        const drop = (prev: number[]) => prev.filter(id => id !== e.id);
+        if (e.kind === 'item') setDeletedItemIds(drop);
+        else if (e.kind === 'link') setDeletedLinkIds(drop);
+        else setDeletedPartIds(drop);
       }
-      for (let i = 0; i < newOnes.length; i++) {
-        const it = newOnes[i];
-        await addProjectItem(projectId, {
-          file_id: it.file_id,
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: it.sort_order,
-        });
-      }
-      for (const id of deletedLinkIds) {
-        await deleteProjectLink(projectId, id);
-      }
-      for (const lk of links) {
-        if (lk.serverId) {
-          await updateProjectLink(projectId, lk.serverId, { url: lk.url, label: lk.label || null });
-        } else {
-          await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
-        }
-      }
-      for (const id of deletedPartIds) {
-        await deleteProjectPart(projectId, id);
-      }
-      for (const pt of parts) {
-        if (pt.serverId) {
-          await updateProjectPart(projectId, pt.serverId, {
-            name: pt.name, quantity: pt.quantity, allocated: pt.allocated, unit_cost: unitCostValue(pt),
-          });
-        } else {
-          await addProjectPart(projectId, {
-            name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
-            ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
-          });
-        }
-      }
-      return projectId;
-    } else {
-      const proj = await createProject(projectFields);
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        await addProjectItem(proj.id, {
-          file_id: it.file_id,
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: i,
-        });
-      }
-      for (const lk of links) {
-        await addProjectLink(proj.id, { url: lk.url, label: lk.label || null });
-      }
-      for (const pt of parts) {
-        await addProjectPart(proj.id, {
-          name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
-          ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
-        });
-      }
-      return proj.id;
-    }
+    });
+    return { pid, savedSnap: draftSnapshot({ ...draft, items: stamp(items), links: stamp(links), parts: stamp(parts) }) };
   }
 
   async function handleSave() {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      const pid = await saveProject();
-      setDeletedLinkIds([]);
-      setDeletedPartIds([]);
-      setCleanSnap(currentSnap);
+      const { pid, savedSnap } = await saveProject();
+      setCleanSnap(savedSnap);
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
@@ -309,7 +253,7 @@ export function ProjectBuilderScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const pid = await saveProject();
+      const { pid } = await saveProject();
       // Stay in the builder (its /edit route keeps this component mounted) so the generate result or
       // error is shown here and a retry reuses the saved project instead of creating a second one.
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });

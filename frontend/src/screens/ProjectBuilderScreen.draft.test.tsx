@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectBuilderScreen } from './ProjectBuilderScreen';
-import { stubFetch } from '../test/fetchStub';
+import { Reply, stubFetch } from '../test/fetchStub';
 
 const file = (id: number, name: string, folder = '', extra: object = {}) => ({
   id, original_filename: name, relative_path: name, folder, size_bytes: 1, plate_count: 1, uploaded_at: '',
@@ -39,6 +39,8 @@ function open(path: string, over: Record<string, unknown> = {}) {
     'PUT /api/v1/projects/7/items/51': EXISTING.items[1],
     'PUT /api/v1/projects/7/links/70': EXISTING.links[0],
     'DELETE /api/v1/projects/7/links/70': null,
+    'DELETE /api/v1/projects/7/items/50': { deleted: 50 },
+    'DELETE /api/v1/projects/7/items/51': { deleted: 51 },
     'PUT /api/v1/projects/7/parts/80': EXISTING.parts[0],
     'DELETE /api/v1/projects/7/parts/80': null,
     ...over,
@@ -107,6 +109,60 @@ describe('ProjectBuilderScreen - dirty tracking (edit mode)', () => {
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     await userEvent.type(screen.getByLabelText(/Project name/), 'Shelf');
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+  });
+});
+
+describe('ProjectBuilderScreen - saving twice (edit mode)', () => {
+  const EMPTY = { ...EXISTING, items: [], links: [], parts: [] };
+
+  it('adds a new row once, then updates it under its new id', async () => {
+    const api = open('/projects/7/edit', {
+      'GET /api/v1/projects/7': EMPTY, 'PATCH /api/v1/projects/7': EMPTY,
+      'POST /api/v1/projects/7/items': { id: 60 }, 'PUT /api/v1/projects/7/items/60': { id: 60 },
+      'POST /api/v1/projects/7/links': { id: 71 }, 'PUT /api/v1/projects/7/links/71': { id: 71 },
+      'POST /api/v1/projects/7/parts': { id: 81 }, 'PUT /api/v1/projects/7/parts/81': { id: 81 },
+    });
+    await screen.findByDisplayValue('Gridfinity');
+    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://a.test');
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), 'screw');
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    expect(saveChanges()).toBeNull();          // the saved draft (now with server ids) is the clean one
+
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
+    await userEvent.click(saveChanges()!);
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7')).toHaveLength(2));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/projects/7/parts/81')).toHaveLength(1));
+    expect(writes(api)).toEqual([
+      'PATCH /api/v1/projects/7', 'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/links', 'POST /api/v1/projects/7/parts',
+      'PATCH /api/v1/projects/7', 'PUT /api/v1/projects/7/items/60', 'PUT /api/v1/projects/7/links/71', 'PUT /api/v1/projects/7/parts/81',
+    ]);
+  });
+
+  it('retries a failed save without repeating the deletes and creates that already went through', async () => {
+    let linkPosts = 0;
+    const api = open('/projects/7/edit', {
+      'POST /api/v1/projects/7/items': { id: 60 },
+      'PUT /api/v1/projects/7/items/60': { id: 60 },
+      'PUT /api/v1/projects/7/links/70': () => (++linkPosts === 1 ? new Reply(500, 'disk full') : EXISTING.links[0]),
+    });
+    await loaded();
+    await userEvent.click(screen.getAllByTitle('Remove')[1]);            // saved Widget.stl (51)
+    await userEvent.click(screen.getByTitle('Add Widget.stl'));          // ...re-added as a new row
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'x');
+    await userEvent.click(saveChanges()!);
+    await waitFor(() => expect(linkPosts).toBe(1));
+    await waitFor(() => expect(saveChanges()).not.toBeDisabled());
+    expect(screen.queryByText('Saved')).toBeNull();
+
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    expect(api.to('DELETE', '/api/v1/projects/7/items/51')).toHaveLength(1);
+    expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1);
+    expect(api.to('PUT', '/api/v1/projects/7/items/60')).toHaveLength(1);
   });
 });
 
@@ -198,6 +254,26 @@ describe('ProjectBuilderScreen - undo removal', () => {
     expect(itemRows()).toEqual(['Bracket.stl', 'Widget.stl']);
     expect(screen.queryByText(/^Removed /)).toBeNull();
     expect(saveChanges()).toBeNull();       // restored draft equals the loaded one
+  });
+
+  it('deletes a removed saved part item on save, but not once the removal is undone', async () => {
+    const api = open('/projects/7/edit');
+    await loaded();
+    await userEvent.click(screen.getAllByTitle('Remove')[0]);
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'n');
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    expect(writes(api)).not.toContain('DELETE /api/v1/projects/7/items/50');
+    expect(writes(api)).toContain('PUT /api/v1/projects/7/items/50');
+
+    const before = api.calls.length;
+    await userEvent.click(screen.getAllByTitle('Remove')[0]);
+    await userEvent.click(saveChanges()!);
+    await screen.findByText('Saved');
+    const second = api.calls.slice(before).filter(c => c.method !== 'GET').map(c => `${c.method} ${c.url}`);
+    expect(second).toContain('DELETE /api/v1/projects/7/items/50');
+    expect(second).not.toContain('PUT /api/v1/projects/7/items/50');   // ...and isn't updated after being deleted
   });
 
   it('deletes a removed saved link on save, but not once the removal is undone', async () => {
