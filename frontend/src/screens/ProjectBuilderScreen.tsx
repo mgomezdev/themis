@@ -6,7 +6,7 @@ import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { buildStlTree, filesInView, isPickableModel } from '../lib/stlTree';
 import {
-  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft, unitCostValue,
+  askOf, draftSnapshot, newLocalId, parseGenerateError, projectToDraft,
   type LocalItem, type LocalLink, type LocalPart, type OrderType, type RemovedSnapshot,
 } from '../lib/projectDraft';
 import { StlFolderTree } from '../components/StlFolderTree';
@@ -21,14 +21,10 @@ import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile } from '../data/types';
 import {
-  getProject, createProject, patchProject,
-  addProjectItem, updateProjectItem, deleteProjectItem,
-  listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview,
-  addProjectLink, updateProjectLink, deleteProjectLink,
-  addProjectPart, updateProjectPart, deleteProjectPart,
-  generateProject,
+  getProject, listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview, generateProject,
   type ProjectGroup, type ProjectItem, type ProjectReview,
 } from '../api/projects';
+import { syncProject } from '../api/projectSync';
 
 const UNDO_TIMEOUT_MS = 6000;
 
@@ -284,106 +280,25 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  async function saveProject(): Promise<number> {
-    const projectFields = {
-      name,
-      customer: orderType === 'customer' ? customer : '',
-      order_type: orderType,
-      on_hold: onHold,
-      due_date: dueDate || null,
-      notes: notes || null,
-      price: price.trim() ? Number(price) : null,
-      // Switching to Internal unlinks the customer account too.
-      customer_id: orderType === 'customer' ? customerId : null,
-    };
-    if (projectId) {
-      await patchProject(projectId, projectFields);
-      for (const id of deletedItemIds) {
-        await deleteProjectItem(projectId, id);
-        setDeletedItemIds(prev => prev.filter(x => x !== id));
+  /**
+   * Persist the draft. Each row created or deleted is recorded as its request succeeds (stamped with its server id,
+   * dropped from the pending deletes), so later saves update it and a retry after a partial failure doesn't repeat it.
+   */
+  function saveProject(): Promise<number> {
+    const draft = { name, customer, customerId, orderType, onHold, dueDate, notes, price, items, links, parts };
+    return syncProject(projectId, draft, { itemIds: deletedItemIds, linkIds: deletedLinkIds, partIds: deletedPartIds }, e => {
+      if (e.type === 'created') {
+        const stamp = <R extends { localId: string }>(prev: R[]) => prev.map(r => (r.localId === e.localId ? { ...r, serverId: e.id } : r));
+        if (e.kind === 'item') setItems(stamp);
+        else if (e.kind === 'link') setLinks(stamp);
+        else setParts(stamp);
+      } else {
+        const drop = (prev: number[]) => prev.filter(id => id !== e.id);
+        if (e.kind === 'item') setDeletedItemIds(drop);
+        else if (e.kind === 'link') setDeletedLinkIds(drop);
+        else setDeletedPartIds(drop);
       }
-      const existing = items.filter(i => i.serverId);
-      const newOnes = items.filter(i => !i.serverId);
-      for (const it of existing) {
-        await updateProjectItem(projectId, it.serverId!, {
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: it.sort_order,
-          pack_rule: it.pack_rule,
-          ...(it.group_id != null ? { group_id: it.group_id } : {}),
-        });
-      }
-      for (let i = 0; i < newOnes.length; i++) {
-        const it = newOnes[i];
-        const added = await addProjectItem(projectId, {
-          file_id: it.file_id,
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: it.sort_order,
-          kind: it.kind, source_ref: it.source_ref, pack_rule: it.pack_rule,
-          ...(it.group_id != null ? { group_id: it.group_id } : {}),
-        });
-        // Later saves update this row instead of adding it again.
-        if (added && typeof added.id === 'number') updateItem(it.localId, { serverId: added.id });
-      }
-      for (const id of deletedLinkIds) {
-        await deleteProjectLink(projectId, id);
-        setDeletedLinkIds(prev => prev.filter(x => x !== id));
-      }
-      for (const lk of links) {
-        if (lk.serverId) {
-          await updateProjectLink(projectId, lk.serverId, { url: lk.url, label: lk.label || null });
-        } else {
-          // 1. Later saves (the Builder stays open) update this link instead of adding it again.
-          const added = await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
-          if (added && typeof added.id === 'number') {
-            setLinks(prev => prev.map(l => (l.localId === lk.localId ? { ...l, serverId: added.id } : l)));
-          }
-        }
-      }
-      for (const id of deletedPartIds) {
-        await deleteProjectPart(projectId, id);
-        setDeletedPartIds(prev => prev.filter(x => x !== id));
-      }
-      for (const pt of parts) {
-        if (pt.serverId) {
-          await updateProjectPart(projectId, pt.serverId, {
-            name: pt.name, quantity: pt.quantity, allocated: pt.allocated, unit_cost: unitCostValue(pt),
-          });
-        } else {
-          const added = await addProjectPart(projectId, {
-            name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
-            ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
-          });
-          if (added && typeof added.id === 'number') {
-            setParts(prev => prev.map(p => (p.localId === pt.localId ? { ...p, serverId: added.id } : p)));
-          }
-        }
-      }
-      return projectId;
-    } else {
-      const proj = await createProject(projectFields);
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        await addProjectItem(proj.id, {
-          file_id: it.file_id,
-          quantity: it.quantity,
-          ...askOf(it),
-          sort_order: i,
-          kind: it.kind, source_ref: it.source_ref, pack_rule: it.pack_rule,
-        });
-      }
-      for (const lk of links) {
-        await addProjectLink(proj.id, { url: lk.url, label: lk.label || null });
-      }
-      for (const pt of parts) {
-        await addProjectPart(proj.id, {
-          name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
-          ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
-        });
-      }
-      return proj.id;
-    }
+    });
   }
 
   /** Save draft: stays in the Builder (a new project moves to its /edit route, so later saves update it). */

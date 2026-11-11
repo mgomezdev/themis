@@ -250,6 +250,25 @@ describe('ProjectBuilderScreen - after a save', () => {
   });
 });
 
+describe('ProjectBuilderScreen - retry after a late failure', () => {
+  it('does not repeat a part delete that went through before a later part request failed', async () => {
+    let posts = 0;
+    const api = open('/projects/7/edit', {
+      'POST /api/v1/projects/7/parts': () => (++posts === 1 ? new Reply(500, 'disk full') : { id: 81 }),
+    });
+    await loadedDetails();
+    await userEvent.click(screen.getByTitle('Remove part'));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), 'screw');
+    await userEvent.click(saveBtn());
+    await screen.findByText(/Save failed/);
+    await userEvent.click(saveBtn());
+    await screen.findByText('Saved');
+    expect(api.to('DELETE', '/api/v1/projects/7/parts/80')).toHaveLength(1);
+    expect(api.to('POST', '/api/v1/projects/7/parts')).toHaveLength(2);
+  });
+});
+
 describe('ProjectBuilderScreen - loading a linked customer project', () => {
   const customer = (id: number, name: string) => ({
     id, name, email: `${id}@example.test`, enabled: true, created_at: '', phone: null, company: null, notes: null,
