@@ -1,16 +1,21 @@
 // The Builder's model picker (Items tab, left): the library's STL / 3MF / gcode files, by folder or name search.
 // Clicking a file adds it as an item (`onAdd`).
-import { useState } from 'react';
 import { Icons } from '../icons';
 import { StlFolderTree } from '../StlFolderTree';
 import { buildStlTree, filesInView, isPickableModel } from '../../lib/stlTree';
 import type { LibraryFile } from '../../data/types';
 
-export function ModelPicker({ files, onAdd }: { files: LibraryFile[]; onAdd: (f: LibraryFile) => void }) {
+/** The folder and search are the caller's, so they survive the Items tab unmounting this. */
+export function ModelPicker({ files, onAdd, selectedFolder, setSelectedFolder, search, setSearch }: {
+  files: LibraryFile[];
+  onAdd: (f: LibraryFile) => void;
+  selectedFolder: string;
+  setSelectedFolder: (path: string) => void;
+  search: string;
+  setSearch: (q: string) => void;
+}) {
   // Every model and pre-sliced file can be an item (BIZ-356): STLs, 3MF plates/objects, gcode plates.
   const stlFiles = files.filter(isPickableModel);
-  const [selectedFolder, setSelectedFolder] = useState('');
-  const [search, setSearch] = useState('');
   const searchLower = search.trim().toLowerCase();
   const folderTree = buildStlTree(stlFiles);
   const folderFiles = filesInView(stlFiles, selectedFolder, search);

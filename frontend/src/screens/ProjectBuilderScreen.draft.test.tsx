@@ -431,6 +431,28 @@ describe('ProjectBuilderScreen - model folder tree', () => {
     expect(pickerFiles()).toEqual(['Slash.stl']);
   });
 
+  it('keeps the search and the selected folder when moving between tabs', async () => {
+    await openTree();
+    await userEvent.click(folder('Toys')[0]);
+    await toTab(/^Details/);
+    await toTab(/^Items/);
+    expect(pickerFiles().sort()).toEqual(['Ball.stl', 'LOUD.STL', 'Plate.3mf', 'Sliced.gcode']);
+    await userEvent.type(screen.getByPlaceholderText('Search files…'), 'car');
+    await toTab(/^Details/);
+    await toTab(/^Items/);
+    expect(screen.getByPlaceholderText('Search files…')).toHaveValue('car');
+    expect(pickerFiles()).toEqual(['Car.stl']);
+  });
+
+  it('returns to the selected folder once the search is cleared', async () => {
+    await openTree();
+    await userEvent.click(folder('Toys')[0]);
+    await userEvent.type(screen.getByPlaceholderText('Search files…'), 'car');
+    expect(pickerFiles()).toEqual(['Car.stl']);
+    await userEvent.clear(screen.getByPlaceholderText('Search files…'));
+    expect(pickerFiles().sort()).toEqual(['Ball.stl', 'LOUD.STL', 'Plate.3mf', 'Sliced.gcode']);
+  });
+
   it('hides the tree while searching and says when nothing matches', async () => {
     await openTree();
     await userEvent.type(screen.getByPlaceholderText('Search files…'), 'zzz');

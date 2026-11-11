@@ -96,6 +96,12 @@ describe('syncProject - new project', () => {
     ]);
   });
 
+  it('creates a project when the id is not a real one (a malformed route)', async () => {
+    const api = stubFetch(routes);
+    expect(await syncProject(NaN, DRAFT, NO_DELETIONS)).toBe(P);
+    expect(writes(api)).toEqual(['POST /api/v1/projects']);
+  });
+
   it('ignores pending deletions (a new project has no saved rows)', async () => {
     const api = stubFetch(routes);
     await syncProject(null, DRAFT, { itemIds: [1], linkIds: [2], partIds: [3] });
@@ -122,8 +128,9 @@ describe('syncProject - existing project', () => {
     // A new item listed before a saved one: saved rows are still updated first.
     items: [item('n', 2, { sort_order: 4, group_id: 3, kind: 'gcode', source_ref: '1', pack_rule: 'locked' }),
             item('s', 1, { serverId: 50, quantity: 2, sort_order: 0, pack_rule: 'solo', kind: '3mf_object', source_ref: 'o1' })],
-    links: [link('s', 'https://old.test', { serverId: 70, label: 'Spec' }), link('n', 'https://new.test')],
-    parts: [part('s', 'magnet', { serverId: 80, unitCost: '' }), part('n', 'screw', { unitCost: '1.5' })],
+    // New links/parts listed first: unlike items, they are updated or added row by row, in order.
+    links: [link('n', 'https://new.test'), link('s', 'https://old.test', { serverId: 70, label: 'Spec' })],
+    parts: [part('n', 'screw', { unitCost: '1.5' }), part('s', 'magnet', { serverId: 80, unitCost: '' })],
   };
 
   it('patches the project, then per kind deletes removed rows, updates saved ones and adds new ones', async () => {
@@ -132,8 +139,8 @@ describe('syncProject - existing project', () => {
     expect(writes(api)).toEqual([
       'PATCH /api/v1/projects/7',
       'DELETE /api/v1/projects/7/items/51', 'PUT /api/v1/projects/7/items/50', 'POST /api/v1/projects/7/items',
-      'DELETE /api/v1/projects/7/links/71', 'PUT /api/v1/projects/7/links/70', 'POST /api/v1/projects/7/links',
-      'DELETE /api/v1/projects/7/parts/81', 'PUT /api/v1/projects/7/parts/80', 'POST /api/v1/projects/7/parts',
+      'DELETE /api/v1/projects/7/links/71', 'POST /api/v1/projects/7/links', 'PUT /api/v1/projects/7/links/70',
+      'DELETE /api/v1/projects/7/parts/81', 'POST /api/v1/projects/7/parts', 'PUT /api/v1/projects/7/parts/80',
     ]);
     expect(api.calls[0].body).toEqual(projectFieldsOf(EDITED));
   });

@@ -18,6 +18,8 @@ export interface BuilderState {
   /** Snapshot of the last loaded/saved draft; '' until a saved project has loaded (a new project is always dirty). */
   cleanSnap: string;
   lastRemoved: RemovedSnapshot | null;
+  /** Counts removals: the undo toast's clock restarts on a new removal only, not when a save updates `lastRemoved`. */
+  removalSeq: number;
   /** Loaded, not edited here: a draft-stage project (customer request) can't be queued until promoted. */
   isDraftStage: boolean;
   /** The loaded items as the server has them (print progress), by id. */
@@ -61,6 +63,7 @@ export function initialBuilderState(newForCustomerId: number | null = null): Bui
     deleted: NO_DELETIONS,
     cleanSnap: '',
     lastRemoved: null,
+    removalSeq: 0,
     isDraftStage: false,
     serverItems: new Map(),
   };
@@ -101,6 +104,7 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
         cleanSnap: draftSnapshot(draft),
         // Its rows were replaced, so an undo would restore a row that no longer belongs to this draft.
         lastRemoved: null,
+        removalSeq: s.removalSeq,
         isDraftStage: a.project.stage === 'draft',
         serverItems: new Map(a.project.items.map(it => [it.id, it])),
       };
@@ -155,6 +159,7 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
         draft: { ...d, items: d.items.filter(it => !a.localIds.includes(it.localId)) },
         deleted: { ...s.deleted, itemIds: [...s.deleted.itemIds, ...removed.map(r => r.item.serverId).filter((x): x is number => !!x)] },
         lastRemoved: { kind: 'item', label: removed.length === 1 ? removed[0].item.file_name : `${removed.length} items`, removed },
+        removalSeq: s.removalSeq + 1,
       };
     }
     case 'remove': {
@@ -167,6 +172,7 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
           draft: { ...d, links: d.links.filter(l => l.localId !== a.localId) },
           deleted: link.serverId ? { ...s.deleted, linkIds: [...s.deleted.linkIds, link.serverId] } : s.deleted,
           lastRemoved: { kind: 'link', label: link.label || link.url || 'link', index, link },
+          removalSeq: s.removalSeq + 1,
         };
       }
       const index = d.parts.findIndex(p => p.localId === a.localId);
@@ -177,6 +183,7 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
         draft: { ...d, parts: d.parts.filter(p => p.localId !== a.localId) },
         deleted: part.serverId ? { ...s.deleted, partIds: [...s.deleted.partIds, part.serverId] } : s.deleted,
         lastRemoved: { kind: 'part', label: part.name || 'part', index, part },
+        removalSeq: s.removalSeq + 1,
       };
     }
     case 'undo': {
@@ -208,24 +215,38 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
       return s.lastRemoved ? { ...s, lastRemoved: null } : s;
     case 'synced': {
       const e = a.event;
-      if (e.type === 'created') {
-        const stamp = <R extends { localId: string; serverId?: number }>(rows: R[]) =>
-          rows.map(r => (r.localId === e.localId ? { ...r, serverId: e.id } : r));
-        if (e.kind === 'item') return { ...s, draft: { ...d, items: stamp(d.items) } };
-        if (e.kind === 'link') return { ...s, draft: { ...d, links: stamp(d.links) } };
-        return { ...s, draft: { ...d, parts: stamp(d.parts) } };
-      }
-      // The removed row is gone server-side now: undoing must re-create it, not update a deleted id.
-      let lastRemoved = s.lastRemoved;
-      if (lastRemoved?.kind === 'item' && e.kind === 'item' && lastRemoved.removed.some(x => x.item.serverId === e.id)) {
-        lastRemoved = { ...lastRemoved, removed: lastRemoved.removed.map(x => ({ ...x, item: withoutServerId(x.item, e.id) })) };
-      } else if (lastRemoved?.kind === 'link' && e.kind === 'link' && lastRemoved.link.serverId === e.id) {
-        lastRemoved = { ...lastRemoved, link: withoutServerId(lastRemoved.link, e.id) };
-      } else if (lastRemoved?.kind === 'part' && e.kind === 'part' && lastRemoved.part.serverId === e.id) {
-        lastRemoved = { ...lastRemoved, part: withoutServerId(lastRemoved.part, e.id) };
-      }
       const key = e.kind === 'item' ? 'itemIds' : e.kind === 'link' ? 'linkIds' : 'partIds';
-      return { ...s, deleted: { ...s.deleted, [key]: s.deleted[key].filter(id => id !== e.id) }, lastRemoved };
+      const lr = s.lastRemoved;
+      if (e.type === 'created') {
+        const stamp = <R extends { localId: string; serverId?: number }>(r: R): R => (r.localId === e.localId ? { ...r, serverId: e.id } : r);
+        const inDraft = (e.kind === 'item' ? d.items : e.kind === 'link' ? d.links : d.parts).some(r => r.localId === e.localId);
+        if (inDraft) {
+          if (e.kind === 'item') return { ...s, draft: { ...d, items: d.items.map(stamp) } };
+          if (e.kind === 'link') return { ...s, draft: { ...d, links: d.links.map(stamp) } };
+          return { ...s, draft: { ...d, parts: d.parts.map(stamp) } };
+        }
+        // Removed while its create was in flight: the server row now exists but the draft doesn't have it, so it is
+        // deleted on the next save — and an undo restores the row with its id (updated then, not created again).
+        let lastRemoved = lr;
+        if (lr?.kind === 'item' && e.kind === 'item') lastRemoved = { ...lr, removed: lr.removed.map(x => ({ ...x, item: stamp(x.item) })) };
+        else if (lr?.kind === 'link' && e.kind === 'link') lastRemoved = { ...lr, link: stamp(lr.link) };
+        else if (lr?.kind === 'part' && e.kind === 'part') lastRemoved = { ...lr, part: stamp(lr.part) };
+        return { ...s, deleted: { ...s.deleted, [key]: [...s.deleted[key], e.id] }, lastRemoved };
+      }
+      // The row is gone server-side now: wherever it still is (put back by an undo during the save, or in the undo
+      // snapshot), it must be re-created on the next save, not updated under a deleted id.
+      let lastRemoved = lr;
+      if (lr?.kind === 'item' && e.kind === 'item' && lr.removed.some(x => x.item.serverId === e.id)) {
+        lastRemoved = { ...lr, removed: lr.removed.map(x => ({ ...x, item: withoutServerId(x.item, e.id) })) };
+      } else if (lr?.kind === 'link' && e.kind === 'link' && lr.link.serverId === e.id) {
+        lastRemoved = { ...lr, link: withoutServerId(lr.link, e.id) };
+      } else if (lr?.kind === 'part' && e.kind === 'part' && lr.part.serverId === e.id) {
+        lastRemoved = { ...lr, part: withoutServerId(lr.part, e.id) };
+      }
+      const draft = e.kind === 'item' ? { ...d, items: d.items.map(r => withoutServerId(r, e.id)) }
+        : e.kind === 'link' ? { ...d, links: d.links.map(r => withoutServerId(r, e.id)) }
+        : { ...d, parts: d.parts.map(r => withoutServerId(r, e.id)) };
+      return { ...s, draft, deleted: { ...s.deleted, [key]: s.deleted[key].filter(id => id !== e.id) }, lastRemoved };
     }
     case 'saved':
       return { ...s, cleanSnap: a.snap };

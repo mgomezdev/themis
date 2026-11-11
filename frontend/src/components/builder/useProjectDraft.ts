@@ -24,7 +24,8 @@ export function useProjectDraft(projectId: number | null, newForCustomerId: numb
     return () => { alive = false; };
   }, [projectId]);
 
-  useAutoDismiss(state.lastRemoved, () => dispatch({ type: 'dismissUndo' }), UNDO_TIMEOUT_MS);
+  // Keyed on the removal count, so a save that updates the undo snapshot doesn't restart the clock.
+  useAutoDismiss(state.lastRemoved ? state.removalSeq : null, () => dispatch({ type: 'dismissUndo' }), UNDO_TIMEOUT_MS);
 
   /**
    * Persist the draft as it is now; resolves to the project id. Each created/deleted row is recorded as its
@@ -38,5 +39,5 @@ export function useProjectDraft(projectId: number | null, newForCustomerId: numb
     return pid;
   }
 
-  return { state, dispatch, isDirty: isDirty(state, projectId != null), save };
+  return { state, dispatch, isDirty: isDirty(state, !!projectId), save };
 }

@@ -69,7 +69,7 @@ export async function syncProject(
   };
   const gone = (kind: RowKind, id: number) => onEvent({ type: 'deleted', kind, id });
   const fields = projectFieldsOf(draft);
-  if (projectId == null) {
+  if (!projectId) {
     const proj = await createProject(fields);
     for (const [i, it] of draft.items.entries()) {
       created('item', it.localId, await addProjectItem(proj.id, {

@@ -75,6 +75,9 @@ export function ProjectBuilderScreen() {
 
   const { files: allFiles } = useFiles({});
   const fileById = new Map(allFiles.map(f => [f.id, f]));
+  // The model picker's folder and search live here: the Items tab unmounts it, and nothing is lost between tabs.
+  const [selectedFolder, setSelectedFolder] = useState('');
+  const [search, setSearch] = useState('');
 
   // Print groups of a saved project, in queue order (the Default Group is created lazily by the list).
   useEffect(() => {
@@ -258,7 +261,8 @@ export function ProjectBuilderScreen() {
   const itemsTab = (
     <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16, alignItems: 'start' }}>
       {/* Left: model file tree */}
-      <ModelPicker files={allFiles} onAdd={addFile} />
+      <ModelPicker files={allFiles} onAdd={addFile} selectedFolder={selectedFolder} setSelectedFolder={setSelectedFolder}
+                   search={search} setSearch={setSearch} />
 
       <div className="col gap-3" style={{ minWidth: 0 }}>
         {banner(true, false)}

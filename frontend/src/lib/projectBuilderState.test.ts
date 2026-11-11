@@ -337,6 +337,50 @@ describe('synced / saved', () => {
     expect(run(part, { type: 'synced', event: { type: 'deleted', kind: 'part', id: 81 } }).lastRemoved).toBe(part.lastRemoved);
   });
 
+  it('clears the id of a restored row whose delete lands after the undo (undo during the save)', () => {
+    const s = run(savedState(), { type: 'remove', kind: 'link', localId: 'l1' }, { type: 'undo' },
+      { type: 'synced', event: { type: 'deleted', kind: 'link', id: 70 } });
+    expect(s.draft.links[0]).toMatchObject({ localId: 'l1', serverId: undefined });
+    const items = run(savedState(), { type: 'removeItems', localIds: ['i2'] }, { type: 'undo' },
+      { type: 'synced', event: { type: 'deleted', kind: 'item', id: 51 } });
+    expect(items.draft.items.map(i => i.serverId)).toEqual([50, undefined, 52]);
+    const parts = run(savedState(), { type: 'remove', kind: 'part', localId: 'p1' }, { type: 'undo' },
+      { type: 'synced', event: { type: 'deleted', kind: 'part', id: 80 } });
+    expect(parts.draft.parts[0].serverId).toBeUndefined();
+  });
+
+  it.each(['item', 'link', 'part'] as const)('queues the delete of a %s created after it was removed, and undo keeps it', kind => {
+    const s0 = run(savedState(), { type: 'addLink' }, { type: 'addPart' }, { type: 'addFile', file: FILE, groupId: null, defaultGroupId: null });
+    const rows = kind === 'item' ? s0.draft.items : kind === 'link' ? s0.draft.links : s0.draft.parts;
+    const localId = rows[rows.length - 1].localId;
+    const remove: BuilderAction = kind === 'item' ? { type: 'removeItems', localIds: [localId] } : { type: 'remove', kind, localId };
+    const key = kind === 'item' ? 'itemIds' : kind === 'link' ? 'linkIds' : 'partIds';
+    const s = run(s0, remove, { type: 'synced', event: { type: 'created', kind, localId, id: 99 } });
+    expect(s.deleted[key]).toEqual([99]);                       // the server row the draft no longer has
+    const back = run(s, { type: 'undo' });
+    expect(back.deleted[key]).toEqual([]);
+    const restored = kind === 'item' ? back.draft.items : kind === 'link' ? back.draft.links : back.draft.parts;
+    expect(restored.find(r => r.localId === localId)?.serverId).toBe(99);   // updated next save, not created again
+  });
+
+  it('queues the delete of a created row that was removed and whose undo was dismissed', () => {
+    const s0 = run(savedState(), { type: 'addLink' });
+    const localId = s0.draft.links[1].localId;
+    const s = run(s0, { type: 'remove', kind: 'link', localId }, { type: 'dismissUndo' },
+      { type: 'synced', event: { type: 'created', kind: 'link', localId, id: 99 } });
+    expect(s.deleted.linkIds).toEqual([99]);
+  });
+
+  it('counts removals: only a new removal moves the undo clock', () => {
+    const s0 = savedState();
+    const r1 = run(s0, { type: 'remove', kind: 'link', localId: 'l1' });
+    expect(r1.removalSeq).toBe(s0.removalSeq + 1);
+    const synced = run(r1, { type: 'synced', event: { type: 'deleted', kind: 'link', id: 70 } });
+    expect(synced.removalSeq).toBe(r1.removalSeq);
+    expect(run(synced, { type: 'removeItems', localIds: ['i1'] }).removalSeq).toBe(r1.removalSeq + 1);
+    expect(run(s0, { type: 'removeItems', localIds: ['nope'] }).removalSeq).toBe(s0.removalSeq);
+  });
+
   it('sets the clean baseline on save', () => {
     expect(run(savedState(), { type: 'saved', snap: 'S' }).cleanSnap).toBe('S');
   });

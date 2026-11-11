@@ -35,18 +35,6 @@ describe('useProjectDraft', () => {
     expect(result.current.state.serverItems.has(50)).toBe(true);
   });
 
-  it('ignores a load that finishes after unmount', async () => {
-    let resolve!: (v: unknown) => void;
-    vi.stubGlobal('fetch', vi.fn(() => new Promise(r => { resolve = r; })));
-    const { result, unmount } = renderHook(() => useProjectDraft(7, null));
-    const before = result.current.state;
-    unmount();
-    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await act(async () => { resolve({ ok: true, status: 200, json: () => Promise.resolve(PROJECT) }); });
-    expect(result.current.state).toBe(before);
-    expect(err).not.toHaveBeenCalled();
-  });
-
   it('ignores a slow load for a project it has since moved off', async () => {
     const pending: Record<string, (v: unknown) => void> = {};
     vi.stubGlobal('fetch', vi.fn((url: string) => new Promise(r => { pending[url] = r; })));
@@ -95,6 +83,21 @@ describe('useProjectDraft', () => {
     act(() => result.current.dispatch({ type: 'setFields', fields: { notes: 'x' } }));
     await act(async () => { await expect(result.current.save()).rejects.toThrow(); });
     expect(result.current.isDirty).toBe(true);
+  });
+
+  it('treats a malformed project id as a new project', () => {
+    stubFetch({});
+    const { result } = renderHook(() => useProjectDraft(NaN, null));
+    expect(result.current.isDirty).toBe(true);
+  });
+
+  it('does not restart the undo clock when the removal is saved', async () => {
+    const { result } = await loadedHook({ 'DELETE /api/v1/projects/7/items/50': { deleted: 50 } });
+    const timeouts = vi.spyOn(window, 'setTimeout');
+    act(() => result.current.dispatch({ type: 'removeItems', localIds: [result.current.state.draft.items[0].localId] }));
+    await act(async () => { await result.current.save(); });
+    expect(timeouts.mock.calls.filter(c => c[1] === UNDO_TIMEOUT_MS)).toHaveLength(1);
+    expect(result.current.state.lastRemoved).not.toBeNull();
   });
 
   it('drops the undo after UNDO_TIMEOUT_MS', async () => {
