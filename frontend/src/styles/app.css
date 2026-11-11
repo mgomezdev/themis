@@ -294,7 +294,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .topbar a.crumb:hover { color: var(--text-1); text-decoration: underline; }
 .topbar .spacer { flex: 1; }
 .topbar .search {
-  background: var(--bg-1);
+  background: var(--bg-0);
   border: 1px solid var(--border-1);
   border-radius: 0;
   padding: 6px 12px;
@@ -694,7 +694,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid var(--border-1);
-  background: var(--bg-0);
+  background: var(--bg-1);
   color: var(--text-1);
   font-size: 12px;
   cursor: pointer;

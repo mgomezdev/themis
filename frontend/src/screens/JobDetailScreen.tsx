@@ -430,7 +430,7 @@ export function JobDetailScreen() {
             <div className="card" style={{ padding: 20 }}>
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Estimate</div>
               {job.estimate_status === 'pending' && (
-                <p style={{ color: 'var(--muted)', margin: 0 }}>Estimating…</p>
+                <p style={{ color: 'var(--text-3)', margin: 0 }}>Estimating…</p>
               )}
               {job.estimate_status === 'done' && job.estimate_seconds !== null && (
                 <>

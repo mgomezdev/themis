@@ -238,7 +238,7 @@ export function EditJobScreen() {
       )}
 
       {job && (
-        <div className="card" style={{ padding: '12px 16px', background: 'var(--bg-0)' }}>
+        <div className="card" style={{ padding: '12px 16px' }}>
           <div className="row gap-3" style={{ alignItems: 'center' }}>
             <span className="mono tiny muted">#{job.id}</span>
             <span className="small" style={{ fontWeight: 500 }}>
