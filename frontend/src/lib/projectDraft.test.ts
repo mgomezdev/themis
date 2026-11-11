@@ -89,9 +89,19 @@ describe('draftSnapshot', () => {
     expect(draftSnapshot({ ...internal, customer: '', customerId: null })).toBe(draftSnapshot(internal));
   });
 
-  it('round-trips a loaded project: the loaded draft fingerprints like its own copy', () => {
-    const d = projectToDraft(LOADED);
-    expect(draftSnapshot(projectToDraft(LOADED))).toBe(draftSnapshot(d));
+  it('fingerprints a loaded project like the same draft built by hand (load then compare is clean)', () => {
+    const byHand: ProjectDraft = {
+      name: 'Gridfinity', customer: 'typed name', customerId: null, orderType: 'internal', onHold: true,
+      dueDate: '2026-12-01', notes: 'rush', price: '40',
+      items: [{ localId: 'a', serverId: 50, file_id: 1, file_name: 'Bracket.stl', quantity: 2, sort_order: 3,
+                filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#FF0000' }],
+      links: [{ localId: 'b', serverId: 70, url: 'https://example.test', label: '' }],
+      parts: [
+        { localId: 'c', serverId: 80, name: 'magnet', quantity: 4, allocated: true, unitCost: '0.25' },
+        { localId: 'd', serverId: 81, name: 'screw', quantity: 1, allocated: false, unitCost: '' },
+      ],
+    };
+    expect(draftSnapshot(projectToDraft(LOADED))).toBe(draftSnapshot(byHand));
   });
 });
 

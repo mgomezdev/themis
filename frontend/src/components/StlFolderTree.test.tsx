@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { StlFolderTree } from './StlFolderTree';
+import { Icons } from './icons';
+import type React from 'react';
 import { buildStlTree } from '../lib/stlTree';
 
 const TREE = buildStlTree([{ folder: 'Toys/Cars' }, { folder: 'Toys/Balls' }, { folder: 'Tools' }]);
@@ -47,8 +49,24 @@ describe('StlFolderTree', () => {
     expect(rowNames()).toEqual(['All files']);
   });
 
+  it('shows an open/closed chevron only on folders with subfolders', async () => {
+    const markup = (icon: React.ReactElement) => render(<>{icon}</>).container.innerHTML;
+    const OPEN = markup(Icons.chevD);
+    const CLOSED = markup(Icons.chevR);
+    renderTree();
+    const chevron = (name: string) => row(name)!.querySelector('span')!.innerHTML;
+    expect(chevron('All files')).toBe(OPEN);
+    expect(chevron('Toys')).toBe(CLOSED);
+    expect(chevron('Tools')).toBe('');
+    await userEvent.click(row('Toys')!);
+    expect(chevron('Toys')).toBe(OPEN);
+  });
+
   it('highlights only the selected folder', () => {
     renderTree('Tools');
+    const icon = (name: string) => (row(name)!.querySelectorAll('span')[1] as HTMLElement).style.color;
+    expect(icon('Tools')).toBe('var(--accent-hi)');
+    expect(icon('Toys')).toBe('var(--text-3)');
     expect(row('Tools')!.style.color).toBe('var(--accent)');
     expect(row('Toys')!.style.color).toBe('var(--text-2)');
     expect(row('All files')!.style.color).toBe('var(--text-2)');
