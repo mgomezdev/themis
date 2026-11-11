@@ -135,7 +135,7 @@ export function NewOrderScreen() {
       </div>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
       )}
 
       <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
@@ -145,7 +145,7 @@ export function NewOrderScreen() {
             {/* Customer sales and payments live on projects (customer pages + financial summary read those). */}
             <div data-testid="orders-are-internal" className="tiny" style={{
               marginBottom: 14, padding: '10px 12px', borderRadius: 8, lineHeight: 1.5,
-              background: 'var(--bg-1)', border: '1px solid var(--border-1)', color: 'var(--text-2)',
+              background: 'var(--bg-0)', border: '1px solid var(--border-1)', color: 'var(--text-1)',
             }}>
               Orders group jobs for internal work — R&D, marketing, spares. For a paying customer, record a{' '}
               <button className="btn ghost sm" style={{ padding: '0 4px' }} onClick={() => navigate('/projects')}>project</button>{' '}

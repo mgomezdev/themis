@@ -129,16 +129,16 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: 'var(--surface, #1e1e2e)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ background: 'var(--bg-1)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         <div style={{ padding: '24px 24px 12px', overflowY: 'auto', flex: 1 }}>
           <h2 style={{ marginTop: 0 }}>Profile References Need Remapping</h2>
-          <p style={{ color: 'var(--text-muted, #aaa)', fontSize: 14 }}>
+          <p style={{ color: 'var(--text-3)', fontSize: 14 }}>
             The incoming catalog removed profiles still referenced below. Printers need a replacement; jobs and inventory filaments can be cleared.
           </p>
 
           {inventory_error && (
-            <div style={{ background: '#7c2d12', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+            <div style={{ background: 'color-mix(in oklch, var(--err) 20%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 35%, transparent)', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
               Inventory references could not be fully checked: {inventory_error}
             </div>
           )}
@@ -154,7 +154,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                 const isValid = optList.includes(printerQuery);
                 return (
                   <div key={key} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
                       <s>{entry.stale_value}</s>{' → '}
                       <span style={{ fontSize: 12 }}>{countBadge(entry.affected_printer_names, 'printers')}</span>
                     </div>
@@ -170,7 +170,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                       {filterOpts(optList, printerQuery).map(o => <option key={o} value={o} />)}
                     </datalist>
                     {entry.required && !isValid && (
-                      <div style={{ color: 'var(--err, #f87171)', fontSize: 12, marginTop: 2 }}>Required — choose from the list</div>
+                      <div style={{ color: 'var(--err)', fontSize: 12, marginTop: 2 }}>Required — choose from the list</div>
                     )}
                   </div>
                 );
@@ -188,7 +188,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                 const jobQuery = jobSelections[key] ?? '';
                 return (
                   <div key={key} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
                       <s>{entry.stale_value}</s>{' → '}
                       <span style={{ fontSize: 12 }}>{countBadge(entry.affected_file_names, 'jobs')}</span>
                     </div>
@@ -227,7 +227,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                 const filtered = filterSpoolOpts(candidates, search);
                 return (
                   <div key={key} style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)', marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 6 }}>
                       <s>{entry.stale_name}</s>
                       {' on '}<em>{entry.printer_preset}</em>{' → '}
                       <span style={{ fontSize: 12 }}>{countBadge(entry.affected_filament_names, 'filaments')}</span>
@@ -275,7 +275,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                         {filtered.map(o => <option key={o} value={o} />)}
                       </datalist>
                     )}
-                    <div style={{ fontSize: 11, color: 'var(--text-muted, #888)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
                       Leave blank to remove this profile reference from the filament
                     </div>
                   </div>
@@ -285,12 +285,12 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
           )}
 
           {error && (
-            <div style={{ color: 'var(--err, #f87171)', fontSize: 13, marginBottom: 8 }}>{error}</div>
+            <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 8 }}>{error}</div>
           )}
         </div>
 
         {/* Footer outside scroll area — always visible */}
-        <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border, #333)' }}>
+        <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border-1)' }}>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={onCancel} disabled={submitting} style={{ padding: '6px 16px' }}>
               Cancel
@@ -298,7 +298,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
             <button
               onClick={handleConfirm}
               disabled={!canConfirm}
-              style={{ padding: '6px 16px', background: canConfirm ? 'var(--accent, #7c3aed)' : '#555', color: '#fff', border: 'none', borderRadius: 4, cursor: canConfirm ? 'pointer' : 'default' }}
+              style={{ padding: '6px 16px', background: canConfirm ? 'var(--accent)' : 'var(--bg-2)', color: canConfirm ? 'var(--bg-0)' : 'var(--text-3)', border: 'none', borderRadius: 4, cursor: canConfirm ? 'pointer' : 'default' }}
             >
               {submitting ? 'Applying…' : 'Confirm'}
             </button>

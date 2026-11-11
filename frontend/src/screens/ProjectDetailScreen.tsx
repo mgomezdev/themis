@@ -188,34 +188,34 @@ export function ProjectDetailScreen() {
               </h2>
               <span style={{
                 fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: 'var(--bg-3)', color: 'var(--text-4)',
+                background: 'var(--bg-2)', color: 'var(--text-4)',
               }}>
                 #{project.id}
               </span>
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: project.stage === 'queued' ? 'rgba(34,197,94,0.15)' : 'rgba(239,160,0,0.15)',
+                background: project.stage === 'queued' ? 'color-mix(in oklch, var(--ok) 15%, transparent)' : 'color-mix(in oklch, var(--warn) 15%, transparent)',
                 color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
                 textTransform: 'uppercase', letterSpacing: '0.04em',
               }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
               {project.order_type === 'customer' && (
                 <span style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: 'var(--bg-3)', color: 'var(--text-3)',
+                  background: 'var(--bg-2)', color: 'var(--text-3)',
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>Customer</span>
               )}
               {project.on_hold && (
                 <span style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
+                  background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>On hold</span>
               )}
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                background: project.payment_status === 'paid' ? 'rgba(34,197,94,0.15)'
-                  : project.payment_status === 'partial' ? 'rgba(239,160,0,0.15)' : 'var(--bg-3)',
+                background: project.payment_status === 'paid' ? 'color-mix(in oklch, var(--ok) 15%, transparent)'
+                  : project.payment_status === 'partial' ? 'color-mix(in oklch, var(--warn) 15%, transparent)' : 'var(--bg-2)',
                 color: project.payment_status === 'paid' ? 'var(--ok)'
                   : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
                 textTransform: 'uppercase', letterSpacing: '0.04em',
@@ -364,8 +364,8 @@ export function ProjectDetailScreen() {
         {showPrinterPicker && !generating && (
           <div style={{
             marginTop: 14, padding: '14px 16px',
-            border: '1px solid var(--border)', borderRadius: 8,
-            background: 'var(--bg-2)',
+            border: '1px solid var(--border-1)', borderRadius: 8,
+            background: 'var(--bg-1)',
           }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
@@ -423,7 +423,7 @@ export function ProjectDetailScreen() {
         {generateError && (
           <div style={{
             marginTop: 12, display: 'flex', alignItems: 'center', gap: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+            background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
             borderRadius: 6, padding: '10px 14px',
           }}>
             <span style={{ color: 'var(--err)' }}>{Icons.alert}</span>
@@ -505,7 +505,7 @@ export function ProjectDetailScreen() {
       {/* ── Links ───────────────────────────────────────────────────────── */}
       {project.links && project.links.length > 0 && (
         <div className="card" style={{ padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 10 }}>
             Links
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -533,7 +533,7 @@ export function ProjectDetailScreen() {
 
       {/* ── Parts ───────────────────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 12 }}>
           Parts ({project.items.length})
         </div>
         {project.items.length === 0 ? (
@@ -558,7 +558,7 @@ export function ProjectDetailScreen() {
                 <div key={item.id} style={{
                   display: 'grid', gridTemplateColumns: '1fr 50px 160px 110px',
                   gap: 8, alignItems: 'center', padding: '7px 4px',
-                  borderTop: '1px solid var(--border)',
+                  borderTop: '1px solid var(--border-1)',
                 }}>
                   <span style={{
                     fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
@@ -566,7 +566,7 @@ export function ProjectDetailScreen() {
                   }} title={item.file_name}>
                     {item.file_name}
                   </span>
-                  <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{item.quantity}</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-1)' }}>×{item.quantity}</span>
                   <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{filamentLabel}</span>
                   <span style={{
                     fontSize: 11,
@@ -591,7 +591,7 @@ export function ProjectDetailScreen() {
 
       {/* ── Non-printed parts ──────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 12 }}>
           Non-printed parts ({project.parts.length})
         </div>
         {project.parts.length === 0 ? (
@@ -612,7 +612,7 @@ export function ProjectDetailScreen() {
               <div key={part.id} style={{
                 display: 'grid', gridTemplateColumns: '1fr 60px 90px',
                 gap: 8, alignItems: 'center', padding: '7px 4px',
-                borderTop: '1px solid var(--border)',
+                borderTop: '1px solid var(--border-1)',
               }}>
                 <span style={{
                   fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
@@ -620,7 +620,7 @@ export function ProjectDetailScreen() {
                 }} title={part.name}>
                   {part.name}
                 </span>
-                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{part.quantity}</span>
+                <span style={{ fontSize: 13, color: 'var(--text-1)' }}>×{part.quantity}</span>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <input
                     type="checkbox"
@@ -640,7 +640,7 @@ export function ProjectDetailScreen() {
       {/* ── Jobs ────────────────────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>
         <div className="row between" style={{ alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
             Jobs ({jobs.length})
           </div>
           <div className="row gap-2">
@@ -684,7 +684,7 @@ export function ProjectDetailScreen() {
                 <div key={job.id} style={{
                   display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
                   gap: 8, alignItems: 'center', padding: '8px 4px',
-                  borderTop: '1px solid var(--border)',
+                  borderTop: '1px solid var(--border-1)',
                 }}>
                   <span style={{ fontSize: 12, color: 'var(--text-4)' }}>#{job.id}</span>
                   <span style={{

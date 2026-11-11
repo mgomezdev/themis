@@ -65,7 +65,7 @@ export function FilamentProfileMultiSelect({ profiles, selected, onChange, place
         {open && (filtered.length > 0 || (query && emptyText)) && (
           <div style={{
             position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-            background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+            background: 'var(--bg-1)', border: '1px solid var(--border-2)',
             borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
             maxHeight: 200, overflowY: 'auto', marginTop: 2,
           }}>
@@ -77,7 +77,7 @@ export function FilamentProfileMultiSelect({ profiles, selected, onChange, place
                   padding: '7px 12px', fontSize: 12, cursor: 'pointer',
                   color: 'var(--text-1)', borderBottom: '1px solid var(--border-1)',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >{p}</div>
             )) : (

@@ -175,8 +175,8 @@ function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.55)' : isBlocked ? 'rgba(251,191,36,0.6)' : undefined,
-        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px rgba(239,68,68,0.15)' : isBlocked ? 'inset 0 0 0 1px rgba(251,191,36,0.12)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'color-mix(in oklch, var(--err) 55%, transparent)' : isBlocked ? 'color-mix(in oklch, var(--warn) 60%, transparent)' : undefined,
+        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px color-mix(in oklch, var(--err) 15%, transparent)' : isBlocked ? 'inset 0 0 0 1px color-mix(in oklch, var(--warn) 12%, transparent)' : undefined,
       }}
     >
       <div className="row gap-4" style={{ padding: 14 }}>
@@ -184,7 +184,7 @@ function JobCardRich({
         <div
           style={{
             width: 80, height: 80, flexShrink: 0,
-            background: `linear-gradient(135deg, var(--bg-2), var(--bg-3))`,
+            background: `linear-gradient(135deg, var(--bg-1), var(--bg-2))`,
             borderRadius: 0,
             border: '1px solid var(--border-2)',
             display: 'grid', placeItems: 'center',
@@ -292,8 +292,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(251,191,36,0.3)',
-            background: 'rgba(251,191,36,0.09)',
+            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -322,8 +322,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(239,68,68,0.3)',
-            background: 'rgba(239,68,68,0.09)',
+            borderTop: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--err) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -352,8 +352,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(251,191,36,0.3)',
-            background: 'rgba(251,191,36,0.09)',
+            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -453,7 +453,7 @@ function JobDetailPanel({
       {/* Thumbnail header */}
       <div style={{
         width: '100%', height: 180, position: 'relative',
-        background: 'linear-gradient(135deg, var(--bg-2), var(--bg-3))',
+        background: 'linear-gradient(135deg, var(--bg-1), var(--bg-2))',
         display: 'grid', placeItems: 'center',
         overflow: 'hidden',
       }}>
@@ -476,7 +476,7 @@ function JobDetailPanel({
           <div style={{
             position: 'absolute', bottom: 8, left: 8,
             padding: '3px 8px', borderRadius: 0,
-            background: 'rgba(239,68,68,0.85)', color: 'white',
+            background: 'color-mix(in oklch, var(--err) 85%, transparent)', color: 'white',
             fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
           }}>
             FAILED
@@ -500,7 +500,7 @@ function JobDetailPanel({
               <span className="tiny muted">
                 {job.layer && (
                   <>layer{' '}
-                  <span className="num" style={{ color: 'var(--text-2)' }}>
+                  <span className="num" style={{ color: 'var(--text-1)' }}>
                     {job.layer.now}/{job.layer.total}
                   </span></>
                 )}
@@ -545,11 +545,11 @@ function JobDetailPanel({
         {job.lowStockWarning && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>
                 Low filament
               </div>
-              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.lowStockWarning.message}</div>
+              <div className="small" style={{ color: 'var(--text-1)', lineHeight: 1.5 }}>{job.lowStockWarning.message}</div>
             </div>
           </>
         )}
@@ -561,7 +561,7 @@ function JobDetailPanel({
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {job.eligiblePrinters.map(p => (
                 <div key={p.id} className="row between" style={{
-                  padding: '6px 10px', background: 'var(--bg-1)',
+                  padding: '6px 10px', background: 'var(--bg-0)',
                   borderRadius: 0, border: '1px solid var(--border-1)',
                 }}>
                   <div className="small">{p.name}</div>
@@ -575,11 +575,11 @@ function JobDetailPanel({
         {(isBlocked || isFailed) && job.blockReason && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'rgba(239,68,68,0.08)' : 'rgba(251,191,36,0.1)', border: isFailed ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(251,191,36,0.3)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'color-mix(in oklch, var(--err) 8%, transparent)' : 'color-mix(in oklch, var(--warn) 10%, transparent)', border: isFailed ? '1px solid color-mix(in oklch, var(--err) 25%, transparent)' : '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: isFailed ? 'var(--err)' : 'var(--warn)', marginBottom: 4 }}>
                 {isFailed ? 'Failure Reason' : 'Blocked'}
               </div>
-              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.blockReason}</div>
+              <div className="small" style={{ color: 'var(--text-1)', lineHeight: 1.5 }}>{job.blockReason}</div>
             </div>
           </>
         )}
@@ -591,12 +591,12 @@ function JobDetailPanel({
             <div className="tag-key" style={{ marginBottom: 8 }}>Slice errors</div>
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {sliceFailures.map((f, i) => (
-                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)' }}>
                   <div className="tiny" style={{ fontWeight: 600, color: 'var(--err)', marginBottom: 4 }}>
                     Printer {f.printer_id} · {f.print_profile}
                   </div>
                   {f.slice_error && (
-                    <div className="mono tiny" style={{ color: 'var(--text-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
+                    <div className="mono tiny" style={{ color: 'var(--text-1)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
                       {f.slice_error}
                     </div>
                   )}
@@ -646,8 +646,8 @@ function JobDetailPanel({
                 {verifyRunning && (
                   <div style={{
                     padding: '8px 12px', borderRadius: 0,
-                    background: 'rgba(245,158,11,0.08)',
-                    border: '1px solid rgba(245,158,11,0.25)',
+                    background: 'color-mix(in oklch, var(--warn) 8%, transparent)',
+                    border: '1px solid color-mix(in oklch, var(--warn) 25%, transparent)',
                     animation: 'pulse-soft 1.5s ease-in-out infinite',
                   }}>
                     <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 500 }}>
@@ -658,19 +658,19 @@ function JobDetailPanel({
                 {verifyResult && (
                   <div style={{
                     padding: '10px 12px', borderRadius: 0,
-                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
+                    background: verifyResult.ok ? 'color-mix(in oklch, var(--ok) 8%, transparent)' : 'color-mix(in oklch, var(--err) 8%, transparent)',
+                    border: `1px solid ${verifyResult.ok ? 'color-mix(in oklch, var(--ok) 30%, transparent)' : 'color-mix(in oklch, var(--err) 25%, transparent)'}`,
                   }}>
                     <div className="tiny" style={{
                       fontWeight: 600,
-                      color: verifyResult.ok ? 'var(--ok, #22c55e)' : 'var(--err)',
+                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
                       marginBottom: verifyResult.error ? 4 : 0,
                     }}>
                       {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
                     </div>
                     {verifyResult.error && (
                       <div className="mono tiny" style={{
-                        color: 'var(--text-2)', whiteSpace: 'pre-wrap',
+                        color: 'var(--text-1)', whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto',
                       }}>
                         {verifyResult.error}
@@ -937,7 +937,7 @@ export function QueueScreen() {
         {actionError && (
           <div role="alert" style={{
             padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+            background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
             color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
           }}>
             <span style={{ flex: 1 }}>{actionError}</span>
@@ -951,13 +951,13 @@ export function QueueScreen() {
             padding: '10px 14px',
             marginBottom: 14,
             borderRadius: 6,
-            background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.35)',
+            background: 'color-mix(in oklch, var(--warn) 10%, transparent)',
+            border: '1px solid color-mix(in oklch, var(--warn) 35%, transparent)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,
           }}>
-            <span style={{ color: 'var(--warn, #f59e0b)', fontSize: 15 }}>⚠</span>
+            <span style={{ color: 'var(--warn)', fontSize: 15 }}>⚠</span>
             <span className="small" style={{ color: 'var(--text-1)' }}>
               <strong>Laminus sidecar is unreachable.</strong> Slicing is paused — queued jobs will be blocked until the sidecar comes back online.
             </span>

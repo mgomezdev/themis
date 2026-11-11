@@ -42,7 +42,7 @@ function Kpi({ label, value, sub, testId }: { label: string; value: string; sub?
 }
 
 const th = { padding: '8px 12px', fontWeight: 500 } as const;
-const td = { padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' } as const;
+const td = { padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' } as const;
 
 function kpiSub(t: AnalyticsStats): string {
   return `${t.completed} done · ${t.failed} failed · ${t.cancelled} cancelled`;
@@ -112,14 +112,14 @@ export function AnalyticsScreen() {
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-3)' }}>
+                    <tr style={{ borderBottom: '1px solid var(--border-1)', textAlign: 'left', color: 'var(--text-3)' }}>
                       <th style={th}>Printer</th><th style={th}>Completed</th><th style={th}>Failed</th>
                       <th style={th}>Success</th><th style={th}>Print time</th><th style={{ ...th, minWidth: 140 }}>Utilization</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.printers.map(p => (
-                      <tr key={p.printer_id} data-testid={`printer-row-${p.printer_id}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <tr key={p.printer_id} data-testid={`printer-row-${p.printer_id}`} style={{ borderBottom: '1px solid var(--border-1)' }}>
                         <td style={{ ...td, color: 'var(--text-1)' }}>{p.name}</td>
                         <td style={td}>{p.completed}</td>
                         <td style={td}>{p.failed}</td>
@@ -149,7 +149,7 @@ export function AnalyticsScreen() {
                   <div key={m.material} data-testid={`material-${m.material}`} className="row gap-3" style={{ alignItems: 'center' }}>
                     <span style={{ width: 80, color: 'var(--text-1)' }}>{m.material}</span>
                     <div style={{ flex: 1 }}><Progress value={(m.grams / maxGrams) * 100} /></div>
-                    <span className="num" style={{ minWidth: 150, textAlign: 'right', color: 'var(--text-2)' }}>
+                    <span className="num" style={{ minWidth: 150, textAlign: 'right', color: 'var(--text-1)' }}>
                       {fmtGrams(m.grams)} · {m.jobs} {m.jobs === 1 ? 'job' : 'jobs'}
                     </span>
                   </div>

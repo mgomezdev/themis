@@ -60,9 +60,9 @@ function FolderRow({
         style={{
           width: '100%',
           padding: `5px 8px 5px ${8 + depth * 14}px`,
-          background: isActive ? 'oklch(87% 0.185 95 / 0.10)' : 'transparent',
+          background: isActive ? 'var(--accent-tint)' : 'transparent',
           border: 'none',
-          color: isActive ? 'var(--accent)' : 'var(--text-2)',
+          color: isActive ? 'var(--accent)' : 'var(--text-1)',
           cursor: 'pointer',
           textAlign: 'left',
           fontSize: 12,
@@ -533,7 +533,7 @@ export function ProjectBuilderScreen() {
         {!searchLower && (
           <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
         )}
-        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6 }}>
+        <div style={{ borderTop: '1px solid var(--border-1)', marginTop: 4, paddingTop: 6 }}>
           {folderFiles.length === 0 && (
             <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
               {searchLower ? 'No matching STL files' : 'No STL files here'}
@@ -547,7 +547,7 @@ export function ProjectBuilderScreen() {
               style={{
                 width: '100%', padding: '5px 10px',
                 background: 'transparent', border: 'none',
-                color: 'var(--text-2)', cursor: 'pointer',
+                color: 'var(--text-1)', cursor: 'pointer',
                 textAlign: 'left', fontSize: 12,
                 display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4,
               }}
@@ -639,7 +639,7 @@ export function ProjectBuilderScreen() {
             />
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                          fontSize: 13, color: onHold ? 'var(--warn)' : 'var(--text-2)',
+                          fontSize: 13, color: onHold ? 'var(--warn)' : 'var(--text-1)',
                           paddingBottom: 4, whiteSpace: 'nowrap' }}>
             <input
               type="checkbox"
@@ -673,7 +673,7 @@ export function ProjectBuilderScreen() {
         {/* Links editor */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
               Links ({links.length})
             </span>
             <button
@@ -713,7 +713,7 @@ export function ProjectBuilderScreen() {
         {/* Non-printed parts editor (hardware, e.g. magnets/screws) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
               Non-printed parts ({parts.length})
             </span>
             <button
@@ -776,13 +776,13 @@ export function ProjectBuilderScreen() {
         {/* Part items table */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
               Parts ({items.length})
             </span>
           </div>
           {items.length === 0 ? (
             <div style={{
-              border: '1px dashed var(--border)', borderRadius: 6,
+              border: '1px dashed var(--border-1)', borderRadius: 6,
               padding: '24px 16px', textAlign: 'center',
               color: 'var(--text-4)', fontSize: 13,
             }}>
@@ -876,8 +876,8 @@ export function ProjectBuilderScreen() {
         {/* Printer picker (shown when Create… is clicked) */}
         {showPrinterPicker && !generating && !saving && (
           <div style={{
-            border: '1px solid var(--border)', borderRadius: 8,
-            padding: '14px 16px', background: 'var(--bg-2)',
+            border: '1px solid var(--border-1)', borderRadius: 8,
+            padding: '14px 16px', background: 'var(--bg-1)',
           }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
                           textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
@@ -927,7 +927,7 @@ export function ProjectBuilderScreen() {
         {generateError && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
-            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+            background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
             borderRadius: 6, padding: '10px 14px',
           }}>
             <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
@@ -976,7 +976,7 @@ export function ProjectBuilderScreen() {
       {lastRemoved && (
         <div style={{
           position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
-          background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-1)',
+          background: 'var(--bg-1)', border: '1px solid var(--border-1)', color: 'var(--text-1)',
           padding: '10px 12px 10px 16px', borderRadius: 8,
           display: 'flex', alignItems: 'center', gap: 10,
           fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',

@@ -135,7 +135,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
   }
 
   return (
-    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-2)' }}>
+    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
       <div className="row gap-3" style={{ alignItems: 'flex-start' }}>
         <span style={{ width: 4, height: 28, borderRadius: 2, flexShrink: 0, marginTop: 8, background: color }}/>
         <div className="col" style={{ flex: 1, minWidth: 0, gap: 10 }}>
@@ -155,7 +155,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
             </div>
             <div>
               <label className="label">Preview</label>
-              <div style={{ padding: '8px 12px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8, display: 'flex', alignItems: 'center', minHeight: 36 }}>
+              <div style={{ padding: '8px 12px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8, display: 'flex', alignItems: 'center', minHeight: 36 }}>
                 <TagChip tag={previewTag} />
               </div>
             </div>
@@ -191,7 +191,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
 function TagStat({ label, value, sub, tone }: { label: string; value: number; sub?: string; tone?: string }) {
   const color = tone === 'warn' ? 'var(--warn)' : tone === 'idle' ? 'var(--text-3)' : 'var(--text-1)';
   return (
-    <div style={{ flex: '1 1 0', minWidth: 140, padding: '14px 16px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ flex: '1 1 0', minWidth: 140, padding: '14px 16px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="tag-key">{label}</div>
       <div className="num" style={{ fontSize: 22, fontWeight: 600, color, marginTop: 6, letterSpacing: '-0.02em' }}>{value}</div>
       {sub && <div className="tiny muted" style={{ marginTop: 2 }}>{sub}</div>}
@@ -291,7 +291,7 @@ function TagsPage() {
 
         <div className="row gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <div className="row gap-2" style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
               {React.cloneElement(Icons.search, { size: 14 } as React.SVGProps<SVGSVGElement>)}
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search tags…"
                      style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-1)', outline: 'none', fontSize: 13, fontFamily: 'var(--font-sans)' }}/>
@@ -304,7 +304,7 @@ function TagsPage() {
         </div>
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -322,8 +322,8 @@ function TagsPage() {
           ))}
         </div>
 
-        <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-1)' }}>
-          <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-2)' }}>
+        <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-0)' }}>
+          <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-1)' }}>
             <div style={{ width: 4, flexShrink: 0 }}/>
             <div style={{ flex: 1 }}>Tag</div>
             <div style={{ width: 140, flexShrink: 0 }}>Category</div>
@@ -540,7 +540,7 @@ function PrintDefaultsPage() {
       {saveError && (
         <div role="alert" className="small" style={{
           padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)',
+          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)',
         }}>
           {saveError}
         </div>
@@ -668,7 +668,7 @@ function PrintDefaultsPage() {
 
 function AboutTile({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div style={{ padding: '12px 14px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
+    <div style={{ padding: '12px 14px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
       <div className="tag-key">{k}</div>
       <div style={{ marginTop: 4, fontSize: 14, fontFamily: mono ? 'var(--font-mono)' : 'var(--font-sans)', color: 'var(--text-1)' }}>{v}</div>
     </div>
@@ -810,7 +810,7 @@ function FleetBackupPage() {
           <div style={{
             marginTop: 20,
             padding: '16px 20px',
-            background: 'var(--bg-1)',
+            background: 'var(--bg-0)',
             border: `1px solid ${importReport.skipped > 0 || importReport.warnings.length > 0 ? 'var(--warn)' : 'var(--ok)'}`,
             borderRadius: 10,
           }}>
@@ -831,7 +831,7 @@ function FleetBackupPage() {
                   Profile warnings ({importReport.warnings.length})
                 </div>
                 {importReport.warnings.map((w, i) => (
-                  <div key={i} className="tiny muted" style={{ padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 6, lineHeight: 1.5 }}>
+                  <div key={i} className="tiny muted" style={{ padding: '4px 8px', background: 'var(--bg-1)', borderRadius: 6, lineHeight: 1.5 }}>
                     {w}
                   </div>
                 ))}
@@ -961,7 +961,7 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
           <span key={t.id} title={TRIGGER_LABEL[t.trigger_type]} style={{
             display: 'inline-flex', alignItems: 'center',
             fontSize: 11.5, padding: '3px 9px', borderRadius: 0,
-            background: 'var(--bg-3)', color: 'var(--text-3)', border: '1px solid var(--border-2)',
+            background: 'var(--bg-2)', color: 'var(--text-3)', border: '1px solid var(--border-2)',
             whiteSpace: 'nowrap',
           }}>{triggerChipText(t)}</span>
         ))}
@@ -1070,7 +1070,7 @@ function MaintenancePage() {
         />
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -1097,7 +1097,7 @@ function MaintenancePage() {
 
         <div className="col gap-1">
           <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8 }}>General</div>
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-0)' }}>
             {generalItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No general maintenance items yet.</div>}
             {generalItems.map(item => (
               <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}
@@ -1107,7 +1107,7 @@ function MaintenancePage() {
           </div>
 
           <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 16 }}>Model-specific</div>
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-0)' }}>
             {modelItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No model-specific items yet.</div>}
             {modelItems.map(item => (
               <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}
@@ -1384,7 +1384,7 @@ function ApiKeysPage() {
         />
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -1394,7 +1394,7 @@ function ApiKeysPage() {
         )}
 
         {(loading || keys.length > 0) && (
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-0)' }}>
             <table className="tbl" style={{ minWidth: 760 }}>
               <thead>
                 <tr>

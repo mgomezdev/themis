@@ -68,11 +68,11 @@ function FolderTreeNode({ node, depth, openSet, toggle, current, setCurrent }: F
         style={{
           width: '100%',
           padding: `6px 8px 6px ${8 + depth * 14}px`,
-          background: isActive ? 'oklch(87% 0.185 95 / 0.10)' : 'transparent',
+          background: isActive ? 'var(--accent-tint)' : 'transparent',
           border: 'none',
           borderRadius: 0,
-          color: isActive ? 'var(--accent)' : 'var(--text-2)',
-          boxShadow: isActive ? 'inset 0 0 0 1px oklch(87% 0.185 95 / 0.25)' : 'none',
+          color: isActive ? 'var(--accent)' : 'var(--text-1)',
+          boxShadow: isActive ? 'inset 0 0 0 1px var(--accent-glow)' : 'none',
           cursor: 'pointer',
           textAlign: 'left',
           fontSize: 13,
@@ -158,7 +158,7 @@ function FolderCard({
           writingMode: 'vertical-rl',
           transform: 'rotate(180deg)',
           padding: '8px 4px',
-          color: 'var(--text-2)',
+          color: 'var(--text-1)',
           fontSize: 11,
           fontWeight: 500,
           letterSpacing: '0.05em',
@@ -295,9 +295,9 @@ function FilterCard({
                                 gap: 6,
                                 padding: '4px 10px',
                                 borderRadius: 0,
-                                border: `1px solid ${on ? 'oklch(87% 0.185 95 / 0.40)' : 'var(--border-1)'}`,
-                                background: on ? 'oklch(87% 0.185 95 / 0.10)' : 'var(--bg-1)',
-                                color: on ? 'var(--accent-hi)' : 'var(--text-2)',
+                                border: `1px solid ${on ? 'color-mix(in oklch, var(--accent) 40%, transparent)' : 'var(--border-1)'}`,
+                                background: on ? 'var(--accent-tint)' : 'var(--bg-0)',
+                                color: on ? 'var(--accent-hi)' : 'var(--text-1)',
                                 fontSize: 12,
                                 fontWeight: 500,
                                 cursor: 'pointer',
@@ -360,7 +360,7 @@ function FileThumb({ file, large }: { file: LibraryFile; large?: boolean }) {
     <div style={{
       width: '100%', aspectRatio: '1/1',
       background: file.thumbnail_url
-        ? 'var(--bg-1)'
+        ? 'var(--bg-0)'
         : `linear-gradient(135deg, ${color}, ${shade(color, -25)})`,
       borderRadius: 0,
       border: '1px solid var(--border-2)',
@@ -419,7 +419,7 @@ function FileDetailPanel({
   return (
     <div style={{
       position: 'fixed', top: 0, right: 0, bottom: 0, width: 360, maxWidth: '90vw',
-      background: 'var(--bg-2)', borderLeft: '1px solid var(--border-1)',
+      background: 'var(--bg-1)', borderLeft: '1px solid var(--border-1)',
       boxShadow: '-12px 0 40px rgba(0,0,0,0.4)', zIndex: 50,
       display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: 16,
     }}>
@@ -432,7 +432,7 @@ function FileDetailPanel({
         <div style={{ marginBottom: 14 }}>
           {/* Large view of the selected plate */}
           <div style={{
-            width: '100%', aspectRatio: '1/1', background: 'var(--bg-1)',
+            width: '100%', aspectRatio: '1/1', background: 'var(--bg-0)',
             border: '1px solid var(--border-2)', marginBottom: 8, position: 'relative',
           }}>
             {activeThumb && (
@@ -459,7 +459,7 @@ function FileDetailPanel({
                   flexShrink: 0, width: 64, padding: 0, border: 'none', cursor: 'pointer',
                   outline: t.plate_number === activePlate
                     ? '2px solid var(--accent)' : '1px solid var(--border-2)',
-                  background: 'var(--bg-1)',
+                  background: 'var(--bg-0)',
                 }}
               >
                 <img src={t.thumbnail_url} alt={`Plate ${t.plate_number}`}
@@ -491,7 +491,7 @@ function FileDetailPanel({
       )}
 
       {file.sliced_version && (
-        <div className="tiny" data-testid="sliced-from" style={{ marginTop: 6, color: 'var(--text-2)' }}>
+        <div className="tiny" data-testid="sliced-from" style={{ marginTop: 6, color: 'var(--text-1)' }}>
           Sliced {file.sliced_version.source_filename ? <>from <b>{file.sliced_version.source_filename}</b></> : '(model removed)'}
           {' · '}{versionSummary(file.sliced_version)}
         </div>
@@ -517,7 +517,7 @@ function FileDetailPanel({
                     title="Remove tag"
                     style={{
                       padding: '3px 9px', borderRadius: 0, border: '1px solid var(--border-1)',
-                      background: 'var(--bg-3)', color: 'var(--text-2)',
+                      background: 'var(--bg-2)', color: 'var(--text-1)',
                       fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
                       alignItems: 'center', display: 'inline-flex',
                     }}>
@@ -582,7 +582,7 @@ function SlicedVersionsList({ fileId }: { fileId: number }) {
       {versions.length === 0 && <span className="tiny muted">None on disk</span>}
       <div className="col gap-2">
         {versions.map(v => (
-          <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-1)' }}>
+          <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-0)' }}>
             <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{v.name}</div>
             <div className="muted">Plate {v.plate_number} · {v.process_preset} · {versionSummary(v)}</div>
           </div>
@@ -1068,7 +1068,7 @@ export function FilesScreen() {
                        padding: 10, cursor: 'pointer', position: 'relative',
                        borderColor: selectedIds.has(f.id)
                          ? 'var(--accent)'
-                         : 'oklch(87% 0.185 95 / 0.22)',
+                         : 'var(--accent-glow)',
                        boxShadow: selectedIds.has(f.id)
                          ? 'inset 0 0 0 1px var(--accent)'
                          : 'none',
@@ -1124,9 +1124,9 @@ export function FilesScreen() {
                     {f.tags.slice(0, 3).map(t => (
                       <span key={t.id} className="elig" style={{
                         fontSize: 9.5, padding: '1px 5px',
-                        background: activeTags.includes(t.name) ? 'var(--accent-glow)' : 'var(--bg-1)',
+                        background: activeTags.includes(t.name) ? 'var(--accent-glow)' : 'var(--bg-0)',
                         color: activeTags.includes(t.name) ? 'var(--accent-hi)' : 'var(--text-3)',
-                        borderColor: activeTags.includes(t.name) ? 'oklch(87% 0.185 95 / 0.30)' : undefined,
+                        borderColor: activeTags.includes(t.name) ? 'var(--accent-glow)' : undefined,
                       }}>{t.name}</span>
                     ))}
                     {f.tags.length > 3 && (

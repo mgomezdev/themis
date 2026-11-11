@@ -89,7 +89,7 @@ export function OutcomeModal({ job, onClose, onSaved }: Props) {
           <>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-3)' }}>
+                <tr style={{ borderBottom: '1px solid var(--border-1)', color: 'var(--text-3)' }}>
                   <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>Part</th>
                   <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>On plate</th>
                   <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>Failed</th>
@@ -99,9 +99,9 @@ export function OutcomeModal({ job, onClose, onSaved }: Props) {
                 {items.map(it => {
                   const onPlate = qtyOnPlate(it.id);
                   return (
-                    <tr key={it.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <tr key={it.id} style={{ borderBottom: '1px solid var(--border-1)' }}>
                       <td style={{ padding: '6px 8px', color: 'var(--text-1)' }}>{it.file_name}</td>
-                      <td style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-2)' }}>{onPlate}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-1)' }}>{onPlate}</td>
                       <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                         <input
                           type="number"

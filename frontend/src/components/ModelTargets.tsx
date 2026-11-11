@@ -65,7 +65,7 @@ export function ModelPicker({ printers, selected, onToggle }: {
               onClick={() => onToggle(key)}
               style={{
                 padding: 12, textAlign: 'left', cursor: 'pointer', borderRadius: 10, fontFamily: 'inherit',
-                background: on ? 'var(--bg-3)' : 'var(--bg-1)', color: 'var(--text-1)',
+                background: on ? 'var(--bg-2)' : 'var(--bg-0)', color: 'var(--text-1)',
                 border: `1px solid ${on ? 'var(--accent)' : 'var(--border-1)'}`,
                 boxShadow: on ? '0 0 0 1px var(--accent)' : 'none',
               }}>

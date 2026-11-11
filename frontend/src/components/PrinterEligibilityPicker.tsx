@@ -40,9 +40,9 @@ export function PrinterEligibilityPicker({ selected, onChange }: Props) {
             <label key={p.id} style={{
               display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
               padding: '5px 8px', borderRadius: 6, fontSize: 13,
-              background: checked ? 'oklch(87% 0.185 95 / 0.08)' : 'transparent',
-              border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-              color: checked ? 'var(--text-1)' : 'var(--text-2)',
+              background: checked ? 'color-mix(in oklch, var(--accent) 8%, transparent)' : 'transparent',
+              border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-1)'}`,
+              color: checked ? 'var(--text-1)' : 'var(--text-1)',
               userSelect: 'none',
             }}>
               <input
