@@ -2,7 +2,7 @@
 
 Epic BIZ-265. Builds on `3mf-ownership.md` (BIZ-259). Code: `backend/app/services/providers/contract.py` (neutral DTOs, ABCs, pure
 resolver, cache key); proof: `backend/tests/services/test_laminus_contract.py` (fakes in `tests/fake_providers.py`).
-**Status (BIZ-291):** `gcode.produce` *selection and readiness* are wired into the queue claim (§6, §8); `3mf.construct`, `GcodeProducer.produce()` and the neutral `SliceSettings` are not used by the queue yet. Implementations: BIZ-281 (FormatProvider), BIZ-260 (settings), BIZ-256 (storage), BIZ-290/BIZ-291 (capability + queue).
+**Status (BIZ-291, BIZ-296):** `gcode.produce` *selection and readiness* are wired into the queue claim (§6, §8); `3mf.construct` backs project generation (§8); every slice runs through `GcodeProducer.produce()` (BIZ-295, §8). Jobs still persist preset names; the neutral `SliceSettings` is built from them at dispatch (D1 persistence deferred). Implementations: BIZ-281 (FormatProvider), BIZ-260 (settings), BIZ-256 (storage), BIZ-290/BIZ-291 (capability + queue).
 
 ## 1. Capabilities
 
@@ -31,7 +31,7 @@ Offline inspection (`parse_estimates`, `inspect_overrides`, `curated_settings`) 
 
 **DTOs** (frozen dataclasses): `ProviderIdentity(provider_id, version, engine_id?, engine_version?, build?)`, `ProviderStatus(state, identity?, detail)`,
 `TargetPrinter(bed_mm, model_uuid?, toolheads)`, `FilamentChoice(slot, material, profile?, color_hex?)`, `SliceSettings(process_profile?, filaments,
-overrides, tool_index?, filament_map?)`, `Profile(name, kind, compatible_models)`, `ConstructRequest(inputs, target)`, `ProduceRequest(source,
+overrides, tool_index?, filament_map?)`, `Profile(name, kind, compatible_models)`, `ConstructInput(path, quantity, ref)`, `ConstructRequest(inputs: tuple[ConstructInput, ...], target)`, `ProduceRequest(source,
 input_kind, plate, target, settings, want, pin_engine_version?)`, `Artifact(path, kind, produced_by)`, and the BIZ-259 inspection DTOs
 `PlateEstimate`, `SettingChange`, `SlotWarning`, `OverrideInspection` (`has_findings` derived), `CuratedSetting`. BIZ-281 imports these from `contract.py`.
 
@@ -44,7 +44,8 @@ input_kind, plate, target, settings, want, pin_engine_version?)`, `Artifact(path
 | `gcode`, `gcode_3mf` | no | no (`unsupported_input`) | pass-through |
 
 Construct out: `project_3mf`. Preserving plates, instances, modifiers, painted supports and per-object settings through `construct` is a provider
-guarantee (BIZ-236/240); an operation it can't preserve raises `unsupported_input`.
+guarantee (BIZ-236/240); an operation it can't preserve raises `unsupported_input`. Laminus accepts **STL only**: its `/api/v1/pack` drops a 3MF's geometry,
+modifiers and per-object settings, so `LaminusProjectConstructor` refuses `model_3mf` (BIZ-296). Its pack output embeds no plate thumbnails.
 
 ## 4. Decisions
 
@@ -118,19 +119,36 @@ So "engine/build identity" is carried by the staleness fingerprint (`slice_cache
 for the neutral path) rather than by the key. An earlier draft of this contract specified a `contract.cache_key` with engine fields in the hash; it was never used and was removed
 with BIZ-291 because it conflicts with the two behaviors above. A future provider whose engine cannot be fingerprinted may add engine fields to its key only if it can also supply them while down.
 
-## 8. Wiring status (BIZ-290, BIZ-291)
+## 8. Wiring status (BIZ-290, BIZ-291, BIZ-296)
 
 * `gcode.produce` is a core `choose_one` capability; the bundled `laminus` plugin provides it. The plugin instance exposes `slicing_provider(url)` (the sync
   `SlicingProvider` adapter that actually slices) and `gcode_producer(url)` (`LaminusGcodeProducer`: `identity`, `status`, `supports_target`, `profiles`, `curated_settings`).
 * Core resolves a specific provider with `slicing_provider_for(plugin_id)` / `gcode_producer_for(plugin_id)`, the default with `default_provider_id()`; there is no module registry.
   `get_slicing_provider()` (default provider) remains for callers with no printer (catalog, presets, project generation).
-* The queue resolves per printer (§6), then slices with that provider: `SliceRequest.provider_id` → `SlicerService.slice`, the cache key's `provider`, the tool-mapping hook,
+* The queue resolves per printer (§6), then slices with that provider: `SliceRequest.provider_id` → `SlicerService.slice` → that plugin's `produce()`, the cache key's `provider`, the tool mapping,
   the staleness fingerprint (`inputs.provider`) and the manual slices (verify-slice, complete-manually) all follow the printer's choice.
 * `printers.preferred_slicer_plugin_id` (v050) stores the choice; the printer editor shows it only when more than one slicer is enabled.
-* `LaminusGcodeProducer.supports_target` only rejects a nonsensical bed. `preference_ineligible` / `default_ineligible` DO fire, though, from the **machine-profile mapping** (BIZ-294, §9): a provider with no machine profile for the printer's model + nozzle variant is ineligible, decided in `slice_resolution.resolve_slicing` from Themis's own data before readiness.
+* Eligibility: a provider with no machine profile for the printer's model + nozzle variant is ineligible, decided in `slice_resolution.resolve_slicing` from Themis's own data before readiness (BIZ-294, §9). `LaminusGcodeProducer.supports_target` (BIZ-295) also needs a sane bed and the mapped profile to be in the cached catalog (with no catalog cached yet it accepts the name, so boot never hard-blocks every job), so `default_ineligible` / `preference_ineligible` fire for a mapped profile Laminus no longer has.
 * Upgrade: migration v051 recomputed every saved `sliced_versions.cache_key` with the provider hashed (the row stores all other inputs), so saved slices keep matching.
-* **Not wired:** `GcodeProducer.produce()`. `LaminusGcodeProducer.produce()` rejects non-model inputs and cancellation per the contract and otherwise raises `UNSUPPORTED_TARGET`; the slice itself still goes through
-  `SlicingProvider.slice` with the printer's presets. `TargetPrinter.machine_profile` now carries the resolved profile name (§9), which is the input the `produce()` wiring needs. `3mf.construct` is likewise unwired.
+* **`produce()` (BIZ-295).** `SlicerService.slice(req, output_dir, cancel)` is core's translator: `SliceRequest` → `ProduceRequest(source, input_kind, plate,
+  TargetPrinter(bed, machine_profile), SliceSettings, want)` → the resolved plugin's `produce()`; `ProviderError` → `SliceError` with the provider's message (the
+  job's block text, unchanged) or `SliceCancelled`. `want` is `gcode_3mf` when the printer's export args ask for the archive; core still injects the plate thumbnail
+  into raw G-code. `SliceSettings.plate_type` carries the printer's build plate (not an override); `overrides` must be curated keys (else `INVALID_SETTINGS`);
+  `tool_index`/`filament_map` are set only for a printer whose client declares `slice_tool_mapping` (`slicer_service.slice_side_mapping`).
+  `LaminusGcodeProducer.produce()`: names → catalog refs (`INVALID_SETTINGS` with the actionable "not found … refresh the profile sync" text; catalog unreadable →
+  `UNREACHABLE`), tool mapping on a job-scoped copy, `curr_bed_type` + overrides → `extra_config`, `SlicingProvider.slice(..., should_stop=)`; poll ceiling →
+  `TIMEOUT`, sidecar 503 → `NOT_READY`, engine failure → `FAILED`, token set → `CANCELLED` (checked between polls; a result that lands after a cancel is deleted).
+  `profiles(kind, target)` asks Laminus (`GET /api/v1/profiles/machines/{ref}/presets?kind=`, `ref` = `machine:<slug(name)>`, derived — the profile list carries none), else filters the
+  cached catalog by `compatible_printers`.
+* **Cancel (BIZ-295).** The queue registers each production slice's `CancelToken` (`QueueEngine._slice_cancels`); `POST /jobs/{id}/cancel` and `POST /printers/{id}/stop`
+  call `queue_engine.cancel_slice(job_id= | printer_id=)`. Stop also cancels a job in `slicing` on that printer (cancel ↔ stop). A cancelled slice ends the dispatch
+  quietly: no G-code row, never `slice_failed`. The BIZ-201 down-provider cached claim, the cache key and the pre-sliced skip are unchanged.
+* **`3mf.construct` (BIZ-296)** is a core `exclusive` capability (`plugins/capabilities/three_mf_construct.py`); the `laminus` plugin provides it through
+  `project_constructor(url)` → `LaminusProjectConstructor` (`/api/v1/pack` by `target.bed_mm`, STL only, `model_uuid` unused, the shorter of the call timeout and the
+  plugin's request timeout; a cancel that lands during the one blocking request discards its result). Core reaches it with
+  `providers/construction.get_project_constructor()` (the host's active part). `POST /projects/{id}/generate` refuses `NO_PROVIDER` up front (422)
+  and probes `status()` once, only when a filament group isn't a reused pack (not ready → 503); it builds each filament group for `TargetPrinter((min bed x, min bed y, 250), shared model or None)`;
+  `TIMEOUT` → 504, `UNSUPPORTED_*` → 422, `NOT_READY`/`UNREACHABLE` → 503, other codes → 502. `SlicingProvider` no longer has `ARRANGE`/`PACK_MODELS`/`arrange`/`pack_models`.
 
 ## 9. Machine profile per printer model (BIZ-294)
 

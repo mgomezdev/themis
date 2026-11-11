@@ -17,7 +17,7 @@ export function DueMaintenanceHat({ dueItemNames }: { dueItemNames: string[] }) 
       {open && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20,
-          background: 'var(--bg-3)', border: '1px solid var(--border-2)', color: 'var(--text-1)',
+          background: 'var(--bg-2)', border: '1px solid var(--border-2)', color: 'var(--text-1)',
           padding: '6px 10px', borderRadius: 0, fontSize: 12, whiteSpace: 'nowrap',
           boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
         }}>

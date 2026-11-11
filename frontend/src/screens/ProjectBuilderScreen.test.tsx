@@ -17,7 +17,7 @@ function jsonResponse(data: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
 }
 
-const mockFetch = vi.fn((input: unknown) => {
+const mockFetch = vi.fn((input: unknown, _init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
   if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], selections: {} });
@@ -35,23 +35,25 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 function typeSelects() {
   return screen.getAllByLabelText('Filament type') as HTMLSelectElement[];
 }
+const toTab = (name: RegExp) => userEvent.click(screen.getByRole('tab', { name }));
 
 describe('ProjectBuilderScreen', () => {
   it('bumps quantity instead of adding a duplicate row when the same file is clicked twice', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
+    await toTab(/^Items/);
     const addBtn = await screen.findByTitle('Add Bracket.stl');
     await user.click(addBtn);
     await user.click(addBtn);
 
     expect(screen.getAllByTitle('Remove')).toHaveLength(1);
-    const spinbuttons = screen.getAllByRole('spinbutton');
-    expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(2);
+    expect(screen.getByLabelText('Quantity of Bracket.stl')).toHaveValue(2);
   });
 
   it('filters the STL list by filename when searching', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
+    await toTab(/^Items/);
     await screen.findByTitle('Add Bracket.stl');
     await user.type(screen.getByPlaceholderText('Search files…'), 'brack');
 
@@ -62,6 +64,7 @@ describe('ProjectBuilderScreen', () => {
   it('applies one part\'s filament choice to every other part', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
+    await toTab(/^Items/);
     await user.click(await screen.findByTitle('Add Bracket.stl'));
     await user.click(await screen.findByTitle('Add Widget.stl'));
 
@@ -79,6 +82,7 @@ describe('ProjectBuilderScreen', () => {
   it('restores a removed part when Undo is clicked', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
+    await toTab(/^Items/);
     await user.click(await screen.findByTitle('Add Bracket.stl'));
     await user.click(screen.getByTitle('Remove'));
 
@@ -87,24 +91,39 @@ describe('ProjectBuilderScreen', () => {
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByTitle('Remove')).toBeTruthy();
-    const spinbuttons = screen.getAllByRole('spinbutton');
-    expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(1);
+    expect(screen.getByLabelText('Quantity of Bracket.stl')).toHaveValue(1);
   });
 
-  it('labels Create as "without dispatch" when no printers are selected', async () => {
+  it('keeps everything typed when moving between tabs, and counts items on the Items tab', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
-    await user.type(screen.getByLabelText(/Project name/), 'Test Project');
+    await user.type(screen.getByLabelText(/Project name/), 'Shelf set');
+    await user.click(screen.getByRole('button', { name: 'Next →' }));                    // Details → Items
     await user.click(await screen.findByTitle('Add Bracket.stl'));
-    await user.click(screen.getByRole('button', { name: 'Create…' }));
+    await user.click(await screen.findByTitle('Add Widget.stl'));
+    expect(screen.getByRole('tab', { name: /^Items/ }).textContent).toContain('2');
+    await toTab(/^Details/);
+    expect(screen.getByLabelText(/Project name/)).toHaveValue('Shelf set');
+    await user.click(screen.getByRole('button', { name: 'Next →' }));
+    expect(screen.getAllByTitle('Remove')).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: '← Back' }));
+    expect(screen.getByLabelText(/Project name/)).toHaveValue('Shelf set');
+  });
 
-    await screen.findByText('Printer A');
-    expect(screen.getByRole('button', { name: 'Create without dispatch' })).toBeTruthy();
+  it('asks to save the draft before setting up groups or reviewing a new project', async () => {
+    render(<ProjectBuilderScreen />, { wrapper });
+    await toTab(/^Groups/);
+    expect(screen.getByText(/Save the draft to set up its print groups/)).toBeTruthy();
+    await toTab(/^Review/);
+    expect(screen.getByText(/Save the draft to check and queue it/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Queue project' }) as HTMLButtonElement).disabled).toBe(true);
+    await toTab(/^Items/);
+    expect((screen.getByTestId('badge-new') as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
 describe('ProjectBuilderScreen draft stage', () => {
-  it('disables Create… for a draft project', async () => {
+  it('keeps Queue project disabled for a draft project', async () => {
     const { Routes, Route } = await import('react-router-dom');
     mockFetch.mockImplementation((input: unknown) => {
       const url = String(input);
@@ -115,6 +134,7 @@ describe('ProjectBuilderScreen draft stage', () => {
         items: [{ id: 1, file_id: 1, file_name: 'Bracket.stl', quantity: 1, quantity_completed: 0, quantity_failed: 0,
                   filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0 }],
       });
+      if (url === '/api/v1/projects/5/review') return jsonResponse({ checks: [], open: 0 });     // even with nothing open
       if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
       if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], selections: {} });
       return jsonResponse([]);
@@ -124,9 +144,34 @@ describe('ProjectBuilderScreen draft stage', () => {
         <Routes><Route path="/projects/:id/edit" element={<ProjectBuilderScreen />} /></Routes>
       </MemoryRouter>,
     );
-    await screen.findByDisplayValue('Customer Request');
-    const btn = screen.getByRole('button', { name: 'Create…' }) as HTMLButtonElement;
+    await screen.findByTitle('Remove');
+    await toTab(/^Review/);
+    await vi.waitFor(() => expect(mockFetch.mock.calls.some(c => String(c[0]) === '/api/v1/projects/5/review')).toBe(true));
+    const btn = screen.getByRole('button', { name: 'Queue project' }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Promote to planning before creating jobs');
+  });
+});
+
+describe('ProjectBuilderScreen file drop', () => {
+  it('uploads a file dropped on the Builder and adds it as a part', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
+    const base = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((input: unknown, init?: RequestInit) =>
+      String(input) === '/api/v1/files/upload' && init?.method === 'POST'
+        ? jsonResponse({ ...FILES[0], id: 9, original_filename: 'Dropped.stl', relative_path: 'Dropped.stl', kind: 'stl' })
+        : base(input));
+    try {
+      render(<ProjectBuilderScreen />, { wrapper });
+      await toTab(/^Items/);
+      await screen.findByTitle('Add Bracket.stl');
+      fireEvent.drop(screen.getByTestId('file-drop-zone'),
+                     { dataTransfer: { files: [new File(['x'], 'Dropped.stl')], types: ['Files'] } });
+
+      await waitFor(() => expect(screen.getByLabelText('Quantity of Dropped.stl')).toHaveValue(1));
+      expect((mockFetch.mock.calls as unknown[][]).some(([u, i]) => u === '/api/v1/files/upload' && (i as RequestInit | undefined)?.method === 'POST')).toBe(true);
+    } finally {
+      mockFetch.mockImplementation(base);
+    }
   });
 });

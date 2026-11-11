@@ -5,7 +5,6 @@ from what the verification asserts about real hardware, this fails in CI long be
 import importlib
 import inspect
 
-import pytest
 
 from tests.virtual_printers import fake_bambu_ftps as bambu_fake
 from tests.virtual_printers import fake_moonraker as moon_fake

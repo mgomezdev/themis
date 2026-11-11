@@ -1,10 +1,7 @@
 import json
-import threading
-import time
-from unittest.mock import MagicMock, call, patch
-import pytest
-from app.plugins.bambu.client import BambuMQTTClient, PrinterState
-from app.services.abstract_printer_client import PrinterCapabilities, StartPrintOptions
+from unittest.mock import MagicMock
+from app.plugins.bambu.client import BambuMQTTClient
+from app.services.abstract_printer_client import StartPrintOptions
 
 
 def _make_client(**kwargs) -> BambuMQTTClient:

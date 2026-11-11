@@ -6,7 +6,8 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, getPlateResults, type PlateResults, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
+import { PrintResultsModal } from '../components/PrintResultsModal';
 import { CAP, useInventory, useSpools } from '../api/inventory';
 import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
@@ -16,6 +17,7 @@ import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
+import { QueueStateBadges, SetupIncompleteCard } from '../components/FleetSetup';
 import { useMediaQuery } from '../components/useMediaQuery';
 import { ScanSpoolModal } from '../components/ScanSpoolModal';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
@@ -207,7 +209,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
       }}>
         <div className="row between" style={{
           padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
-          alignItems: 'center', background: 'var(--bg-3)',
+          alignItems: 'center', background: 'var(--bg-2)',
         }}>
           <div className="row gap-3" style={{ alignItems: 'center' }}>
             <div style={{
@@ -341,7 +343,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
                 onClick={() => setNoSnapshotsWhileIdle(v => !v)}
                 style={{
                   width: 38, height: 22, borderRadius: 999,
-                  background: noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--bg-3)',
+                  background: noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--bg-2)',
                   border: `1px solid ${noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--border-2)'}`,
                   position: 'relative', cursor: 'pointer', flexShrink: 0,
                   boxShadow: noSnapshotsWhileIdle ? '0 0 0 3px var(--accent-glow)' : 'none',
@@ -366,7 +368,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 
         <div className="row between" style={{
           padding: '14px 20px', borderTop: '1px solid var(--border-1)',
-          background: 'var(--bg-3)', alignItems: 'center',
+          background: 'var(--bg-2)', alignItems: 'center',
         }}>
           {confirmDelete ? (
             <div className="row gap-2" style={{ alignItems: 'center' }}>
@@ -455,7 +457,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-1)' }}>
       <div className="col gap-3">
         {slots.map((s, i) => (
-          <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-2)' }}>
+          <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-1)' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="tiny muted mono" style={{ width: 28, flexShrink: 0 }}>T{i}</span>
               <input
@@ -564,7 +566,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
       }}>
         <div className="row between" style={{
           padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
-          alignItems: 'center', background: 'var(--bg-3)',
+          alignItems: 'center', background: 'var(--bg-2)',
         }}>
           <div className="col">
             <div className="tag-key">Add maintenance item</div>
@@ -574,7 +576,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
         </div>
         <div style={{ padding: 20 }}>
           {error && (
-            <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+            <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
               {error}
             </div>
           )}
@@ -620,7 +622,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
       }}>
         {/* Header */}
         <div className="row between wrap" style={{
-          padding: '14px 18px', background: 'var(--bg-3)',
+          padding: '14px 18px', background: 'var(--bg-2)',
           borderBottom: '1px solid var(--border-1)', gap: 12, alignItems: 'center',
         }}>
           <div className="col" style={{ minWidth: 0, flex: '1 1 220px' }}>
@@ -631,7 +633,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
                        onChange={e => setNickname(e.target.value)}
                        onBlur={() => setEditingName(false)}
                        onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingName(false); }}
-                       style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', padding: '2px 8px', width: 220, background: 'var(--bg-1)' }} />
+                       style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', padding: '2px 8px', width: 220, background: 'var(--bg-0)' }} />
               ) : (
                 <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em' }}>{nickname}</div>
               )}
@@ -652,6 +654,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
             {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -745,7 +748,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
 
           {/* RIGHT */}
           <div className="col gap-4">
-            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+            <div className="card" style={{ padding: 14, background: 'var(--bg-0)' }}>
               <div className="row between" style={{ alignItems: 'center' }}>
                 <span className="tag-key">Loaded filament{mats.length > 1 ? 's' : ''}</span>
                 <button className="btn ghost sm" onClick={() => setPickingFilament(v => !v)}>
@@ -779,7 +782,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               )}
             </div>
 
-            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+            <div className="card" style={{ padding: 14, background: 'var(--bg-0)' }}>
               <div className="tag-key" style={{ marginBottom: 10 }}>Temperatures</div>
               <div className="col gap-3">
                 {p.nozzles && p.nozzles.length > 1
@@ -804,7 +807,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
             </div>
 
             {(dueRowsByPrinter[p.id] ?? []).length > 0 && (
-              <div className="card" style={{ padding: 14, background: 'var(--bg-1)', borderColor: 'var(--warn)' }}>
+              <div className="card" style={{ padding: 14, background: 'var(--bg-0)', borderColor: 'var(--warn)' }}>
                 <div className="tag-key" style={{ marginBottom: 10 }}>👷 Maintenance due</div>
                 <div className="col gap-2">
                   {(dueRowsByPrinter[p.id] ?? []).map(row => (
@@ -851,7 +854,6 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
 }
 
 // ── Shared printer-card affordances ───────────────────────────────────────────
-const QUEUE_OFF_COLOR = '#f59e0b';
 
 // Border/shadow that flags a card as needing attention (awaiting clear) or
 // manually held out of the queue.
@@ -859,8 +861,11 @@ function cardCueStyle(p: Printer): React.CSSProperties {
   if (p.awaitingPlateClear) {
     return { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' };
   }
+  if (p.configured === false) {                        // BIZ-369: the system holds it out until a connection confirms setup
+    return { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' };
+  }
   if (!p.queueOn) {
-    return { borderColor: QUEUE_OFF_COLOR, boxShadow: `0 0 0 1px rgba(245,158,11,0.35)` };
+    return { borderColor: 'var(--border-2)', boxShadow: '0 0 0 1px color-mix(in oklch, var(--idle) 35%, transparent)' };
   }
   return {};
 }
@@ -869,17 +874,8 @@ function DormantBadge({ reason }: { reason: string }) {
   return (
     <span className="tiny" title={reason} style={{
       padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'rgba(148,163,184,0.18)', color: 'var(--text-dim, #94a3b8)', fontWeight: 600,
+      background: 'color-mix(in oklch, var(--idle) 18%, transparent)', color: 'var(--text-3)', fontWeight: 600,
     }}>DORMANT</span>
-  );
-}
-
-function QueueOffBadge() {
-  return (
-    <span className="tiny" style={{
-      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'rgba(245,158,11,0.15)', color: QUEUE_OFF_COLOR, fontWeight: 600,
-    }}>QUEUE OFF</span>
   );
 }
 
@@ -887,24 +883,49 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
   printerId: string; refetchFleet: () => void; block?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState<PlateResults | null>(null);
   return (
-    <button
-      className="btn primary sm"
-      style={block ? { width: '100%' } : undefined}
-      disabled={busy}
-      onClick={async (e) => {
-        e.stopPropagation();
-        setBusy(true);
-        try { await markPlateCleared(printerId); refetchFleet(); }
-        finally { setBusy(false); }
-      }}>
-      {Icons.check} Ready for new work
-    </button>
+    <>
+      <button
+        className="btn primary sm"
+        style={block ? { width: '100%' } : undefined}
+        disabled={busy}
+        onClick={async (e) => {
+          e.stopPropagation();
+          setBusy(true);
+          try {
+            // A finished project job asks what printed first (BIZ-364); anything else is a plain clear.
+            const pending = await getPlateResults(printerId).catch(() => null);
+            if (pending?.job_id != null && pending.parts.length > 0) { setAsking(pending); return; }
+            await markPlateCleared(printerId);
+            refetchFleet();
+          } finally { setBusy(false); }
+        }}>
+        {Icons.check} Ready for new work
+      </button>
+      {asking && (
+        <PrintResultsModal printerId={printerId} pending={asking} onClose={() => setAsking(null)}
+                           onDone={() => { setAsking(null); refetchFleet(); }} />
+      )}
+    </>
   );
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
 /** Unacknowledged-alarm badge; links to that printer's alarms. */
+/** BIZ-365: a printer that collected enough waived parts to flag (wash the plate / do maintenance) or stop. */
+function WaiverBadge({ printer: p }: { printer: Printer }) {
+  if (!p.waiverFlag && !p.waiverStopped) return null;
+  const n = p.waivedParts ?? 0;
+  return (
+    <span data-testid="waiver-badge" onClick={e => e.stopPropagation()}
+          title={`${n} waived part${n === 1 ? '' : 's'}: ${p.waiverStopped ? 'not taking queue work' : 'consider a plate wash or maintenance'}`}
+          className={`pill ${p.waiverStopped ? 'err' : 'warn'}`} style={{ fontSize: 11 }}>
+      {p.waiverStopped ? 'Stopped' : 'Check'}: {n} waived
+    </span>
+  );
+}
+
 function AlarmBadge({ printer: p }: { printer: Printer }) {
   const inRouter = useInRouterContext();
   if (!p.alarmCount || !p.alarmSeverity) return null;
@@ -932,11 +953,13 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
           {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
-          {!p.queueOn && <QueueOffBadge />}
+          <QueueStateBadges printer={p} />
           <AlarmBadge printer={p} />
+            <WaiverBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>
+      <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
       <div style={{ padding: '0 14px' }}>
         <VideoTile
           live={p.status !== 'offline'}
@@ -995,7 +1018,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       display: 'grid',
       gridTemplateColumns: 'auto auto 1.4fr auto 1.6fr 1fr auto',
       alignItems: 'center', gap: 16,
-      background: expanded ? 'var(--bg-3)' : undefined,
+      background: expanded ? 'var(--bg-2)' : undefined,
       ...(expanded ? { borderColor: 'var(--accent)' } : cardCueStyle(p)),
     }}>
       <span style={{ display: 'inline-flex', color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 120ms ease' }}>
@@ -1018,7 +1041,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
         <StatusPill status={p.status} />
         {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
-        {!p.queueOn && <QueueOffBadge />}
+        <QueueStateBadges printer={p} />
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
         <Swatch color={p.material.color} />
@@ -1053,6 +1076,11 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
         </div>
       ) : (
         <div className="tiny muted" style={{ minWidth: 80, textAlign: 'right' }}>—</div>
+      )}
+      {p.configured === false && (
+        <div style={{ gridColumn: '1 / -1' }}>
+          <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
+        </div>
       )}
     </div>
   );
@@ -1092,7 +1120,7 @@ function AddPrinterCard({ onClick, variant }: { onClick: () => void; variant: 'c
                      color: 'var(--text-3)', cursor: 'pointer', transition: 'all 140ms ease' }}
             onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
       <div style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center',
-                    background: 'var(--bg-3)', border: '1px solid var(--border-1)' }}>
+                    background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
         {Icons.plus}
       </div>
       <div className="small" style={{ fontWeight: 500 }}>Add printer</div>
@@ -1110,14 +1138,14 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
     { id: 'rows',  label: 'Rows',  icon: Icons.layers },
   ];
   return (
-    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
+    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-1)', border: '1px solid var(--border-1)' }}>
       {opts.map(o => {
         const on = value === o.id;
         return (
           <button key={o.id} onClick={() => onChange(o.id)} className="row gap-2" title={o.label}
                   style={{
                     padding: '4px 10px', borderRadius: 5, border: 'none',
-                    background: on ? 'var(--bg-4)' : 'transparent',
+                    background: on ? 'var(--bg-2)' : 'transparent',
                     color: on ? 'var(--text-1)' : 'var(--text-3)',
                     fontSize: 12, fontWeight: 500, cursor: 'pointer', alignItems: 'center',
                     boxShadow: on ? '0 1px 0 rgba(0,0,0,0.25), 0 0 0 1px var(--border-2)' : 'none',

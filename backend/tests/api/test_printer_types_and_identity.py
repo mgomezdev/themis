@@ -1,5 +1,6 @@
 """GET /printers/types lists every registered plugin's declared models; POST/PATCH /printers store and validate the
 plugin_id / manufacturer_id / model_id identity, with legacy printer_type mapped onto it (BIZ-262)."""
+from tests.printer_ips import ip_config
 import pytest
 from sqlalchemy import text
 
@@ -26,7 +27,7 @@ def _fake_printer_plugin():
 
 
 async def _post(client, **body):
-    base = {"name": "Shop printer", "connection_config": {}, "orca_printer_profiles": [],
+    base = {"name": "Shop printer", "connection_config": ip_config(), "orca_printer_profiles": [],
             "machine_profile_override": None}
     base.update(body)
     return await client.post("/api/v1/printers", json=base)
@@ -54,6 +55,11 @@ async def test_types_lists_each_declared_model_with_the_contract_keys(client):
     for e in entries:
         assert set(e) == TYPE_KEYS
         assert isinstance(e["connection_fields"], list)
+
+    real = [f for e in resp.json() for f in e["connection_fields"]]
+    assert real and all(isinstance(f["quick_add"], bool) for f in real)          # BIZ-369: the scan renders inputs from it
+    bambu = next(e for e in resp.json() if e["plugin_id"] == "bambu")
+    assert [f["name"] for f in bambu["connection_fields"] if f["quick_add"]] == ["serial_number", "access_code"]
 
     a1 = next(e for e in entries if e["model_id"] == "a1")
     assert (a1["manufacturer_id"], a1["manufacturer_name"], a1["display_name"]) == ("acme", "Acme 3D", "Acme A1")

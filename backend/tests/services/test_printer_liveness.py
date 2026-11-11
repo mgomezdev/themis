@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.eventing.hub import hub
-from app.models import EventOutbox, GcodeFile, Job, JobDetail, Printer, QueueConfig, UploadedFile
+from app.models import EventOutbox, GcodeFile, Job, Printer, QueueConfig, UploadedFile
 from app.services import job_details as jd
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine

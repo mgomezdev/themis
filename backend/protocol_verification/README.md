@@ -68,3 +68,11 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 | `test_alarms.py` | Bambu `print.hms` = list of `{attr:int, code:int}` and carries the full current list; entries decode to known modules + severities (set `THEMIS_VERIFY_BAMBU_SERIAL` too). Elegoo `Status.PrintInfo.ErrorNumber` is an int. Moonraker `webhooks.state/state_message` and `print_stats.state/message` exist and the client's alarms match them. Observational on a healthy printer — trigger a harmless fault to exercise decoding |
 | `test_elegoo_files.py` | SDCP `GET_FILE_LIST` response shape for `/local/` (entry keys, how directories are marked, name format); client listing agrees; ids round-trip into `start_print`'s `/local/` prefix rule |
 | `test_spoolman_weight.py` | `GET /spool/{id}` carries `remaining_weight`/`used_weight` and remaining = initial − used; (write; target derived from the spool, original `used_weight` restored and verified — a failed restore fails loudly with the value to put back) `PATCH {remaining_weight: N}` reads back exactly N with `used_weight = initial − N` (not recomputed later); sending it twice is a no-op; sending both weights is a 400. Backs the deduction model's absolute set (BIZ-202 D6) |
+
+## Not checkable read-only: multi-filament `ams_mapping` (PR #173, BIZ-235)
+
+`StartPrintOptions.ams_mapping` is sent as a list indexed by **model filament** (entry N-1 = the global tray id for filament N,
+`-1` for a project filament the plate does not use). `test_bambu_ams.py` checks the tray ids read-only; whether firmware honours the
+list (order, `-1` for unused) can only be seen by starting a print, which this suite never does. Verify by hand: queue a 2-colour
+plate with the colours in different trays than the 3MF's defaults (and one with filaments 1 and 3 of a 3-filament project), and
+confirm each colour prints from the mapped tray. Record the result here.

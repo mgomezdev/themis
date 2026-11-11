@@ -7,6 +7,7 @@ import { SCHEMA_VERSION, settingsKind, type SettingsKind } from '../api/uiSchema
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
 import { INVENTORY_CAPABILITY } from '../api/inventory';
 import { InventoryProviderPanel } from './InventoryProviderPanel';
+import { PrinterPluginDiscovery } from './PrinterPluginDiscovery';
 
 /** The default plugin page every plugin can reference: header (name, version, docs, enable, health), a connection form
  *  generated from the plugin's settings model (secrets are write-only), a Test connection button and, for an active
@@ -238,12 +239,13 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
       <div className="row gap-2" style={{ padding: '16px 0', alignItems: 'center' }}>
         <button className="btn primary sm" onClick={save} disabled={busy}>Save</button>
-        <button className="btn sm" onClick={test} disabled={busy}>Test connection</button>
+        {plugin.can_test_connection !== false && <button className="btn sm" onClick={test} disabled={busy}>Test connection</button>}
         {msg && <span role={msg.ok ? 'status' : 'alert'} className="small" style={{ color: msg.ok ? 'var(--ok)' : 'var(--err)' }}>{msg.text}</span>}
         {testMsg && <span data-testid="test-result" className="small" style={{ color: testMsg.ok ? 'var(--ok)' : 'var(--err)' }}>{testMsg.text}</span>}
       </div>
 
       {plugin.provides.some(p => p.capability === INVENTORY_CAPABILITY && p.status === 'serving') && <InventoryProviderPanel plugin={plugin} />}
+      {plugin.enabled && plugin.printer_discovery && <PrinterPluginDiscovery key={plugin.id} pluginId={plugin.id} />}
     </div>
   );
 }

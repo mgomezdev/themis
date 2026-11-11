@@ -1,9 +1,8 @@
 from app.plugins.capabilities.filament_inventory import InvMaterial, InventoryProviderError
-from tests.catalog_helpers import cached_raw, prime_catalog
+from tests.catalog_helpers import prime_catalog
 from tests.fake_providers import FakeInventoryProvider
 from app.services import catalog_service
-import json
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 from httpx import AsyncClient
 
 

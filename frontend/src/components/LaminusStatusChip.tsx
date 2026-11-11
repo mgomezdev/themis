@@ -3,10 +3,10 @@ import type { OrcaCatalogStatus } from '../api/orca';
 import { apiFetch } from '../api/client';
 
 const DOT_COLORS: Record<string, string> = {
-  online: 'var(--ok, #22c55e)',
-  building: '#f59e0b',
-  offline: 'var(--err, #ef4444)',
-  unconfigured: '#6b7280',
+  online: 'var(--ok)',
+  building: 'var(--warn)',
+  offline: 'var(--err)',
+  unconfigured: 'var(--idle)',
 };
 
 function relativeTime(ts: number | null): string {
@@ -37,7 +37,7 @@ export function LaminusStatusChip() {
   if (!data || !data.laminus_configured) return null;
 
   const status = data.status ?? 'offline';
-  const dotColor = DOT_COLORS[status] ?? '#6b7280';
+  const dotColor = DOT_COLORS[status] ?? 'var(--idle)';
 
   return (
     <div style={{ padding: '4px 8px', fontSize: 13 }}>
@@ -55,10 +55,10 @@ export function LaminusStatusChip() {
           boxShadow: status === 'online' ? `0 0 4px ${dotColor}` : 'none',
         }} />
         <span>Laminus</span>
-        <span style={{ color: 'var(--text-muted, #aaa)', marginLeft: 'auto' }}>{status}</span>
+        <span style={{ color: 'var(--text-3)', marginLeft: 'auto' }}>{status}</span>
       </button>
       {expanded && (
-        <div style={{ marginTop: 6, paddingLeft: 14, fontSize: 12, color: 'var(--text-muted, #aaa)' }}>
+        <div style={{ marginTop: 6, paddingLeft: 14, fontSize: 12, color: 'var(--text-3)' }}>
           {data.catalog_counts ? (
             <>
               <div>{data.catalog_counts.machine} machines</div>

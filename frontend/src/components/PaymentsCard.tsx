@@ -55,7 +55,7 @@ export function PaymentsCard({ projectId, price, onChanged }: {
   return (
     <div className="card" style={{ padding: 20 }} data-testid="payments-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>
           Payments ({payments?.length ?? 0})
         </div>
         <div className="small muted" data-testid="payments-total">

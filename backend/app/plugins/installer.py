@@ -37,7 +37,7 @@ from ..services import audit
 from ..version import get_version
 from . import bundled_ids
 from .manifest import ID_RE, PluginError
-from .package import (TOML_NAME, VERSION_RE, PluginToml, check_min_themis, entry_file_exists, parse_toml, read_toml)
+from .package import (TOML_NAME, VERSION_RE, PluginToml, check_min_themis, entry_file_exists, read_toml)
 
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024

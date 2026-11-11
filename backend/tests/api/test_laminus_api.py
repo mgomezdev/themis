@@ -6,7 +6,7 @@ from app.plugins.capabilities.filament_inventory import InvMaterial
 from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
 from tests.inventory_helpers import use_provider
 import json
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -451,8 +451,8 @@ async def test_confirm_remap_optional_printer_entry_without_a_resolution_clears_
 
 
 async def test_confirm_remap_rewrites_job_configs_and_clears_a_dropped_filament(client, create_job, session_factory):
-    j1 = await create_job(print_profile="Old Process", filament_profile="Old PLA")
-    j2 = await create_job(print_profile="Old Process", filament_profile="Old PLA")
+    await create_job(print_profile="Old Process", filament_profile="Old PLA")
+    await create_job(print_profile="Old Process", filament_profile="Old PLA")
     async with session_factory() as s:
         ids = [c.id for c in (await s.execute(select(JobPrinterConfig).order_by(JobPrinterConfig.id))).scalars()]
     sync = _park(_pending(jobs=[

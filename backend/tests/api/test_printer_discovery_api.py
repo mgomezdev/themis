@@ -41,6 +41,45 @@ async def test_already_added_printers_are_flagged_by_ip(client, lan, create_prin
         "192.168.7.20": False, "192.168.7.30": False, "192.168.7.40": True}
 
 
+async def _scan(client) -> dict[tuple, dict]:
+    found = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()["found"]
+    return {(f["ip"], f["plugin_id"]): f for f in found}
+
+
+async def test_same_ip_same_model_is_already_added(client, lan, create_printer):
+    """BIZ-369: a printer is its (IP, model) — the scan row says which saved printer it is and whether its setup is confirmed."""
+    pid = await create_printer(name="Bay 2", configured=False, plugin_id="bambu", manufacturer_id="bambu", model_id="p1s",
+                               connection_config={"ip_address": "192.168.7.20"})
+    row = (await _scan(client))[("192.168.7.20", "bambu")]
+    assert row["already_added"] is True and row["ip_in_use_by"] is None
+    assert row["added_printer"] == {"printer_id": pid, "name": "Bay 2", "configured": False, "config_error": None}
+
+
+async def test_same_ip_different_model_sets_ip_in_use_by(client, lan, create_printer):
+    pid = await create_printer(name="A1-Bay4", plugin_id="bambu", manufacturer_id="bambu", model_id="a1",
+                               connection_config={"ip_address": "192.168.7.20"})
+    row = (await _scan(client))[("192.168.7.20", "bambu")]
+    assert (row["already_added"], row["added_printer"]) == (False, None)
+    assert row["ip_in_use_by"] == {"printer_id": pid, "name": "A1-Bay4", "model": "A1"}
+
+
+async def test_discovered_rows_carry_the_contract_keys(client, lan):
+    from tests.api.test_response_contracts import assert_carries
+    for row in (await _scan(client)).values():
+        assert_carries("discovered_printer", row)
+
+
+async def test_unmatched_model_same_plugin_is_already_added(client, lan, create_printer):
+    """The scan couldn't name the model (model_uuid None): the same IP served by the same plugin is the same printer; the other
+    provider answering at that IP sees it as an IP conflict instead."""
+    pid = await create_printer(name="U1", plugin_id="snapmaker", manufacturer_id="snapmaker", model_id="u1_extended",
+                               connection_config={"ip_address": "192.168.7.30"})
+    rows = await _scan(client)
+    snap, moon = rows[("192.168.7.30", "snapmaker")], rows[("192.168.7.30", "moonraker")]
+    assert snap["model_uuid"] is None and snap["already_added"] is True and snap["added_printer"]["printer_id"] == pid
+    assert moon["already_added"] is False and moon["ip_in_use_by"]["printer_id"] == pid
+
+
 async def test_no_ranges_means_the_hosts_own_network(client, lan):
     with patch("app.services.discovery.local_ranges", return_value=["192.168.7.32/29"]):
         body = (await client.post("/api/v1/printers/discover", json={})).json()
@@ -49,7 +88,7 @@ async def test_no_ranges_means_the_hosts_own_network(client, lan):
         assert (await client.post("/api/v1/printers/discover", json={})).status_code == 422
 
 
-@pytest.mark.parametrize("ranges", [["8.8.8.0/24"], ["192.168.0.0/16"], ["banana"], ["192.168.7.0/24", "1.2.3.4"],
+@pytest.mark.parametrize("ranges", [["8.8.8.0/24"], ["10.0.0.0/15"], ["banana"], ["192.168.7.0/24", "1.2.3.4"],
                                     [f"10.0.{i}.0/24" for i in range(9)]])
 async def test_bad_ranges_are_rejected_without_scanning(client, lan, ranges):
     resp = await client.post("/api/v1/printers/discover", json={"ranges": ranges})
@@ -116,6 +155,55 @@ async def test_discovered_printers_name_the_plugin_that_serves_them(client, lan)
         "192.168.7.30": ("snapmaker_extended", "snapmaker"),      # the client's printer_type differs from its plugin's id
         "192.168.7.40": ("elegoo_centauri", "elegoo_centauri"),
     }
+
+
+async def test_plugin_scan_only_probes_selected_plugin_and_accepts_wildcards(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    response = await client.post('/api/v1/printers/discover', json={
+        'ranges': ['192.168.7.x'], 'plugin_id': 'snapmaker',
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['scanned'] == 254 and not body['truncated']
+    assert [(p['plugin_id'], p['ip']) for p in body['found']] == [('snapmaker', '192.168.7.30')]
+    assert all(p[0] == 'http' for p in lan.probes)
+
+
+@pytest.mark.parametrize('plugin_id', ['missing', 'laminus'])
+async def test_invalid_plugin_is_rejected_before_probing(client, lan, plugin_id):
+    response = await client.post('/api/v1/printers/discover', json={'ranges': ['192.168.7.x'], 'plugin_id': plugin_id})
+    assert response.status_code == 422
+    assert lan.probes == []
+
+
+async def test_bambu_settings_discovery_finds_p1s_without_probing_other_vendors(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    assert (await client.get('/api/v1/plugins/bambu')).json()['printer_discovery'] is True
+    response = await client.post('/api/v1/printers/discover', json={
+        'ranges': ['192.168.7.x'], 'plugin_id': 'bambu',
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['scanned'] == 254 and not body['truncated']
+    printer, = body['found']
+    assert (printer['plugin_id'], printer['model'], printer['ip']) == ('bambu', 'P1S', '192.168.7.20')
+    assert printer['model_uuid'] is not None
+    assert printer['connection_config'] == {'ip_address': '192.168.7.20', 'serial_number': '01P00A111111111'}
+    assert 'access_code' not in printer['connection_config']
+    assert not any(probe[0] == 'http' for probe in lan.probes)
+
+
+async def test_disabled_plugin_is_rejected_and_settings_advertise_discovery(client, lan):
+    from app.plugins.host import plugin_host
+    await plugin_host.start()
+    assert (await client.get('/api/v1/plugins/snapmaker')).json()['printer_discovery'] is True
+    assert (await client.get('/api/v1/plugins/laminus')).json()['printer_discovery'] is False
+    await plugin_host.update_config('snapmaker', enabled=False)
+    response = await client.post('/api/v1/printers/discover', json={'ranges': ['192.168.7.x'], 'plugin_id': 'snapmaker'})
+    assert response.status_code == 422
+    assert lan.probes == []
 
 
 async def test_discovered_free_text_model_matches_the_registry_when_unambiguous_else_offers_the_custom_path(client, lan):

@@ -299,10 +299,12 @@ class EventHub:
 
     # --- durable path ---------------------------------------------------------------------------------------------
 
-    async def enqueue_durable(self, session: AsyncSession, envelope: EventEnvelope, *, as_plugin: str | None = None) -> bool:
+    async def enqueue_durable(self, session: AsyncSession, envelope: EventEnvelope, *, as_plugin: str | None = None,
+                              deliver_at: datetime | None = None) -> bool:
         """Add a durable event and its delivery rows to the caller's transaction (no commit). Call `wake()` after the commit.
         Returns False, adding nothing, when an event with the same `dedup_key` is already stored (a repeated publication of
-        one logical event). Subscribers are those running now; a plugin enabled later does not receive past events."""
+        one logical event). Subscribers are those running now; a plugin enabled later does not receive past events.
+        `deliver_at` holds the deliveries until then (a grace period for late facts); default now."""
         d = self._validate(envelope, as_plugin)
         if d.durability != "durable":
             raise EventError(f"{envelope.name} is best_effort: publish it with publish()")
@@ -316,7 +318,8 @@ class EventHub:
         if inserted is None:
             return False
         for sub in self.subscribers_for(envelope.name):
-            session.add(EventDelivery(outbox_id=inserted, subscriber=sub.key, next_attempt_at=_now()))
+            session.add(EventDelivery(outbox_id=inserted, subscriber=sub.key,
+                                      next_attempt_at=_iso(deliver_at) if deliver_at is not None else _now()))
         return True
 
     def wake(self) -> None:

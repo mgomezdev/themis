@@ -253,7 +253,6 @@ async def test_move_rejects_name_traversal(client, lib):
         stored_path = r2.json()["relative_path"]
         assert not stored_path.startswith(".."), "Stored path must not escape via .."
         # Confirm the physical file is still inside the library
-        import pathlib
         full = lib / stored_path.lstrip("/")
         assert full.exists(), "Original file must still be present inside the library"
     else:
@@ -357,7 +356,7 @@ async def test_removing_or_assigning_a_tag_is_idempotent_and_assign_validates_it
     twice_removed = [await client.delete(f"/api/v1/files/{f['id']}/tags/{tag['id']}") for _ in range(2)]
     twice_assigned = [await client.post(f"/api/v1/files/{f['id']}/tags", json={"tag_id": tag["id"]}) for _ in range(2)]
     unknown_tag = await client.post(f"/api/v1/files/{f['id']}/tags", json={"tag_id": 999})
-    unknown_file = await client.post(f"/api/v1/files/999/tags", json={"tag_id": tag["id"]})
+    unknown_file = await client.post("/api/v1/files/999/tags", json={"tag_id": tag["id"]})
 
     assert [r.status_code for r in twice_removed + twice_assigned] == [200] * 4
     assert (unknown_tag.status_code, unknown_file.status_code) == (404, 404)
@@ -369,7 +368,8 @@ async def test_removing_or_assigning_a_tag_is_idempotent_and_assign_validates_it
 # ---------------------------------------------------------------------------
 
 def _project_3mf(settings: dict) -> bytes:
-    import json, zipfile
+    import json
+    import zipfile
     from tests.conftest import make_3mf_bytes
     buf = io.BytesIO(make_3mf_bytes())
     with zipfile.ZipFile(buf, "a") as zf:

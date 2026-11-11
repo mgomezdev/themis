@@ -782,6 +782,34 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
 
 
 @router.get(
+    "/{file_id}/objects",
+    summary="List a 3MF's objects (BIZ-356)",
+    description="The objects of a .3mf, for picking project items: `[{id, name, instances}]`. Read by the 3mf.construct provider.",
+    responses={404: {"description": "File not found"}, 422: {"description": "Not a 3MF, or the provider can't read it"},
+               503: {"description": "No project builder is configured or it is unreachable"}},
+    dependencies=[Depends(require_scope("files:read"))],
+)
+async def get_model_objects(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    from ...services.providers.construction import get_project_constructor
+    from ...services.providers.contract import ErrorCode, ProviderError
+    record = await session.get(UploadedFile, file_id)
+    if record is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    if not record.original_filename.lower().endswith(".3mf") or is_presliced_name(record.original_filename):
+        raise HTTPException(422, f"{record.original_filename} is not a 3MF model")
+    constructor = get_project_constructor()
+    if constructor is None:
+        raise HTTPException(503, "No project builder is configured (Settings -> Plugins)")
+    try:
+        objects = await asyncio.to_thread(with_local_path, get_library_store(), record.relative_path, constructor.list_objects, None)
+    except ProviderError as e:
+        raise HTTPException(503 if e.code in (ErrorCode.UNREACHABLE, ErrorCode.NOT_READY) else 422, str(e)) from e
+    if objects is None:
+        raise HTTPException(404, f"{record.original_filename} is missing from disk")
+    return [{"id": o.id, "name": o.name, "instances": o.instances} for o in objects]
+
+
+@router.get(
     "/{file_id}/embedded-settings",
     summary="Get 3MF embedded settings",
     responses={

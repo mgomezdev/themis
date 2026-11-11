@@ -65,7 +65,7 @@ export function MaintenanceItemForm({ draft, catalog, onChange, onSave, onCancel
   const models = Array.from(new Set(catalog.filter(c => c.vendor === draft.machine_vendor).map(c => c.printer_model))).sort();
 
   return (
-    <div className="col gap-2" style={{ padding: 16, border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--bg-2)' }}>
+    <div className="col gap-2" style={{ padding: 16, border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--bg-1)' }}>
       <input className="input" placeholder="Maintenance item name" value={draft.name}
              onChange={e => onChange({ ...draft, name: e.target.value })} />
 

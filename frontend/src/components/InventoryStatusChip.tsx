@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { CAP, syncTone, useInventory, useSyncStatus, type SyncTone } from '../api/inventory';
 
 const DOT_COLORS: Record<SyncTone, string> = {
-  success: 'var(--ok, #22c55e)',
-  stale: 'var(--warn, #f59e0b)',
-  fail: 'var(--err, #ef4444)',
-  disconnected: 'var(--err, #ef4444)',
+  success: 'var(--ok)',
+  stale: 'var(--warn)',
+  fail: 'var(--err)',
+  disconnected: 'var(--err)',
 };
 
 const STATUS_LABEL: Record<SyncTone, string> = {
@@ -48,12 +48,12 @@ export function InventoryStatusChip() {
           boxShadow: tone === 'success' ? `0 0 4px ${dotColor}` : 'none',
         }} />
         <span>{name}</span>
-        <span style={{ color: 'var(--text-muted, #aaa)', marginLeft: 'auto' }}>
+        <span style={{ color: 'var(--text-3)', marginLeft: 'auto' }}>
           {remote ? STATUS_LABEL[tone] : 'ready'}{status.pending_count > 0 ? ` · ${status.pending_count} queued` : ''}
         </span>
       </button>
       {expanded && remote && (
-        <div style={{ marginTop: 6, paddingLeft: 14, fontSize: 12, color: 'var(--text-muted, #aaa)' }}>
+        <div style={{ marginTop: 6, paddingLeft: 14, fontSize: 12, color: 'var(--text-3)' }}>
           <div>Last successful sync: {status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'never'}</div>
           {status.disconnected_since && <div style={{ color: 'var(--err)', marginTop: 4 }}>Unreachable since {new Date(status.disconnected_since).toLocaleString()}</div>}
           {status.pending_count > 0 && <div style={{ marginTop: 4 }}>{status.pending_count} weight update{status.pending_count === 1 ? '' : 's'} waiting for the provider</div>}

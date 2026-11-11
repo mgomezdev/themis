@@ -1,5 +1,4 @@
 """POST /jobs/{id}/reorder and /cancel — every action/edge and the per-status cancel cleanup."""
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

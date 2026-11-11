@@ -34,7 +34,7 @@ async def _seed(factory, *, variant=None, override=None, mappings=((0.4, P04, Tr
         for d, name, default in mappings:
             s.add(PrinterModelSlicerProfile(model_uuid=MODEL, provider_plugin_id="laminus", nozzle_diameter_mm=d, flow="standard",
                                             machine_profile=name, is_default=default))
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, model_uuid=MODEL, nozzle_variant=variant,
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}, model_uuid=MODEL, nozzle_variant=variant,
                       machine_profile_override=override, loaded_filaments=[{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]))
         f = UploadedFile(original_filename="t.3mf", relative_path="t.3mf", plates=[], uploaded_at=_now())
         s.add(f)

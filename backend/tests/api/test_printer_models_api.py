@@ -1,4 +1,5 @@
 """/printer-models + model identity on printers (BIZ-262)."""
+from tests.printer_ips import ip_config
 import pytest
 
 from app import plugins
@@ -52,7 +53,7 @@ async def test_a_printer_created_from_the_triple_records_the_models_uuid(client,
     g1 = next(m for m in await models(client, plugin_id="fake_printers") if m["model_id"] == "g1")
 
     r = await client.post("/api/v1/printers", json={"name": "G", "plugin_id": "fake_printers", "manufacturer_id": "globex",
-                                                    "model_id": "g1", "connection_config": {}})
+                                                    "model_id": "g1", "connection_config": ip_config()})
 
     assert r.status_code == 201, r.text
     assert r.json()["model_uuid"] == g1["id"]
@@ -62,7 +63,7 @@ async def test_a_printer_created_from_the_triple_records_the_models_uuid(client,
 async def test_a_printer_can_be_created_from_the_model_uuid_alone(client, two_vendor_plugin):
     x1 = next(m for m in await models(client, plugin_id="fake_printers") if m["model_id"] == "x1")
 
-    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": x1["id"], "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": x1["id"], "connection_config": ip_config()})
 
     assert r.status_code == 201, r.text
     assert (r.json()["plugin_id"], r.json()["manufacturer_id"], r.json()["model_id"]) == ("fake_printers", "acme", "x1")
@@ -73,13 +74,13 @@ async def test_creating_a_printer_from_a_disabled_model_is_refused(client, two_v
     x1 = next(m for m in await models(client, plugin_id="fake_printers") if m["model_id"] == "x1")
     await client.patch(f"/api/v1/printer-models/{x1['id']}", json={"enabled": False})
 
-    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": x1["id"], "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": x1["id"], "connection_config": ip_config()})
 
     assert r.status_code == 422 and "disabled" in r.json()["detail"]
 
 
 async def test_an_unknown_model_uuid_is_422(client):
-    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": "nope", "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": "X", "model_uuid": "nope", "connection_config": ip_config()})
     assert r.status_code == 422
 
 
@@ -94,7 +95,7 @@ async def test_legacy_printer_type_rows_get_the_registry_uuid_of_their_mapped_mo
 
 async def test_removing_the_plugin_keeps_the_uuid_on_the_printer_and_marks_the_model_dormant(client, two_vendor_plugin):
     r = await client.post("/api/v1/printers", json={"name": "G", "plugin_id": "fake_printers", "manufacturer_id": "globex",
-                                                    "model_id": "g1", "connection_config": {}})
+                                                    "model_id": "g1", "connection_config": ip_config()})
     uuid_before = r.json()["model_uuid"]
 
     plugins._REGISTRY.pop("fake_printers")
@@ -107,7 +108,7 @@ async def test_removing_the_plugin_keeps_the_uuid_on_the_printer_and_marks_the_m
 
 async def test_changing_a_printers_model_moves_its_model_uuid_with_it(client, two_vendor_plugin):
     by_model = {m["model_id"]: m["id"] for m in await models(client, plugin_id="fake_printers")}
-    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": {}})).json()
+    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": ip_config()})).json()
 
     r = await client.patch(f"/api/v1/printers/{created['id']}", json={"model_id": "x1_pro"})
 
@@ -118,7 +119,7 @@ async def test_changing_a_printers_model_moves_its_model_uuid_with_it(client, tw
 
 async def test_a_rejected_model_change_leaves_the_uuid_untouched(client, two_vendor_plugin):
     by_model = {m["model_id"]: m["id"] for m in await models(client, plugin_id="fake_printers")}
-    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": {}})).json()
+    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": ip_config()})).json()
 
     r = await client.patch(f"/api/v1/printers/{created['id']}", json={"model_id": "nope"})
 

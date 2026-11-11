@@ -133,3 +133,8 @@ export function useFiles(filter: FileFilter): { files: LibraryFile[]; refetch: (
   }, [key, tick]);
   return { files, refetch };
 }
+
+/** One object of a 3MF (BIZ-356), for picking a project item. */
+export interface ModelObject { id: string; name: string; instances: number }
+
+export const getModelObjects = (id: number) => request<ModelObject[]>(`/api/v1/files/${id}/objects`);

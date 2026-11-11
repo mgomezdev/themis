@@ -103,7 +103,7 @@ def plate_numbers(zf: zipfile.ZipFile) -> list[int]:
     return sorted(found)
 
 
-from .providers.slicing import get_format_provider
+from .providers.slicing import get_format_provider  # noqa: E402
 
 
 @dataclass

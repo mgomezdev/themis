@@ -14,6 +14,7 @@ logger = logging.getLogger("app.websocket")
 EVENT_SCOPE_MAP = {
     "printer_state": "fleet:read",
     "plate_clear_required": "fleet:read",
+    "printer_configured": "fleet:read",
     "job_updated": "jobs:read",
     "job_update": "jobs:read",
     "queue_update": "queue:read",

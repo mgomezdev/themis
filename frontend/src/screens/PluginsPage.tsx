@@ -92,7 +92,7 @@ export function PluginsPage() {
                   </div>
                 </div>
               )}
-              {restartError && <div role="alert" className="small" style={{ color: 'var(--err, #d44)' }}>{restartError}</div>}
+              {restartError && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{restartError}</div>}
             </div>
           )}
         </div>
@@ -122,7 +122,7 @@ export function PluginsPage() {
                     {p.install.status === 'pending_restart' && p.install.version !== p.version && ` · v${p.install.version} after restart`}
                   </div>
                 )}
-                {p.install?.error && <div role="alert" className="small" style={{ color: 'var(--err, #d44)' }}>{p.install.error}</div>}
+                {p.install?.error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{p.install.error}</div>}
                 {notice[p.id] && <div className="tiny muted" data-testid={`plugin-notice-${p.id}`}>{notice[p.id]}</div>}
               </div>
               <div className="row gap-2" style={{ alignItems: 'center' }}>

@@ -12,6 +12,8 @@ export interface FleetPrinter {
   dormant_reason?: string | null;
   enabled: boolean;
   queue_on: boolean;
+  configured?: boolean;                 // BIZ-369: a connection confirmed its setup (only configured printers take work)
+  config_error?: string | null;         // why not: last test failure / missing field
   connected: boolean;
   awaiting_plate_clear: boolean;
   no_snapshots_while_idle: boolean;
@@ -33,6 +35,9 @@ export interface FleetPrinter {
   fan_box: number;
   alarm_count?: number;                 // active, unacknowledged
   alarm_severity?: 'info' | 'warning' | 'error' | 'fatal' | null;
+  waived_parts?: number;                // BIZ-365: parts it no longer gets
+  waiver_flag?: boolean;                // reached its flag threshold: wash the plate / do maintenance
+  waiver_stopped?: boolean;             // reached its stop threshold: takes no queue work
 }
 
 const ACCENT: Record<string, string> = {
@@ -103,10 +108,15 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     fanBox: p.fan_box ?? 0,
     bedTempTarget: p.temperatures?.bed_target ?? 0,
     queueOn: p.queue_on ?? true,
+    configured: p.configured ?? true,
+    configError: p.config_error ?? null,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,
     noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
     alarmCount: p.alarm_count ?? 0,
     alarmSeverity: p.alarm_severity ?? null,
+    waivedParts: p.waived_parts ?? 0,
+    waiverFlag: p.waiver_flag ?? false,
+    waiverStopped: p.waiver_stopped ?? false,
   };
 }
 
@@ -139,6 +149,12 @@ export function useFleetRaw(): [FleetPrinter[], () => void] {
     return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
+        if (msg.type === 'printer_configured') {
+          // a connection test finished or the first live connection confirmed the setup (BIZ-369)
+          const d = msg.data as unknown as { printer_id: number; configured: boolean; config_error: string | null };
+          setRaw(prev => prev.map(p => (p.id === d.printer_id ? { ...p, configured: d.configured, config_error: d.config_error } : p)));
+          return;
+        }
         if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
           // A live frame is only vendor telemetry (no name, loaded_filaments, enabled…), so an unknown
           // printer can't be built from it: fetch the full row once instead of rendering the fragment.

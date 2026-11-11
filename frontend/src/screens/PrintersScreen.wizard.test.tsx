@@ -12,7 +12,7 @@ import { Reply, stubFetch } from '../test/fetchStub';
 const MODEL = 'model-p1s';
 const TYPES: PrinterType[] = [
   printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S', model_uuid: MODEL, connection_fields: [
-    { name: 'ip_address', label: 'IP', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
+    { name: 'ip_address', label: 'IP', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
   ] }),
 ];
 const CATALOG = [

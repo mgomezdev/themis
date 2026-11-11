@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .sidecar_client import (
     DEFAULT_POLL_TIMEOUT_S, DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady,
@@ -25,6 +26,7 @@ def _preset(raw: dict) -> Preset:
         name=raw.get("name") or "",
         compatible_printers=list(raw.get("compatible_printers") or []),
         raw=raw,
+        height_mm=float(raw["bed_size_z"]) if isinstance(raw.get("bed_size_z"), (int, float)) and raw["bed_size_z"] > 0 else None,
     )
 
 
@@ -38,8 +40,6 @@ def catalog_from_legacy(raw: dict) -> Catalog:
 
 
 class LaminusSlicingProvider(SlicingProvider):
-    ARRANGE = True
-    PACK_MODELS = True
     PREPARED_PROJECT = True
     TOOL_MAPPING = True
     SUGGEST_PROFILES = True
@@ -112,6 +112,13 @@ class LaminusSlicingProvider(SlicingProvider):
                                     is_default_guess=bool(v.get("is_default_guess")))
                 for v in raw if v.get("name")]
 
+    def machine_presets(self, machine_ref: str, kind: str) -> list[dict]:
+        """Laminus's own compatibility answer for one machine (BIZ-293); raw preset dicts."""
+        try:
+            return self._client(15).machine_presets(machine_ref, kind)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+
     def merged_config(
         self, machine_ref: str, process_ref: str, filament_refs: list[str], timeout: float | None = None,
     ) -> dict:
@@ -120,7 +127,8 @@ class LaminusSlicingProvider(SlicingProvider):
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
 
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop: "Callable[[], bool] | None" = None) -> str:
+        """`should_stop` (Laminus only) is checked between status polls; the wait then ends with a `SidecarCancelled` cause."""
         client = self._client()
         try:
             if spec.prepared:
@@ -131,27 +139,7 @@ class LaminusSlicingProvider(SlicingProvider):
                     spec.plate, export_3mf=spec.export_3mf,
                     extra_config=spec.extra_config or None,
                 )
-            status = client.poll_status(job_id, timeout=self._poll_timeout_s)
+            status = client.poll_status(job_id, timeout=self._poll_timeout_s, should_stop=should_stop)
             return str(client.download(job_id, output_dir / status["artifact"]["name"]))
-        except SidecarError as e:
-            raise SlicingProviderError(str(e)) from e
-
-    def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
-        try:
-            return self._client().arrange(project_path, arrange=arrange, orient=orient, timeout=timeout)
-        except SidecarError as e:
-            raise SlicingProviderError(str(e)) from e
-
-    def pack_models(
-        self, paths: list[Path], *, machine_ref: str | None = None, process_ref: str | None = None,
-        filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
-    ) -> bytes:
-        client = self._client()
-        try:
-            if machine_ref is not None:
-                return client.pack_stls_by_uuid(paths, machine_ref, process_ref or "", filament_refs or [])
-            if bed is None:
-                raise SlicingProviderError("pack_models needs presets or bed dimensions")
-            return client.pack_stls(paths, *bed)
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e

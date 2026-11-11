@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 import logging
 from pathlib import Path
+from typing import Callable
 
 import httpx
+
+from ..contract import ConstructInput
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_REQUEST_TIMEOUT_S = 630.0  # seconds — slightly over sidecar's 600 s slice timeout
 DEFAULT_POLL_TIMEOUT_S = 620.0
 PROFILES_PAGE_SIZE = 200  # v1 max page size
+# Characters that break a pack upload name: `;` is rejected by the sidecar; `"` and control characters are percent-encoded by httpx in
+# the multipart header and the sidecar doesn't decode them, so the name would no longer match its `items` entry.
+_UNSAFE_UPLOAD_CHARS = re.compile(r'[";\x00-\x1f\x7f]')
 
 
 def _detail(r: httpx.Response, limit: int = 300) -> str:
@@ -28,6 +36,22 @@ class SidecarError(Exception):
 
 class SidecarNotReady(SidecarError):
     """The sidecar answered /api/v1/health with a non-200 (still starting or building its catalog)."""
+
+
+class SidecarNothingFits(SidecarError):
+    """POST /api/v1/pack/next answered 422 `nothing_fits` (BIZ-362)."""
+
+
+class SidecarTimeout(SidecarError):
+    """The request (or the sidecar's own work) ran out of time."""
+
+
+class SidecarUnreachable(SidecarError):
+    """No answer: connection refused/reset or another transport failure."""
+
+
+class SidecarCancelled(SidecarError):
+    """The caller asked the wait to stop (`should_stop` returned True)."""
 
 
 class LaminusSidecarClient:
@@ -156,16 +180,21 @@ class LaminusSidecarClient:
         job_id: str,
         poll_interval: float = 2.0,
         timeout: float = DEFAULT_POLL_TIMEOUT_S,
+        should_stop: "Callable[[], bool] | None" = None,
     ) -> dict:
         """Poll GET /api/v1/jobs/{job_id} until completed or failed.
 
         Returns the completed job view (the output name is ``artifact["name"]``). Raises SidecarError on
-        failure or timeout.
+        failure, SidecarTimeout past `timeout`, SidecarCancelled as soon as `should_stop()` is true (checked before each poll).
         """
         deadline = time.monotonic() + timeout
         while True:
+            if should_stop is not None and should_stop():
+                raise SidecarCancelled(f"slice job {job_id} cancelled")
             try:
                 r = self._client.get(f"/api/v1/jobs/{job_id}")
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"status poll timed out: {e}") from e
             except httpx.HTTPError as e:
                 raise SidecarError(f"status poll request failed: {e}") from e
 
@@ -184,7 +213,7 @@ class LaminusSidecarClient:
                     f"sidecar slice failed: {body.get('error') or 'unknown error'}"
                 )
             if time.monotonic() > deadline:
-                raise SidecarError(
+                raise SidecarTimeout(
                     f"sidecar poll timed out after {timeout:.0f}s for job {job_id}"
                 )
 
@@ -243,6 +272,17 @@ class LaminusSidecarClient:
                                {"manufacturer": manufacturer, "model": model, "model_key": model_key}, "profiles/machines/suggest")
         return list(body.get("candidates") or [])
 
+    def machine_presets(self, machine_ref: str, kind: str) -> list[dict]:
+        """GET /api/v1/profiles/machines/{ref}/presets?kind= -> the process/filament presets compatible with that machine
+        (`[{ref, uuid, name, kind, compatible_models?}]`). 404 = unknown machine ref (a bare `{"error": ...}` body)."""
+        try:
+            r = self._client.get(f"/api/v1/profiles/machines/{machine_ref}/presets", params={"kind": kind}, timeout=15)
+        except httpx.HTTPError as e:
+            raise SidecarError(f"machine presets request failed: {e}") from e
+        if r.status_code != 200:
+            raise SidecarError(f"machine presets returned {r.status_code}: {r.text[:200]}")
+        return list(r.json().get("presets") or [])
+
     def model_variants(self, manufacturer: str, model: str, model_key: str | None = None) -> list[dict]:
         """POST /api/v1/profiles/models/variants -> the model's nozzle variants (empty list for an unknown model)."""
         body = self._post_json("/api/v1/profiles/models/variants",
@@ -274,97 +314,152 @@ class LaminusSidecarClient:
             raise SidecarError(f"profiles/merged-config returned {r.status_code}: {_detail(r)}")
         return r.json()
 
-    def arrange(
-        self,
-        threemf_path: Path,
-        arrange: bool = True,
-        orient: bool = True,
-        timeout: float = 130.0,
-    ) -> bytes:
-        """POST /api/v1/arrange → arranged multi-plate 3MF bytes.
+    def pack_stls(self, items: list[ConstructInput], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
+        """POST /api/v1/pack by bed size -> multi-plate arranged 3MF bytes. STL uploads only (the sidecar rejects others)."""
+        return self._pack(items, {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)})
 
-        Sends a pre-built 3MF (with model_settings.config extruder assignments) to
-        the sidecar for plate arrangement and returns the rearranged 3MF bytes.
-        Raises SidecarError on failure or timeout.
-        """
+    def pack_mixed(self, items: list[ConstructInput], bed_x: float, bed_y: float, bed_z: float = 250.0) -> bytes:
+        """POST /api/v1/pack/mixed by bed size (BIZ-356): STLs, 3MF objects and 3MF plate bundles with split/together/solo rules
+        -> one multi-plate 3MF with the plate manifest. Each source file is uploaded once; the selection is in `items` order."""
+        uploads: dict[str, tuple[str, ConstructInput]] = {}      # one upload per source file, named uniquely
+        selection = []
+        for it in items:
+            key = str(it.path)
+            if key not in uploads:
+                uploads[key] = (_UNSAFE_UPLOAD_CHARS.sub("_", f"{len(uploads)}_{it.path.name}"), it)
+            entry: dict = {"file": uploads[key][0], "qty": it.quantity}
+            if it.object_id is not None:
+                entry["id"] = int(it.object_id) if str(it.object_id).isdigit() else it.object_id
+            if it.plate is not None:
+                entry["plate"] = it.plate
+            if it.rule != "split":
+                entry["rule"] = it.rule
+            selection.append(entry)
+        data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z), "selection": json.dumps(selection)}
+        return self._post_files("/api/v1/pack/mixed", [(n, it.path) for n, it in uploads.values()], data, "pack/mixed")
+
+    def pack_next(self, items: list[ConstructInput], machine_uuid: str, max_parts: int | None = None) -> tuple[bytes, list[int]]:
+        """POST /api/v1/pack/next (BIZ-362): the fullest single plate for one machine -> (3MF bytes, consumed per selection entry).
+        422 `nothing_fits` raises SidecarNothingFits."""
+        uploads: dict[str, tuple[str, ConstructInput]] = {}
+        selection = []
+        for it in items:
+            key = str(it.path)
+            if key not in uploads:
+                uploads[key] = (_UNSAFE_UPLOAD_CHARS.sub("_", f"{len(uploads)}_{it.path.name}"), it)
+            entry: dict = {"file": uploads[key][0], "qty": it.quantity}
+            if it.object_id is not None:
+                entry["id"] = int(it.object_id) if str(it.object_id).isdigit() else it.object_id
+            if it.plate is not None:
+                entry["plate"] = it.plate
+            if it.rule != "split":
+                entry["rule"] = it.rule
+            selection.append(entry)
+        data = {"machine_uuid": machine_uuid, "selection": json.dumps(selection),
+                **({"max_parts": str(max_parts)} if max_parts else {})}
+        handles = [open(it.path, "rb") for _, it in uploads.values()]
         try:
-            with open(threemf_path, "rb") as fh:
-                r = self._client.post(
-                    "/api/v1/arrange",
-                    files={"file": (threemf_path.name, fh, "application/octet-stream")},
-                    data={
-                        "arrange": "1" if arrange else "0",
-                        "orient": "1" if orient else "0",
-                    },
-                    timeout=timeout,
-                )
-        except httpx.HTTPError as e:
-            raise SidecarError(f"arrange request failed: {e}") from e
+            files = [("files", (n, fh, "application/octet-stream")) for (n, _), fh in zip(uploads.values(), handles)]
+            try:
+                r = self._client.post("/api/v1/pack/next", files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"pack/next timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"pack/next request failed: {e}") from e
+        finally:
+            for fh in handles:
+                fh.close()
+        if r.status_code == 422:
+            try:
+                code = r.json().get("error", {}).get("code")
+            except ValueError:
+                code = None
+            if code == "nothing_fits":
+                raise SidecarNothingFits(_detail(r))
+        if r.status_code == 503:
+            raise SidecarNotReady(f"pack/next returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"pack/next returned {r.status_code}: {_detail(r)}")
+        consumed = json.loads(r.headers.get("X-Consumed") or "[]")
+        return r.content, [int(n) for n in consumed]
+
+    def measure(self, path, selection: list[dict] | None) -> list:
+        """POST /api/v1/projects/measure (BIZ-363) -> one `size_mm` [x, y, z] (or null) per selection entry; `selection` None
+        measures the whole file (an STL, or a single-plate 3MF) and returns one entry."""
+        from pathlib import Path as _P
+        path = _P(path)
+        with open(path, "rb") as fh:
+            try:
+                r = self._client.post("/api/v1/projects/measure", files=[("file", (path.name, fh, "application/octet-stream"))],
+                                      data={} if selection is None else {"selection": json.dumps(selection)})
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"measure timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"measure request failed: {e}") from e
+        if r.status_code == 503:
+            raise SidecarNotReady(f"measure returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"measure returned {r.status_code}: {_detail(r)}")
+        return [it.get("size_mm") for it in r.json().get("items", [])]
+
+    def inspect_objects(self, model_3mf) -> list[dict]:
+        """POST /api/v1/projects/inspect -> the 3MF's objects (id, name, instances, ...)."""
+        from pathlib import Path as _P
+        path = _P(model_3mf)
+        with open(path, "rb") as fh:
+            try:
+                r = self._client.post("/api/v1/projects/inspect", files=[("file", (path.name, fh, "application/octet-stream"))])
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"inspect request failed: {e}") from e
+        if r.status_code == 503:
+            raise SidecarNotReady(f"inspect returned 503: {_detail(r)}")
+        if r.status_code != 200:
+            raise SidecarError(f"inspect returned {r.status_code}: {_detail(r)}")
+        return list(r.json().get("objects", []))
+
+    def _post_files(self, url: str, named_paths: list, data: dict[str, str], what: str) -> bytes:
+        handles = [open(p, "rb") for _, p in named_paths]
+        try:
+            files = [("files", (n, fh, "application/octet-stream")) for (n, _), fh in zip(named_paths, handles)]
+            try:
+                r = self._client.post(url, files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"{what} timed out: {e}") from e
+            except httpx.HTTPError as e:
+                raise SidecarUnreachable(f"{what} request failed: {e}") from e
+        finally:
+            for fh in handles:
+                fh.close()
         if r.status_code == 408:
-            raise SidecarError("arrange timed out on sidecar")
+            raise SidecarTimeout(f"{what} timed out on the sidecar")
+        if r.status_code == 503:
+            raise SidecarNotReady(f"{what} returned 503: {_detail(r)}")
         if r.status_code != 200:
-            raise SidecarError(f"arrange returned {r.status_code}: {_detail(r)}")
+            raise SidecarError(f"{what} returned {r.status_code}: {_detail(r)}")
         return r.content
 
-    def pack_stls(
-        self,
-        stl_paths: list[Path],
-        bed_x: float,
-        bed_y: float,
-        bed_z: float = 250.0,
-    ) -> bytes:
-        """POST /api/v1/pack → multi-plate arranged 3MF bytes."""
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
+    def _pack(self, items: list[ConstructInput], data: dict[str, str]) -> bytes:
+        """Upload each item's STL once and ask for `quantity` copies via `items`. The sidecar keys quantities by upload
+        filename and needs them unique, so the item's `ref` prefixes the name (same-named models stay distinct)."""
+        names = [_UNSAFE_UPLOAD_CHARS.sub("_", f"{it.ref}_{it.path.name}") for it in items]
+        data = {**data, "items": json.dumps([{"file": n, "quantity": it.quantity} for n, it in zip(names, items)])}
+        handles = [open(it.path, "rb") for it in items]
         try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)}
+            files = [("files", (n, fh, "application/octet-stream")) for n, fh in zip(names, handles)]
             try:
                 r = self._client.post("/api/v1/pack", files=files, data=data)
+            except httpx.TimeoutException as e:
+                raise SidecarTimeout(f"pack timed out: {e}") from e
             except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
+                raise SidecarUnreachable(f"pack request failed: {e}") from e
         finally:
-            for _, fh in file_handles:
+            for fh in handles:
                 fh.close()
 
-        if r.status_code != 200:
-            raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
-        return r.content
-
-    def pack_stls_by_uuid(
-        self,
-        stl_paths: list[Path],
-        machine_uuid: str,
-        process_uuid: str,
-        filament_uuids: list[str],
-    ) -> bytes:
-        """POST /api/v1/pack (UUID mode) → multi-plate 3MF bytes with embedded settings.
-
-        The sidecar resolves bed dimensions and profile settings from the given
-        UUIDs, so no bed_x/bed_y is needed.
-        """
-        import json as _json
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
-        try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {
-                "machine_uuid": machine_uuid,
-                "process_uuid": process_uuid,
-                "filament_uuids": _json.dumps(filament_uuids),
-            }
-            try:
-                r = self._client.post("/api/v1/pack", files=files, data=data)
-            except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
-        finally:
-            for _, fh in file_handles:
-                fh.close()
-
+        if r.status_code == 408:
+            raise SidecarTimeout("pack timed out on the sidecar")
+        if r.status_code == 503:
+            raise SidecarNotReady(f"pack returned 503: {_detail(r)}")
         if r.status_code != 200:
             raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
         return r.content
