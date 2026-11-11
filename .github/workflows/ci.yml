@@ -143,7 +143,7 @@ jobs:
   frontend-e2e:
     needs: [changes]
     if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # Playwright 1.60 cannot install chromium deps on ubuntu-latest (26.04)
     timeout-minutes: 15
     defaults:
       run:

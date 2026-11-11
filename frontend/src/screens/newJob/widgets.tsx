@@ -9,7 +9,7 @@ export function StepNum({ n, done }: { n: number; done: boolean }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       width: 20, height: 20,
-      background: done ? 'var(--accent)' : 'var(--bg-3)',
+      background: done ? 'var(--accent)' : 'var(--bg-2)',
       color: done ? 'white' : 'var(--text-3)',
       border: `1px solid ${done ? 'var(--accent)' : 'var(--border-1)'}`,
       borderRadius: 6,
@@ -27,7 +27,7 @@ export function SummaryDot({ done }: { done: boolean }) {
     <span style={{
       width: 16, height: 16, flexShrink: 0,
       borderRadius: '50%',
-      background: done ? 'var(--accent)' : 'var(--bg-3)',
+      background: done ? 'var(--accent)' : 'var(--bg-2)',
       border: `1px solid ${done ? 'var(--accent)' : 'var(--border-1)'}`,
       display: 'inline-grid', placeItems: 'center', marginTop: 1,
     }}>
@@ -89,7 +89,7 @@ export function QueueToggle({ checked, onChange }: { checked: boolean; onChange:
       </div>
       <div style={{
         width: 36, height: 20, borderRadius: 999,
-        background: checked ? 'var(--accent)' : 'var(--bg-3)',
+        background: checked ? 'var(--accent)' : 'var(--bg-2)',
         border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
         position: 'relative',
         transition: 'background 120ms, border-color 120ms',
@@ -132,7 +132,7 @@ export function ProjectPicker({ selectedProjectId, onChange }: {
               title={p.stage === 'queued' ? undefined : `Jobs start once ${p.name} is moved to Queued`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-                background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
+                background: selected ? 'var(--bg-2)' : 'var(--bg-0)',
                 border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
                 boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
                 borderRadius: 999, cursor: 'pointer', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 12,

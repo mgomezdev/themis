@@ -119,7 +119,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
       }}>
         {/* Header */}
         <div className="row between wrap" style={{
-          padding: '14px 18px', background: 'var(--bg-3)',
+          padding: '14px 18px', background: 'var(--bg-2)',
           borderBottom: '1px solid var(--border-1)', gap: 12, alignItems: 'center',
         }}>
           <div className="col" style={{ minWidth: 0, flex: '1 1 220px' }}>
@@ -130,7 +130,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
                        onChange={e => setNickname(e.target.value)}
                        onBlur={() => setEditingName(false)}
                        onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingName(false); }}
-                       style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', padding: '2px 8px', width: 220, background: 'var(--bg-1)' }} />
+                       style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', padding: '2px 8px', width: 220, background: 'var(--bg-0)' }} />
               ) : (
                 <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em' }}>{nickname}</div>
               )}
@@ -245,7 +245,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
 
           {/* RIGHT */}
           <div className="col gap-4">
-            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+            <div className="card" style={{ padding: 14, background: 'var(--bg-0)' }}>
               <div className="row between">
                 <span className="tag-key">Loaded filament{mats.length > 1 ? 's' : ''}</span>
                 <button className="btn ghost sm" onClick={() => setPickingFilament(v => !v)}>
@@ -279,7 +279,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
               )}
             </div>
 
-            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+            <div className="card" style={{ padding: 14, background: 'var(--bg-0)' }}>
               <div className="tag-key" style={{ marginBottom: 10 }}>Temperatures</div>
               <div className="col gap-3">
                 {p.nozzles && p.nozzles.length > 1
@@ -304,7 +304,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
             </div>
 
             {(dueRowsByPrinter[p.id] ?? []).length > 0 && (
-              <div className="card" style={{ padding: 14, background: 'var(--bg-1)', borderColor: 'var(--warn)' }}>
+              <div className="card" style={{ padding: 14, background: 'var(--bg-0)', borderColor: 'var(--warn)' }}>
                 <div className="tag-key" style={{ marginBottom: 10 }}>👷 Maintenance due</div>
                 <div className="col gap-2">
                   {(dueRowsByPrinter[p.id] ?? []).map(row => (

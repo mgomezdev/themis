@@ -84,7 +84,7 @@ export function SharedProjectScreen() {
           {project.on_hold && <span className="text-warn">On hold</span>}
         </div>
 
-        <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 16 }}>
+        <div style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 16 }}>
           {project.jobs_complete} of {project.jobs_total} printed
           {project.estimate_seconds_remaining != null && (
             <span style={{ color: 'var(--text-4)' }}> · ~{fmtDuration(project.estimate_seconds_remaining)} remaining</span>

@@ -377,7 +377,7 @@ export function NewJobScreen() {
       {successMsg && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'var(--ok-bg)', border: '1px solid var(--ok-border)',
+          background: 'color-mix(in oklch, var(--ok) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)',
           color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
         }}>
           {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
@@ -386,7 +386,7 @@ export function NewJobScreen() {
       {eligibilityPrompt && (
         <div role="alert" data-testid="eligibility-prompt" style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', fontSize: 13,
+          background: 'color-mix(in oklch, var(--warn) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', fontSize: 13,
         }}>
           <div>{eligibilityPrompt}</div>
           <div className="row gap-2" style={{ marginTop: 8 }}>
@@ -398,7 +398,7 @@ export function NewJobScreen() {
       {error && (
         <div style={{
           padding: '10px 14px', borderRadius: 8,
-          background: 'var(--err-bg)', border: '1px solid var(--err-border)',
+          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
           color: 'var(--err)', fontSize: 13,
         }}>
           {error}
@@ -550,10 +550,10 @@ export function NewJobScreen() {
                         onClick={() => setActivePlateId(plate.id)}
                         style={{
                           padding: '12px 16px',
-                          background: isActive ? 'var(--bg-2)' : 'transparent',
+                          background: isActive ? 'var(--bg-1)' : 'transparent',
                           border: 'none',
                           borderBottom: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
-                          color: isActive ? 'var(--text-1)' : queued ? 'var(--text-2)' : 'var(--text-4)',
+                          color: isActive ? 'var(--text-1)' : queued ? 'var(--text-1)' : 'var(--text-4)',
                           fontFamily: 'inherit',
                           fontSize: 13,
                           fontWeight: isActive ? 500 : 400,

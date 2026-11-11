@@ -103,7 +103,7 @@ export function HistoryScreen() {
           <tbody>
             {jobs.map(j => (
               <tr key={j.id} style={{ borderBottom: '1px solid var(--border-1)' }}>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
                   {fmtDate(j.completed_at ?? j.updated_at)}
                 </td>
                 <td style={{ padding: '8px 12px', color: 'var(--text-1)' }}>
@@ -112,7 +112,7 @@ export function HistoryScreen() {
                     <span style={{ color: 'var(--text-3)', marginLeft: 4 }}>p{j.plate_number}</span>
                   )}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)' }}>
                   {j.printer_name ?? '—'}
                 </td>
                 <td style={{ padding: '8px 12px' }}>
@@ -125,16 +125,16 @@ export function HistoryScreen() {
                     </Link>
                   ) : '—'}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
                   {j.estimate_filament_grams !== null ? `${j.estimate_filament_grams.toFixed(1)} g` : '—'}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
                   {j.estimate_seconds !== null ? fmtTime(Math.round(j.estimate_seconds / 60)) : '—'}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
                   {j.actual_filament_grams !== null ? `${j.actual_filament_grams.toFixed(1)} g` : '—'}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' }}>
                   {j.actual_seconds !== null ? fmtTime(Math.round(j.actual_seconds / 60)) : '—'}
                 </td>
                 <td style={{ padding: '8px 12px' }}>

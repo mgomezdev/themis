@@ -275,7 +275,7 @@ export function ApiKeysPage() {
         />
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -285,7 +285,7 @@ export function ApiKeysPage() {
         )}
 
         {(loading || keys.length > 0) && (
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-0)' }}>
             <table className="tbl" style={{ minWidth: 760 }}>
               <thead>
                 <tr>

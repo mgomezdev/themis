@@ -53,7 +53,7 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
   const all = financials.windows.all;
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Financial summary</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Financial summary</div>
       <div className="row gap-2 wrap">
         <Stat label="Outstanding" value={fmtMoney(all.outstanding)}
               tone={all.outstanding > 0 ? 'var(--warn)' : undefined} />
@@ -128,7 +128,7 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div className="row gap-2 wrap">
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginRight: 8 }}>Projects</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginRight: 8 }}>Projects</div>
         {(['current', 'past', 'all'] as ProjectTab[]).map(t => (
           <button key={t} className={`btn sm ${tab === t ? 'primary' : 'ghost'}`}
                   onClick={() => setTab(t)} style={{ textTransform: 'capitalize' }}>
@@ -210,7 +210,7 @@ function PaymentHistoryCard({ customerId }: { customerId: number }) {
 
   return (
     <div className="card" style={{ padding: 20 }} data-testid="payment-history">
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Payment history</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginBottom: 12 }}>Payment history</div>
       {error ? <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>
         : payments === null ? <div className="muted small">Loading…</div>
         : payments.length === 0 ? <div style={{ color: 'var(--text-4)', fontSize: 13 }}>No payments recorded yet.</div>
@@ -293,7 +293,7 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
   return (
     <form className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save}>
       <div className="row gap-2 wrap">
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Details</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Details</div>
         <span className={`pill ${status.tone}`} style={{ fontSize: 10 }}>{status.label}</span>
         <div className="grow" />
         <button type="button" className="btn ghost sm" disabled={saving} onClick={resetPassword}>

@@ -114,7 +114,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
               : spoolRef != null && !spool ? <div style={{ color: 'var(--warn)', fontSize: 12 }}>Spool #{spoolRef} isn’t in the inventory.</div>
               : spool && (
                 <div data-testid="scanned-spool" className="row gap-3"
-                     style={{ padding: 10, border: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
+                     style={{ padding: 10, border: '1px solid var(--border-1)', background: 'var(--bg-0)' }}>
                   <span style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
                                  background: spoolColor(spool) }} />
                   <div className="col min-0">

@@ -4,7 +4,7 @@ import { useBuildInfo, shortSha } from '../../api/version';
 
 function AboutTile({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div style={{ padding: '12px 14px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
+    <div style={{ padding: '12px 14px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
       <div className="tag-key">{k}</div>
       <div style={{ marginTop: 4, fontSize: 14, fontFamily: mono ? 'var(--font-mono)' : 'var(--font-sans)', color: 'var(--text-1)' }}>{v}</div>
     </div>

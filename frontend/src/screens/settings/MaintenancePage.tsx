@@ -31,7 +31,7 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
           <span key={t.id} title={TRIGGER_LABEL[t.trigger_type]} style={{
             display: 'inline-flex', alignItems: 'center',
             fontSize: 11.5, padding: '3px 9px', borderRadius: 0,
-            background: 'var(--bg-3)', color: 'var(--text-3)', border: '1px solid var(--border-2)',
+            background: 'var(--bg-2)', color: 'var(--text-3)', border: '1px solid var(--border-2)',
             whiteSpace: 'nowrap',
           }}>{triggerChipText(t)}</span>
         ))}
@@ -131,7 +131,7 @@ export function MaintenancePage() {
         />
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -158,7 +158,7 @@ export function MaintenancePage() {
 
         <div className="col gap-1">
           <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8 }}>General</div>
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-0)' }}>
             {generalItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No general maintenance items yet.</div>}
             {generalItems.map(item => (
               <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}
@@ -168,7 +168,7 @@ export function MaintenancePage() {
           </div>
 
           <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 16 }}>Model-specific</div>
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-0)' }}>
             {modelItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No model-specific items yet.</div>}
             {modelItems.map(item => (
               <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}

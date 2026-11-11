@@ -130,7 +130,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: 'var(--bg-2)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ background: 'var(--bg-1)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         <div style={{ padding: '24px 24px 12px', overflowY: 'auto', flex: 1 }}>
           <h2 style={{ marginTop: 0 }}>Profile References Need Remapping</h2>
@@ -139,7 +139,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
           </p>
 
           {inventory_error && (
-            <div className="notice warn" style={{ marginBottom: 12 }}>
+            <div style={{ background: 'color-mix(in oklch, var(--err) 20%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 35%, transparent)', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
               Inventory references could not be fully checked: {inventory_error}
             </div>
           )}
@@ -299,7 +299,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
             <button
               onClick={handleConfirm}
               disabled={!canConfirm}
-              className="btn primary"
+              style={{ padding: '6px 16px', background: canConfirm ? 'var(--accent)' : 'var(--bg-2)', color: canConfirm ? 'var(--bg-0)' : 'var(--text-3)', border: 'none', borderRadius: 4, cursor: canConfirm ? 'pointer' : 'default' }}
             >
               {submitting ? 'Applying…' : 'Confirm'}
             </button>

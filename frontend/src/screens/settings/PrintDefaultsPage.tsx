@@ -224,7 +224,7 @@ export function PrintDefaultsPage() {
       {saveError && (
         <div role="alert" className="small" style={{
           padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-          background: 'var(--err-bg)', border: '1px solid var(--err-border)', color: 'var(--err)',
+          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)',
         }}>
           {saveError}
         </div>

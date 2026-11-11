@@ -23,7 +23,7 @@ export function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDro
       onDrop={onDrop}
       style={{
         border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-2)'}`,
-        background: dragOver ? 'var(--accent-glow)' : 'var(--bg-1)',
+        background: dragOver ? 'var(--accent-glow)' : 'var(--bg-0)',
         borderRadius: 12,
         padding: '32px 24px',
         textAlign: 'center',
@@ -32,7 +32,7 @@ export function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDro
       }}>
       <div style={{
         width: 48, height: 48, borderRadius: 12,
-        background: 'var(--bg-3)', color: dragOver ? 'var(--accent-hi)' : 'var(--text-3)',
+        background: 'var(--bg-2)', color: dragOver ? 'var(--accent-hi)' : 'var(--text-3)',
         display: 'grid', placeItems: 'center', margin: '0 auto 12px',
       }}>
         {React.cloneElement(Icons.upload as React.ReactElement<{ size?: number }>, { size: 22 })}
@@ -59,12 +59,12 @@ export function FileCard({ file, plateCount, selectedCount, onClear }: {
 }) {
   return (
     <div className="row gap-3" style={{
-      padding: '14px 16px', background: 'var(--bg-1)',
+      padding: '14px 16px', background: 'var(--bg-0)',
       border: '1px solid var(--border-1)', borderRadius: 10,
     }}>
       <div style={{
         width: 44, height: 44, borderRadius: 8,
-        background: 'var(--thumb-fallback)',
+        background: 'linear-gradient(135deg, var(--bg-2), var(--border-2))',
         color: 'white',
         display: 'grid', placeItems: 'center',
         fontWeight: 700, fontSize: 10.5,

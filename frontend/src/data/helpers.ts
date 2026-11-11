@@ -78,7 +78,7 @@ export function matTypeFg(t: string): string {
     case 'ASA': return '#f9a8d4';
     case 'PC': return '#fcd34d';
     case 'TPU': return '#fca5a5';
-    default: return 'var(--text-2)';
+    default: return 'var(--text-1)';
   }
 }
 

@@ -25,7 +25,7 @@ export function WebhookPage() {
         setEvents(cfg.events.length ? cfg.events : ALL_WEBHOOK_EVENTS);
       })
       .catch(console.error);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save() {
     setSaving(true);

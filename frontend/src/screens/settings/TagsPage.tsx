@@ -84,7 +84,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
   }
 
   return (
-    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-2)' }}>
+    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
       <div className="row gap-3" style={{ alignItems: 'flex-start' }}>
         <span style={{ width: 4, height: 28, borderRadius: 2, flexShrink: 0, marginTop: 8, background: color }}/>
         <div className="col" style={{ flex: 1, minWidth: 0, gap: 10 }}>
@@ -104,7 +104,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
             </div>
             <div>
               <label className="label">Preview</label>
-              <div style={{ padding: '8px 12px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8, display: 'flex', alignItems: 'center', minHeight: 36 }}>
+              <div style={{ padding: '8px 12px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8, display: 'flex', alignItems: 'center', minHeight: 36 }}>
                 <TagChip tag={previewTag} />
               </div>
             </div>
@@ -140,7 +140,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
 function TagStat({ label, value, sub, tone }: { label: string; value: number; sub?: string; tone?: string }) {
   const color = tone === 'warn' ? 'var(--warn)' : tone === 'idle' ? 'var(--text-3)' : 'var(--text-1)';
   return (
-    <div style={{ flex: '1 1 0', minWidth: 140, padding: '14px 16px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ flex: '1 1 0', minWidth: 140, padding: '14px 16px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="tag-key">{label}</div>
       <div className="num" style={{ fontSize: 22, fontWeight: 600, color, marginTop: 6, letterSpacing: '-0.02em' }}>{value}</div>
       {sub && <div className="tiny muted" style={{ marginTop: 2 }}>{sub}</div>}
@@ -240,7 +240,7 @@ export function TagsPage() {
 
         <div className="row gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <div className="row gap-2" style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
               {React.cloneElement(Icons.search, { size: 14 } as React.SVGProps<SVGSVGElement>)}
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search tags…"
                      style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-1)', outline: 'none', fontSize: 13, fontFamily: 'var(--font-sans)' }}/>
@@ -253,7 +253,7 @@ export function TagsPage() {
         </div>
 
         {error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -271,8 +271,8 @@ export function TagsPage() {
           ))}
         </div>
 
-        <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-1)' }}>
-          <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-2)' }}>
+        <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-0)' }}>
+          <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-1)' }}>
             <div style={{ width: 4, flexShrink: 0 }}/>
             <div className="grow">Tag</div>
             <div style={{ width: 140, flexShrink: 0 }}>Category</div>

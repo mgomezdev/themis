@@ -26,7 +26,7 @@ function PlateThumbnail({
   return (
     <div style={{
       borderRadius: 8, flexShrink: 0,
-      background: 'var(--thumb-fallback)',
+      background: 'linear-gradient(135deg, var(--bg-2), var(--border-2))',
       border: '1px solid var(--border-2)',
       display: 'grid', placeItems: 'center',
       overflow: 'hidden',

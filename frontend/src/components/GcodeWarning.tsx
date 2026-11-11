@@ -25,7 +25,7 @@ export function GcodeWarning() {
   return (
     <div role="note" data-testid="gcode-warning" style={{
       padding: '10px 14px', borderRadius: 8, fontSize: 13, lineHeight: 1.5,
-      background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', color: 'var(--text-1)',
+      background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', color: 'var(--text-1)',
     }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>Pre-sliced gcode</div>
       <div>

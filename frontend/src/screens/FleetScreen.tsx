@@ -22,14 +22,14 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
     { id: 'rows',  label: 'Rows',  icon: Icons.layers },
   ];
   return (
-    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
+    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-1)', border: '1px solid var(--border-1)' }}>
       {opts.map(o => {
         const on = value === o.id;
         return (
           <button key={o.id} onClick={() => onChange(o.id)} className="row gap-2" title={o.label}
                   style={{
                     padding: '4px 10px', borderRadius: 5, border: 'none',
-                    background: on ? 'var(--bg-4)' : 'transparent',
+                    background: on ? 'var(--bg-2)' : 'transparent',
                     color: on ? 'var(--text-1)' : 'var(--text-3)',
                     fontSize: 12, fontWeight: 500, cursor: 'pointer', alignItems: 'center',
                     boxShadow: on ? '0 1px 0 rgba(0,0,0,0.25), 0 0 0 1px var(--border-2)' : 'none',

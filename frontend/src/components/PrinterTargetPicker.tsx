@@ -60,7 +60,7 @@ export function PrinterTargetPicker({ printers, selected, onToggle }: {
 
       {open && (
         <div className="card" role="menu" style={{ position: 'absolute', zIndex: 20, marginTop: 6, padding: 10, minWidth: 260,
-                                                    maxHeight: 320, overflowY: 'auto', background: 'var(--bg-2)' }}>
+                                                    maxHeight: 320, overflowY: 'auto', background: 'var(--bg-1)' }}>
           <input className="input" autoFocus placeholder="Search printers" value={query}
                  onChange={e => setQuery(e.target.value)} style={{ marginBottom: 8 }} />
           <div className="tag-key" style={{ margin: '4px 0' }}>Group of printers</div>

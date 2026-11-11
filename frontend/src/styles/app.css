@@ -4,46 +4,33 @@
    ============================================================ */
 
 :root {
-  /* Night City palette — deep neutral grey, chrome yellow + holo cyan */
-  --bg-0:        oklch(6% 0.006 250);   /* deepest, near-black */
-  --bg-1:        oklch(9% 0.008 250);   /* canvas */
-  --bg-2:        oklch(12% 0.010 250);  /* panel — the "deep grey" body */
-  --bg-3:        oklch(16% 0.014 250);  /* elevated */
-  --bg-4:        oklch(20% 0.018 250);  /* hover / selected */
-  --border-1:    oklch(21% 0.018 250);
-  --border-2:    oklch(28% 0.022 250);
-  --border-3:    oklch(38% 0.028 250);
+  /* Night City palette — deep neutral grey, chrome yellow + holo cyan.
+     Every colour value lives here; tints are derived with color-mix, never hand-written. */
 
-  --text-1:      oklch(96% 0.006 80);   /* near-white */
-  --text-2:      oklch(96% 0.006 80);
+  /* Surfaces: three steps ~5 ΔE apart (smaller steps vanish on near-black displays) */
+  --bg-0:        oklch(7% 0.006 250);   /* page, recessed wells, inputs */
+  --bg-1:        oklch(12% 0.010 250);  /* panels, sidebar, topbar */
+  --bg-2:        oklch(17% 0.014 250);  /* hover, chips, raised */
+  --border-1:    oklch(23% 0.018 250);  /* hairline */
+  --border-2:    oklch(28% 0.022 250);  /* control border */
+  --border-3:    oklch(38% 0.028 250);  /* control hover */
+
+  --text-1:      oklch(96% 0.006 80);         /* near-white */
   --text-3:      oklch(96% 0.006 80 / 0.72);  /* muted — readable, recedes */
-  --text-4:      oklch(96% 0.006 80 / 0.42);  /* chrome labels — section headers, col labels */
+  --text-4:      oklch(96% 0.006 80 / 0.52);  /* chrome labels — passes 4.5:1 on every surface */
 
-  --accent:      oklch(87% 0.185 95);   /* CP2077 chrome yellow */
+  --accent:      oklch(87% 0.185 95);   /* chrome yellow */
   --accent-hi:   oklch(91% 0.168 95);
   --accent-lo:   oklch(28% 0.055 80);
-  --accent-glow: oklch(87% 0.185 95 / 0.22);
+  --accent-tint: color-mix(in oklch, var(--accent) 10%, transparent);  /* fills, selected */
+  --accent-glow: color-mix(in oklch, var(--accent) 25%, transparent);  /* rings, glow */
 
-  /* Status tones. Each has a solid (text, dots), a `-bg` fill and a `-border` outline; reach for these
-     three instead of an rgba() literal (src/styleTokens.test.ts fails on a new literal or an undefined var). */
-  --ok:          oklch(71% 0.155 155);  /* scan teal-green */
-  --ok-bg:       oklch(71% 0.155 155 / 0.12);
-  --ok-border:   oklch(71% 0.155 155 / 0.30);
-  --warn:        oklch(87% 0.185 95);   /* chrome yellow */
-  --warn-bg:     oklch(87% 0.185 95 / 0.12);
-  --warn-border: oklch(87% 0.185 95 / 0.30);
-  --warn-border-strong: oklch(87% 0.185 95 / 0.60);
-  --err:         oklch(62% 0.225 20);   /* night city red-orange */
-  --err-bg:      oklch(62% 0.225 20 / 0.12);
-  --err-border:  oklch(62% 0.225 20 / 0.35);
-  --err-border-strong: oklch(62% 0.225 20 / 0.60);
+  /* Status — five tones. Tint any of them with color-mix(in oklch, var(--tone) N%, transparent). */
+  --ok:          oklch(71% 0.155 155);  /* teal-green */
+  --warn:        oklch(87% 0.185 95);   /* chrome yellow; separate from --accent on purpose */
+  --err:         oklch(62% 0.225 20);   /* red-orange */
   --idle:        oklch(48% 0.022 250);  /* cool metal grey */
-  --idle-bg:     oklch(48% 0.022 250 / 0.12);
-  --link:        #00f0ff;              /* Night City electric cyan — cyberpunk.net footer */
-  --info:        #00f0ff;             /* unified with --link */
-  --info-bg:     oklch(88% 0.20 196 / 0.12);
-  --info-border: oklch(88% 0.20 196 / 0.30);
-  --thumb-fallback: linear-gradient(135deg, #1e3a6e, #3b82f6);   /* a file with no rendered thumbnail */
+  --info:        oklch(88% 0.15 196);   /* electric cyan — links, printing */
   --scrim:       oklch(0% 0 0 / 0.6);   /* modal backdrop, and the dark plate behind text laid over a camera feed */
 
   /* Type */
@@ -65,11 +52,9 @@
   /* Radii / shadow */
   --r-1: 0px;
   --r-2: 2px;
-  --r-3: 2px;
-  --r-4: 2px;
-  --r-5: 4px;
-  --shadow-1: 0 1px 0 oklch(87% 0.185 95 / 0.05) inset, 0 1px 2px oklch(0% 0 0 / 0.6);
-  --shadow-2: 0 20px 40px -20px oklch(0% 0 0 / 0.8), 0 1px 0 oklch(87% 0.185 95 / 0.07) inset;
+  --r-3: 4px;
+  --shadow-1: 0 1px 0 color-mix(in oklch, var(--accent) 5%, transparent) inset, 0 1px 2px oklch(0% 0 0 / 0.6);
+  --shadow-2: 0 20px 40px -20px oklch(0% 0 0 / 0.8), 0 1px 0 var(--accent-tint) inset;
 
   /* Sidebar */
   --sb-collapsed: 64px;
@@ -99,13 +84,6 @@
   --gap-stack: 18px;
 }
 
-/* Accent variants — Night City color roles */
-[data-accent="azure"]   { --accent: oklch(76% 0.155 195); --accent-hi: oklch(83% 0.140 195); --accent-lo: oklch(20% 0.060 210); --accent-glow: oklch(76% 0.155 195 / 0.20); }
-[data-accent="cyan"]    { --accent: oklch(80% 0.165 192); --accent-hi: oklch(86% 0.150 192); --accent-lo: oklch(20% 0.055 210); --accent-glow: oklch(80% 0.165 192 / 0.20); }
-[data-accent="indigo"]  { --accent: oklch(62% 0.215 20);  --accent-hi: oklch(70% 0.200 18);  --accent-lo: oklch(25% 0.075 15);  --accent-glow: oklch(62% 0.215 20 / 0.22); }
-[data-accent="amber"]   { --accent: oklch(87% 0.185 95);  --accent-hi: oklch(91% 0.168 95);  --accent-lo: oklch(28% 0.055 80);  --accent-glow: oklch(87% 0.185 95 / 0.22); }
-[data-accent="mint"]    { --accent: oklch(72% 0.155 155); --accent-hi: oklch(78% 0.145 155); --accent-lo: oklch(22% 0.055 155); --accent-glow: oklch(72% 0.155 155 / 0.20); }
-
 /* ---------- reset / base ---------- */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
@@ -123,7 +101,7 @@ body {
 button { font-family: inherit; color: inherit; }
 input, textarea, select { font-family: inherit; color: inherit; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; border: 2px solid var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; border: 2px solid var(--bg-0); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 .mono { font-family: var(--font-mono); font-feature-settings: 'zero'; }
@@ -136,8 +114,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 100vh;
   width: 100vw;
   background:
-    radial-gradient(1200px 600px at 18% -10%, oklch(87% 0.185 95 / 0.05), transparent 60%),
-    radial-gradient(900px 500px at 110% 110%, oklch(76% 0.155 195 / 0.03), transparent 60%),
+    radial-gradient(1200px 600px at 18% -10%, color-mix(in oklch, var(--accent) 5%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, color-mix(in oklch, var(--info) 3%, transparent), transparent 60%),
     var(--bg-0);
 }
 .app[data-nav="collapsed"] { --sb-w: var(--sb-collapsed); }
@@ -214,7 +192,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   gap: 12px;
   padding: 8px 10px;
   border-radius: 0;
-  color: var(--link);
+  color: var(--info);
   cursor: pointer;
   font-size: 13.5px;
   font-weight: 450;
@@ -226,18 +204,18 @@ input, textarea, select { font-family: inherit; color: inherit; }
   text-align: left;
   transition: background 120ms ease, color 120ms ease;
 }
-.nav-item:hover { background: var(--bg-3); color: #fff; }
+.nav-item:hover { background: var(--bg-2); color: var(--text-1); }
 .nav-item.active {
-  background: oklch(87% 0.185 95 / 0.10);
+  background: var(--accent-tint);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px oklch(87% 0.185 95 / 0.25);
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
 }
 .nav-item .ico { width: 18px; height: 18px; flex-shrink: 0; color: currentColor; }
 .nav-item .count {
   margin-left: auto;
   font-size: 11px;
-  background: var(--bg-3);
-  color: var(--text-2);
+  background: var(--bg-2);
+  color: var(--text-1);
   padding: 1px 7px;
   border-radius: 0;
   border: 1px solid var(--border-1);
@@ -279,10 +257,10 @@ input, textarea, select { font-family: inherit; color: inherit; }
   border-radius: 2px;
   cursor: pointer;
 }
-.user-chip:hover { background: var(--bg-3); }
+.user-chip:hover { background: var(--bg-2); }
 .avatar {
   width: 28px; height: 28px; border-radius: 50%;
-  background: linear-gradient(135deg, oklch(28% 0.022 250), oklch(14% 0.012 250));
+  background: linear-gradient(135deg, var(--border-2), var(--bg-1));
   flex-shrink: 0;
   font-size: 11px; font-weight: 600;
   color: var(--text-1);
@@ -301,7 +279,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 56px;
   padding: 0 24px;
   border-bottom: 1px solid var(--border-1);
-  background: oklch(9% 0.008 250 / 0.80);
+  background: color-mix(in oklch, var(--bg-1) 80%, transparent);
   backdrop-filter: blur(12px);
 }
 .topbar h1 {
@@ -320,7 +298,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .topbar a.crumb:hover { color: var(--text-1); text-decoration: underline; }
 .topbar .spacer { flex: 1; }
 .topbar .search {
-  background: var(--bg-2);
+  background: var(--bg-0);
   border: 1px solid var(--border-1);
   border-radius: 0;
   padding: 6px 12px;
@@ -334,7 +312,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-3);
-  background: var(--bg-3);
+  background: var(--bg-2);
   border: 1px solid var(--border-1);
   border-bottom-width: 2px;
   border-radius: 0;
@@ -344,7 +322,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 /* ---------- buttons ---------- */
 .btn {
   border: 1px solid var(--border-2);
-  background: var(--bg-2);
+  background: var(--bg-1);
   color: var(--text-1);
   border-radius: 0;
   padding: 7px 14px;
@@ -357,45 +335,47 @@ input, textarea, select { font-family: inherit; color: inherit; }
   white-space: nowrap;
   transition: background 100ms ease, border-color 100ms ease, transform 60ms ease;
 }
-.btn:hover { background: var(--bg-3); border-color: var(--border-3); }
+.btn:hover { background: var(--bg-2); border-color: var(--border-3); }
 .btn:active { transform: translateY(1px); }
 .btn .ico { width: 14px; height: 14px; }
 .btn.primary {
   background: linear-gradient(180deg, var(--accent-hi), var(--accent));
   border-color: var(--accent);
-  color: oklch(9% 0.010 55);
+  color: var(--bg-0);
   font-weight: 600;
   box-shadow: 0 6px 16px -6px var(--accent), inset 0 1px 0 rgba(255,255,255,0.3);
 }
 .btn.primary:hover { filter: brightness(1.07); }
 .btn.ghost { background: transparent; border-color: transparent; }
-.btn.ghost:hover { background: var(--bg-3); }
+.btn.ghost:hover { background: var(--bg-2); }
 .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: 0; }
 .btn.icon { padding: 7px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn:disabled:hover { background: var(--bg-2); border-color: var(--border-2); filter: none; }
+.btn:disabled:hover { background: var(--bg-1); border-color: var(--border-2); filter: none; }
 .btn.primary:disabled:hover { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); border-color: var(--accent); }
 .btn.ghost:disabled:hover { background: transparent; border-color: transparent; }
 .btn:disabled:active { transform: none; }
 
 /* ---------- notice ---------- */
-/* Inline message box: an error after a failed save, a warning above a form. `.notice` + a tone (`ok`/`warn`/`err`/`info`). */
+/* Inline message box: an error after a failed save, a warning above a form. `.notice` + a tone, tinted like `.pill`. */
 .notice {
   padding: 10px 14px;
   border: 1px solid var(--border-2);
-  border-radius: var(--r-3);
-  background: var(--bg-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
   color: var(--text-1);
   font-size: 13px;
 }
-.notice.ok   { background: var(--ok-bg);   border-color: var(--ok-border);   color: var(--ok); }
-.notice.warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
-.notice.err  { background: var(--err-bg);  border-color: var(--err-border);  color: var(--err); }
-.notice.info { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
+.notice.ok, .notice.warn, .notice.err, .notice.info {
+  background: color-mix(in oklch, var(--tone) 12%, transparent);
+  border-color: color-mix(in oklch, var(--tone) 30%, transparent);
+  color: var(--tone);
+}
+.notice.ok { --tone: var(--ok); } .notice.warn { --tone: var(--warn); } .notice.err { --tone: var(--err); } .notice.info { --tone: var(--info); }
 
 /* ---------- card ---------- */
 .card {
-  background: var(--bg-2);
+  background: var(--bg-1);
   border: 1px solid var(--border-1);
   border-radius: 0;
   padding: var(--card-pad);
@@ -413,8 +393,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-weight: 500;
   padding: 3px 9px 3px 8px;
   border-radius: 0;
-  background: var(--bg-3);
-  color: var(--text-2);
+  background: var(--bg-2);
+  color: var(--text-1);
   border: 1px solid var(--border-1);
   white-space: nowrap;
 }
@@ -423,24 +403,26 @@ input, textarea, select { font-family: inherit; color: inherit; }
   background: var(--text-3);
   box-shadow: 0 0 0 2px rgba(255,255,255,0.04);
 }
-.pill.ok    { background: var(--ok-bg);   color: var(--ok);   border-color: var(--ok-border); }
-.pill.ok    .dot { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
-.pill.warn  { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
-.pill.warn  .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.pill.err   { background: var(--err-bg);  color: var(--err);  border-color: var(--err-border); }
-.pill.err   .dot { background: var(--err);  box-shadow: 0 0 6px var(--err); }
-.pill.info  { background: var(--info-bg); color: var(--info); border-color: var(--info-border); }
-.pill.info  .dot { background: var(--info); box-shadow: 0 0 6px var(--info); }
-.pill.idle  { background: var(--idle-bg); color: var(--text-2); }
-.pill.idle  .dot { background: var(--idle); }
-.pill.accent { background: var(--accent-glow); color: var(--accent-hi); border-color: var(--accent-glow); }
-.pill.accent .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+/* Tone pills: one tint recipe, five tones. */
+.pill.ok, .pill.warn, .pill.err, .pill.info, .pill.idle, .pill.accent {
+  background: color-mix(in oklch, var(--tone) 12%, transparent);
+  border-color: color-mix(in oklch, var(--tone) 30%, transparent);
+  color: var(--tone);
+}
+.pill.ok     { --tone: var(--ok); }
+.pill.warn   { --tone: var(--warn); }
+.pill.err    { --tone: var(--err); }
+.pill.info   { --tone: var(--info); }
+.pill.idle   { --tone: var(--idle); color: var(--text-1); border-color: var(--border-1); }
+.pill.accent { --tone: var(--accent); color: var(--accent-hi); }  /* non-status chips only (e.g. API scopes) */
+.pill:is(.ok, .warn, .err, .info, .accent) .dot { background: var(--tone); box-shadow: 0 0 6px var(--tone); }
+.pill.idle .dot { background: var(--idle); }
 
 /* ---------- progress ---------- */
 .progress {
   position: relative;
   height: 6px;
-  background: var(--bg-3);
+  background: var(--bg-2);
   border-radius: 0;
   overflow: hidden;
   border: 1px solid var(--border-1);
@@ -454,13 +436,13 @@ input, textarea, select { font-family: inherit; color: inherit; }
   box-shadow: 0 0 12px var(--accent-glow);
   transition: width 400ms ease;
 }
-.progress.warn .bar { background: linear-gradient(90deg, #7c2d12, var(--warn), #fcd34d); }
-.progress.err  .bar { background: linear-gradient(90deg, #7f1d1d, var(--err), #fca5a5); }
+.progress.warn .bar { background: linear-gradient(90deg, color-mix(in oklch, var(--warn) 35%, black), var(--warn), color-mix(in oklch, var(--warn) 60%, white)); }
+.progress.err  .bar { background: linear-gradient(90deg, color-mix(in oklch, var(--err) 35%, black), var(--err), color-mix(in oklch, var(--err) 60%, white)); }
 .progress.lg { height: 8px; }
 
 /* ---------- input ---------- */
 .input, .textarea, .select {
-  background: var(--bg-1);
+  background: var(--bg-0);
   border: 1px solid var(--border-1);
   color: var(--text-1);
   border-radius: 0;
@@ -501,7 +483,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-1);
   position: sticky; top: 0;
-  background: var(--bg-2);
+  background: var(--bg-1);
   z-index: 1;
 }
 .tbl td {
@@ -510,8 +492,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   vertical-align: middle;
 }
 .tbl tr { transition: background 80ms ease; }
-.tbl tbody tr:hover { background: var(--bg-3); cursor: pointer; }
-.tbl tbody tr.selected { background: oklch(87% 0.185 95 / 0.07); box-shadow: inset 0 0 0 1px oklch(87% 0.185 95 / 0.25); }
+.tbl tbody tr:hover { background: var(--bg-2); cursor: pointer; }
+.tbl tbody tr.selected { background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent-glow); }
 
 /* ---------- video thumb ---------- */
 .video {
@@ -520,7 +502,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   aspect-ratio: 16/9;
   background:
     radial-gradient(circle at 50% 50%, oklch(18% 0.020 55) 0%, oklch(10% 0.012 55) 70%),
-    var(--bg-1);
+    var(--bg-0);
   border-radius: 0;
   overflow: hidden;
   border: 1px solid var(--border-1);
@@ -552,7 +534,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   bottom: 8px; right: 8px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--text-2);
+  color: var(--text-1);
   background: rgba(0,0,0,0.5);
   padding: 3px 7px;
   border-radius: 0;
@@ -564,7 +546,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   position: absolute; inset: 0;
   background:
     linear-gradient(180deg, transparent 60%, rgba(0,0,0,0.6) 100%),
-    radial-gradient(ellipse at 50% 78%, oklch(87% 0.185 95 / 0.30) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 78%, var(--accent-glow) 0%, transparent 50%),
     radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 50%);
 }
 .feed-scene::before {
@@ -634,7 +616,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   100% { background-position: 200% 0; }
 }
 .shimmer-bar {
-  background: linear-gradient(90deg, transparent 0%, oklch(87% 0.185 95 / 0.50) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, color-mix(in oklch, var(--accent) 50%, transparent) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2.4s linear infinite;
 }
@@ -653,12 +635,12 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-family: var(--font-mono);
   padding: 2px 6px;
   border-radius: 0;
-  background: var(--bg-3);
-  color: var(--text-2);
+  background: var(--bg-2);
+  color: var(--text-1);
   border: 1px solid var(--border-1);
   white-space: nowrap;
 }
-.elig.on { background: var(--accent-glow); color: var(--accent-hi); border-color: oklch(87% 0.185 95 / 0.25); }
+.elig.on { background: var(--accent-glow); color: var(--accent-hi); border-color: var(--accent-glow); }
 .elig.off { color: var(--text-4); }
 
 /* ---------- content surface ---------- */
@@ -739,13 +721,13 @@ input, textarea, select { font-family: inherit; color: inherit; }
   border-radius: 6px;
   border: 1px solid var(--border-1);
   background: var(--bg-1);
-  color: var(--text-2);
+  color: var(--text-1);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
 }
 .settings-tab.active {
-  background: var(--bg-3);
+  background: var(--bg-2);
   color: var(--text-1);
   border-color: var(--border-2);
 }
@@ -797,9 +779,9 @@ input, textarea, select { font-family: inherit; color: inherit; }
   position: fixed;
   right: 8px; bottom: 64px;
   min-width: 180px;
-  background: var(--bg-2);
+  background: var(--bg-1);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-3);
+  border-radius: var(--r-2);
   box-shadow: var(--shadow-2);
   padding: 4px;
   z-index: 101;
@@ -809,9 +791,9 @@ input, textarea, select { font-family: inherit; color: inherit; }
   display: flex; align-items: center; gap: 12px;
   min-height: 44px; padding: 0 14px;
   background: none; border: none; border-radius: var(--r-2);
-  color: var(--text-2); font-size: 14px; text-align: left; cursor: pointer;
+  color: var(--text-1); font-size: 14px; text-align: left; cursor: pointer;
 }
-.more-sheet-item.active { color: var(--accent); background: var(--bg-3); }
+.more-sheet-item.active { color: var(--accent); background: var(--bg-2); }
 
 /* ---------- touch / small-screen ergonomics (phones and tablets) ---------- */
 @media (max-width: 1024px) {

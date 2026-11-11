@@ -53,7 +53,7 @@ export function CostsCard({ projectId, costs, onChanged }: { projectId: number; 
   return (
     <div className="card" style={{ padding: 20 }} data-testid="costs-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Expenses</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Expenses</div>
         <div className="small muted">At current rates (Settings → Costs) — changing a rate re-prices past jobs.</div>
       </div>
 

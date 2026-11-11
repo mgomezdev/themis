@@ -203,7 +203,7 @@ export function QueueScreen() {
         {actionError && (
           <div role="alert" style={{
             padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-            background: 'var(--err-bg)', border: '1px solid var(--err-border)',
+            background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
             color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
           }}>
             <span className="grow">{actionError}</span>
@@ -219,8 +219,8 @@ export function QueueScreen() {
             padding: '10px 14px',
             marginBottom: 14,
             borderRadius: 6,
-            background: 'var(--warn-bg)',
-            border: '1px solid var(--warn-border)',
+            background: 'color-mix(in oklch, var(--warn) 10%, transparent)',
+            border: '1px solid color-mix(in oklch, var(--warn) 35%, transparent)',
             display: 'flex',
             alignItems: 'center',
             gap: 8,

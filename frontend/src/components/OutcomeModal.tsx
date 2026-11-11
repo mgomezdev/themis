@@ -101,7 +101,7 @@ export function OutcomeModal({ job, onClose, onSaved }: Props) {
                   return (
                     <tr key={it.id} style={{ borderBottom: '1px solid var(--border-1)' }}>
                       <td style={{ padding: '6px 8px', color: 'var(--text-1)' }}>{it.file_name}</td>
-                      <td style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-2)' }}>{onPlate}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'center', color: 'var(--text-1)' }}>{onPlate}</td>
                       <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                         <input
                           type="number"

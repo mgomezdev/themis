@@ -87,7 +87,7 @@ export function JobDetailPanel({
       {/* Thumbnail header */}
       <div style={{
         width: '100%', height: 180, position: 'relative',
-        background: 'linear-gradient(135deg, var(--bg-2), var(--bg-3))',
+        background: 'linear-gradient(135deg, var(--bg-1), var(--bg-2))',
         display: 'grid', placeItems: 'center',
         overflow: 'hidden',
       }}>
@@ -110,7 +110,7 @@ export function JobDetailPanel({
           <div style={{
             position: 'absolute', bottom: 8, left: 8,
             padding: '3px 8px', borderRadius: 0,
-            background: 'var(--err)', color: 'white',
+            background: 'color-mix(in oklch, var(--err) 85%, transparent)', color: 'white',
             fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
           }}>
             FAILED
@@ -134,7 +134,7 @@ export function JobDetailPanel({
               <span className="tiny muted">
                 {job.layer && (
                   <>layer{' '}
-                  <span className="num" style={{ color: 'var(--text-2)' }}>
+                  <span className="num" style={{ color: 'var(--text-1)' }}>
                     {job.layer.now}/{job.layer.total}
                   </span></>
                 )}
@@ -179,11 +179,11 @@ export function JobDetailPanel({
         {job.lowStockWarning && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'var(--warn-bg)', border: '1px solid var(--warn-border)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>
                 Low filament
               </div>
-              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.lowStockWarning.message}</div>
+              <div className="small" style={{ color: 'var(--text-1)', lineHeight: 1.5 }}>{job.lowStockWarning.message}</div>
             </div>
           </>
         )}
@@ -195,7 +195,7 @@ export function JobDetailPanel({
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {job.eligiblePrinters.map(p => (
                 <div key={p.id} className="row between" style={{
-                  padding: '6px 10px', background: 'var(--bg-1)',
+                  padding: '6px 10px', background: 'var(--bg-0)',
                   borderRadius: 0, border: '1px solid var(--border-1)',
                 }}>
                   <div className="small">{p.name}</div>
@@ -209,11 +209,11 @@ export function JobDetailPanel({
         {(isBlocked || isFailed) && job.blockReason && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'var(--err-bg)' : 'var(--warn-bg)', border: isFailed ? '1px solid var(--err-border)' : '1px solid var(--warn-border)' }}>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'color-mix(in oklch, var(--err) 8%, transparent)' : 'color-mix(in oklch, var(--warn) 10%, transparent)', border: isFailed ? '1px solid color-mix(in oklch, var(--err) 25%, transparent)' : '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
               <div className="tiny" style={{ fontWeight: 600, color: isFailed ? 'var(--err)' : 'var(--warn)', marginBottom: 4 }}>
                 {isFailed ? 'Failure Reason' : 'Blocked'}
               </div>
-              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.blockReason}</div>
+              <div className="small" style={{ color: 'var(--text-1)', lineHeight: 1.5 }}>{job.blockReason}</div>
             </div>
           </>
         )}
@@ -225,12 +225,12 @@ export function JobDetailPanel({
             <div className="tag-key" style={{ marginBottom: 8 }}>Slice errors</div>
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {sliceFailures.map((f, i) => (
-                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'var(--err-bg)', border: '1px solid var(--err-border)' }}>
+                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)' }}>
                   <div className="tiny" style={{ fontWeight: 600, color: 'var(--err)', marginBottom: 4 }}>
                     Printer {f.printer_id} · {f.print_profile}
                   </div>
                   {f.slice_error && (
-                    <div className="mono tiny" style={{ color: 'var(--text-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
+                    <div className="mono tiny" style={{ color: 'var(--text-1)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
                       {f.slice_error}
                     </div>
                   )}
@@ -280,8 +280,8 @@ export function JobDetailPanel({
                 {verifyRunning && (
                   <div style={{
                     padding: '8px 12px', borderRadius: 0,
-                    background: 'var(--warn-bg)',
-                    border: '1px solid var(--warn-border)',
+                    background: 'color-mix(in oklch, var(--warn) 8%, transparent)',
+                    border: '1px solid color-mix(in oklch, var(--warn) 25%, transparent)',
                     animation: 'pulse-soft 1.5s ease-in-out infinite',
                   }}>
                     <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 500 }}>
@@ -292,8 +292,8 @@ export function JobDetailPanel({
                 {verifyResult && (
                   <div style={{
                     padding: '10px 12px', borderRadius: 0,
-                    background: verifyResult.ok ? 'var(--ok-bg)' : 'var(--err-bg)',
-                    border: `1px solid ${verifyResult.ok ? 'var(--ok-border)' : 'var(--err-border)'}`,
+                    background: verifyResult.ok ? 'color-mix(in oklch, var(--ok) 8%, transparent)' : 'color-mix(in oklch, var(--err) 8%, transparent)',
+                    border: `1px solid ${verifyResult.ok ? 'color-mix(in oklch, var(--ok) 30%, transparent)' : 'color-mix(in oklch, var(--err) 25%, transparent)'}`,
                   }}>
                     <div className="tiny" style={{
                       fontWeight: 600,
@@ -304,7 +304,7 @@ export function JobDetailPanel({
                     </div>
                     {verifyResult.error && (
                       <div className="mono tiny" style={{
-                        color: 'var(--text-2)', whiteSpace: 'pre-wrap',
+                        color: 'var(--text-1)', whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto',
                       }}>
                         {verifyResult.error}

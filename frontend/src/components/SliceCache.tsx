@@ -31,7 +31,7 @@ export function SliceCacheMarkers({ job }: { job: MarkerJob }) {
     chips.push({ key: 'save-failed', label: 'Gcode save failed', tone: 'var(--err)', title: save.error ?? undefined });
   } else if (job.save_slice && job.sliced_version_id == null && !TERMINAL.has(job.status)) {
     // only while a fresh slice can still come: a job printing cached gcode, or one that ended unsliced, never saves
-    chips.push({ key: 'saving', label: 'Saving gcode', tone: 'var(--text-2)' });
+    chips.push({ key: 'saving', label: 'Saving gcode', tone: 'var(--text-1)' });
   }
   if (info?.stale) {
     for (const label of staleLabels(info.stale_reasons)) chips.push({ key: label, label, tone: 'var(--warn)' });

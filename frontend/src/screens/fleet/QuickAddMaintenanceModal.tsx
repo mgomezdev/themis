@@ -68,7 +68,7 @@ export function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSave
       }}>
         <div className="row between" style={{
           padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
-          alignItems: 'center', background: 'var(--bg-3)',
+          alignItems: 'center', background: 'var(--bg-2)',
         }}>
           <div className="col">
             <div className="tag-key">Add maintenance item</div>
@@ -78,7 +78,7 @@ export function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSave
         </div>
         <div style={{ padding: 20 }}>
           {error && (
-            <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+            <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
               {error}
             </div>
           )}

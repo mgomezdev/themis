@@ -107,7 +107,7 @@ export function FleetBackupPage() {
           <div style={{
             marginTop: 20,
             padding: '16px 20px',
-            background: 'var(--bg-1)',
+            background: 'var(--bg-0)',
             border: `1px solid ${importReport.skipped > 0 || importReport.warnings.length > 0 ? 'var(--warn)' : 'var(--ok)'}`,
             borderRadius: 10,
           }}>
@@ -128,7 +128,7 @@ export function FleetBackupPage() {
                   Profile warnings ({importReport.warnings.length})
                 </div>
                 {importReport.warnings.map((w, i) => (
-                  <div key={i} className="tiny muted" style={{ padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 6, lineHeight: 1.5 }}>
+                  <div key={i} className="tiny muted" style={{ padding: '4px 8px', background: 'var(--bg-1)', borderRadius: 6, lineHeight: 1.5 }}>
                     {w}
                   </div>
                 ))}

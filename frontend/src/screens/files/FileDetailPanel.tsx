@@ -16,7 +16,7 @@ export function FileThumb({ file, large }: { file: LibraryFile; large?: boolean 
     <div style={{
       width: '100%', aspectRatio: '1/1',
       background: file.thumbnail_url
-        ? 'var(--bg-1)'
+        ? 'var(--bg-0)'
         : `linear-gradient(135deg, ${color}, ${shade(color, -25)})`,
       borderRadius: 0,
       border: '1px solid var(--border-2)',
@@ -75,7 +75,7 @@ export function FileDetailPanel({
   return (
     <div style={{
       position: 'fixed', top: 0, right: 0, bottom: 0, width: 360, maxWidth: '90vw',
-      background: 'var(--bg-2)', borderLeft: '1px solid var(--border-1)',
+      background: 'var(--bg-1)', borderLeft: '1px solid var(--border-1)',
       boxShadow: '-12px 0 40px rgba(0,0,0,0.4)', zIndex: 50,
       display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: 16,
     }}>
@@ -88,7 +88,7 @@ export function FileDetailPanel({
         <div style={{ marginBottom: 14 }}>
           {/* Large view of the selected plate */}
           <div style={{
-            width: '100%', aspectRatio: '1/1', background: 'var(--bg-1)',
+            width: '100%', aspectRatio: '1/1', background: 'var(--bg-0)',
             border: '1px solid var(--border-2)', marginBottom: 8, position: 'relative',
           }}>
             {activeThumb && (
@@ -115,7 +115,7 @@ export function FileDetailPanel({
                   flexShrink: 0, width: 64, padding: 0, border: 'none', cursor: 'pointer',
                   outline: t.plate_number === activePlate
                     ? '2px solid var(--accent)' : '1px solid var(--border-2)',
-                  background: 'var(--bg-1)',
+                  background: 'var(--bg-0)',
                 }}
               >
                 <img src={t.thumbnail_url} alt={`Plate ${t.plate_number}`}
@@ -147,7 +147,7 @@ export function FileDetailPanel({
       )}
 
       {file.sliced_version && (
-        <div className="tiny" data-testid="sliced-from" style={{ marginTop: 6, color: 'var(--text-2)' }}>
+        <div className="tiny" data-testid="sliced-from" style={{ marginTop: 6, color: 'var(--text-1)' }}>
           Sliced {file.sliced_version.source_filename ? <>from <b>{file.sliced_version.source_filename}</b></> : '(model removed)'}
           {' · '}{versionSummary(file.sliced_version)}
         </div>
@@ -173,7 +173,7 @@ export function FileDetailPanel({
                     title="Remove tag"
                     style={{
                       padding: '3px 9px', borderRadius: 0, border: '1px solid var(--border-1)',
-                      background: 'var(--bg-3)', color: 'var(--text-2)',
+                      background: 'var(--bg-2)', color: 'var(--text-1)',
                       fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
                       alignItems: 'center', display: 'inline-flex',
                     }}>
@@ -233,7 +233,7 @@ function SlicedVersionsList({ fileId }: { fileId: number }) {
       {versions.length === 0 && <span className="tiny muted">None on disk</span>}
       <div className="col gap-2">
         {versions.map(v => (
-          <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-1)' }}>
+          <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-0)' }}>
             <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{v.name}</div>
             <div className="muted">Plate {v.plate_number} · {v.process_preset} · {versionSummary(v)}</div>
           </div>

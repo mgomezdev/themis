@@ -3,7 +3,7 @@ import type { TempSample } from '../lib/tempHistory';
 const SERIES: Array<{ key: 'nozzle' | 'bed' | 'chamber'; label: string; color: string }> = [
   { key: 'nozzle', label: 'Nozzle', color: 'var(--err)' },
   { key: 'bed', label: 'Bed', color: 'var(--warn)' },
-  { key: 'chamber', label: 'Chamber', color: 'var(--accent-hi)' },
+  { key: 'chamber', label: 'Chamber', color: 'var(--info)' },
 ];
 
 const W = 600, H = 160, PAD = 28;

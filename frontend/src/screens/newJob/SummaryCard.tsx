@@ -64,7 +64,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
                   boxShadow: complete ? '0 0 4px var(--ok)' : 'none',
                 }} />
                 <span className="tiny" style={{
-                  color: isActive ? 'var(--text-1)' : 'var(--text-2)',
+                  color: isActive ? 'var(--text-1)' : 'var(--text-1)',
                   fontWeight: isActive ? 500 : 400,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   flex: 1, minWidth: 0,
@@ -86,7 +86,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
           <div className="tag-key">Fulfills</div>
           <div className="row gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
             {Array.from(allProjects).map(id => (
-              <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-2)' }}>#{id}</span>
+              <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-1)' }}>#{id}</span>
             ))}
           </div>
         </>
@@ -100,7 +100,7 @@ export function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, acti
       </div>
       <div className="row between" style={{ marginTop: 6 }}>
         <span className="tag-key">Slicing</span>
-        <span className="small" style={{ color: 'var(--text-2)' }}>On claim</span>
+        <span className="small" style={{ color: 'var(--text-1)' }}>On claim</span>
       </div>
     </div>
   );

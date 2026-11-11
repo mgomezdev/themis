@@ -64,8 +64,8 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
 }
 
 const CHIP = {
-  ok: { background: 'var(--ok-bg)', border: '1px solid var(--ok-border)', color: 'var(--ok)' },
-  warn: { background: 'var(--warn-bg)', border: '1px solid var(--warn-border)', color: 'var(--warn)' },
+  ok: { background: 'color-mix(in oklch, var(--ok) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)', color: 'var(--ok)' },
+  warn: { background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', color: 'var(--warn)' },
 } as const;
 
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
@@ -134,7 +134,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   }
 
   return (
-    <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ padding: 14, background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
         <span className="elig on">{badge}</span>
         <div className="col grow min-0">
@@ -177,7 +177,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
                         background: f.color || UNKNOWN_DOT_COLOR, border: '1px solid var(--border-2)',
                       }} />
-                      <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
+                      <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-1)' }}>
                         Filament {f.index}{f.type ? ` · ${f.type}` : ''}
                       </span>
                       <select

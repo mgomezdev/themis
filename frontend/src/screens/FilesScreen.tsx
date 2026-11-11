@@ -397,7 +397,7 @@ export function FilesScreen() {
                        padding: 10, cursor: 'pointer', position: 'relative',
                        borderColor: selectedIds.has(f.id)
                          ? 'var(--accent)'
-                         : 'oklch(87% 0.185 95 / 0.22)',
+                         : 'var(--accent-glow)',
                        boxShadow: selectedIds.has(f.id)
                          ? 'inset 0 0 0 1px var(--accent)'
                          : 'none',
@@ -453,9 +453,9 @@ export function FilesScreen() {
                     {f.tags.slice(0, 3).map(t => (
                       <span key={t.id} className="elig" style={{
                         fontSize: 9.5, padding: '1px 5px',
-                        background: activeTags.includes(t.name) ? 'var(--accent-glow)' : 'var(--bg-1)',
+                        background: activeTags.includes(t.name) ? 'var(--accent-glow)' : 'var(--bg-0)',
                         color: activeTags.includes(t.name) ? 'var(--accent-hi)' : 'var(--text-3)',
-                        borderColor: activeTags.includes(t.name) ? 'oklch(87% 0.185 95 / 0.30)' : undefined,
+                        borderColor: activeTags.includes(t.name) ? 'var(--accent-glow)' : undefined,
                       }}>{t.name}</span>
                     ))}
                     {f.tags.length > 3 && (

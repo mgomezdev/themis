@@ -37,8 +37,8 @@ export function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'var(--err-border-strong)' : isBlocked ? 'var(--warn-border-strong)' : undefined,
-        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px var(--err-bg)' : isBlocked ? 'inset 0 0 0 1px var(--warn-bg)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'color-mix(in oklch, var(--err) 55%, transparent)' : isBlocked ? 'color-mix(in oklch, var(--warn) 60%, transparent)' : undefined,
+        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px color-mix(in oklch, var(--err) 15%, transparent)' : isBlocked ? 'inset 0 0 0 1px color-mix(in oklch, var(--warn) 12%, transparent)' : undefined,
       }}
     >
       <div className="row gap-4" style={{ padding: 14 }}>
@@ -46,7 +46,7 @@ export function JobCardRich({
         <div
           style={{
             width: 80, height: 80, flexShrink: 0,
-            background: `linear-gradient(135deg, var(--bg-2), var(--bg-3))`,
+            background: `linear-gradient(135deg, var(--bg-1), var(--bg-2))`,
             borderRadius: 0,
             border: '1px solid var(--border-2)',
             display: 'grid', placeItems: 'center',
@@ -154,8 +154,8 @@ export function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid var(--warn-border)',
-            background: 'var(--warn-bg)',
+            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -184,8 +184,8 @@ export function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid var(--err-border)',
-            background: 'var(--err-bg)',
+            borderTop: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--err) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -214,8 +214,8 @@ export function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid var(--warn-border)',
-            background: 'var(--warn-bg)',
+            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,

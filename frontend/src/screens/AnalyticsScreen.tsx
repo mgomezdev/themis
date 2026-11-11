@@ -42,7 +42,7 @@ function Kpi({ label, value, sub, testId }: { label: string; value: string; sub?
 }
 
 const th = { padding: '8px 12px', fontWeight: 500 } as const;
-const td = { padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' } as const;
+const td = { padding: '8px 12px', color: 'var(--text-1)', whiteSpace: 'nowrap' } as const;
 
 function kpiSub(t: AnalyticsStats): string {
   return `${t.completed} done · ${t.failed} failed · ${t.cancelled} cancelled`;
@@ -149,7 +149,7 @@ export function AnalyticsScreen() {
                   <div key={m.material} data-testid={`material-${m.material}`} className="row gap-3">
                     <span style={{ width: 80, color: 'var(--text-1)' }}>{m.material}</span>
                     <div className="grow"><Progress value={(m.grams / maxGrams) * 100} /></div>
-                    <span className="num" style={{ minWidth: 150, textAlign: 'right', color: 'var(--text-2)' }}>
+                    <span className="num" style={{ minWidth: 150, textAlign: 'right', color: 'var(--text-1)' }}>
                       {fmtGrams(m.grams)} · {m.jobs} {m.jobs === 1 ? 'job' : 'jobs'}
                     </span>
                   </div>

@@ -1,12 +1,12 @@
 // Fleet: pick the spool / filament loaded in a printer's slots.
 import { useState, useEffect } from 'react';
-import { NEW_SLOT_COLOR } from '../../data/helpers';
 import { Icons } from '../../components/icons';
 import { fetchPrinter, updatePrinter, type LoadedFilament } from '../../api/printers';
 import { useInventory, useSpools } from '../../api/inventory';
 import { getPrinterProfiles } from '../../api/queue';
 import { SlotSpoolPicker } from '../../components/SlotSpoolPicker';
 import { useSlotConflicts } from '../../components/useSlotConflicts';
+import { NEW_SLOT_COLOR } from '../../data/helpers';
 
 // Multi-slot filament editor. A printer can have N manually-defined slots
 // (e.g. the Snapmaker U1 has 4 tools); each maps to a tool index Tn and carries
@@ -68,7 +68,7 @@ export function FilamentPicker({ printerId, onClose, onSaved }: {
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-1)' }}>
       <div className="col gap-3">
         {slots.map((s, i) => (
-          <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-2)' }}>
+          <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-1)' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="tiny muted mono" style={{ width: 28, flexShrink: 0 }}>T{i}</span>
               <input

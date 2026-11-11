@@ -56,13 +56,13 @@ function JobsFilling({ jobs }: { jobs: OrderJobSummary[] }) {
             onClick={e => { e.stopPropagation(); navigate(`/jobs/${j.id}`); }}
             className="row between"
             style={{
-              padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 8,
+              padding: '10px 12px', background: 'var(--bg-1)', borderRadius: 8,
               border: '1px solid var(--border-1)', cursor: 'pointer',
               color: 'inherit', fontFamily: 'inherit', textAlign: 'left', width: '100%',
               transition: 'background 120ms',
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-2)')}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-1)')}
           >
             <div className="row gap-3" style={{ alignItems: 'center', minWidth: 0 }}>
               <span className="mono tiny muted">#{j.id}</span>
@@ -125,8 +125,8 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
             <span className="mono tiny muted">#{order.id}</span>
             <span className="tiny" style={{
               padding: '1px 6px', borderRadius: 4, marginTop: 3, alignSelf: 'flex-start',
-              background: order.order_type === 'internal' ? 'rgba(99,102,241,0.12)' : 'rgba(56,189,248,0.12)',
-              color: order.order_type === 'internal' ? '#a5b4fc' : 'var(--info)', fontWeight: 500,
+              background: order.order_type === 'internal' ? 'color-mix(in oklch, var(--idle) 12%, transparent)' : 'color-mix(in oklch, var(--info) 12%, transparent)',
+              color: order.order_type === 'internal' ? 'var(--text-1)' : 'var(--info)', fontWeight: 500,
             }}>{order.order_type === 'internal' ? 'INTERNAL' : 'CUSTOMER'}</span>
           </div>
           <div className="col" style={{ flex: '1 1 0', minWidth: 0 }}>
@@ -149,7 +149,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
           <div className="col" style={{ width: 140, flexShrink: 0 }}>
             <div className="row between">
               <span className="tag-key">JOBS</span>
-              <span className="num tiny" style={{ color: pct === 100 ? 'var(--ok)' : 'var(--text-2)' }}>{pct}%</span>
+              <span className="num tiny" style={{ color: pct === 100 ? 'var(--ok)' : 'var(--text-1)' }}>{pct}%</span>
             </div>
             <div style={{ marginTop: 6 }}><Progress value={pct} /></div>
           </div>
@@ -160,7 +160,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
       </button>
 
       {expanded && (
-        <div style={{ borderTop: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
+        <div style={{ borderTop: '1px solid var(--border-1)', background: 'var(--bg-0)' }}>
           <div className="row gap-4" style={{ padding: '12px 18px 0' }}>
             <div className="tiny muted">Paid: <strong style={{ color: 'var(--text-1)' }}>{order.amount_paid != null ? `$${order.amount_paid.toFixed(2)}` : '—'}</strong> ({order.payment_status})</div>
             <div className="tiny muted">Filament cost: <strong style={{ color: 'var(--text-1)' }}>{order.filament_cost_total != null ? `$${order.filament_cost_total.toFixed(2)}` : '—'}</strong></div>

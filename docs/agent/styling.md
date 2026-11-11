@@ -17,15 +17,15 @@ Everything references tokens — never hard-code a hex/px when a token exists.
 
 | Group | Tokens | Notes |
 |---|---|---|
-| Backgrounds | `--bg-0`…`--bg-4` | 0 = page (near-black) → 4 = hover/selected |
+| Backgrounds | `--bg-0`…`--bg-2` | 0 = page / recessed wells / inputs, 1 = panels / sidebar / topbar / modals, 2 = hover / chips / raised. Three steps ~5 ΔE apart — don't add an in-between step, it vanishes on near-black |
 | Borders | `--border-1`…`--border-3` | low→high contrast |
-| Text | `--text-1`…`--text-4` | 1 = primary → 4 = dim |
-| Accent | `--accent`, `--accent-hi`, `--accent-lo`, `--accent-glow` | chrome yellow default; **themeable** (see below) |
-| Status | `--ok`/`--warn`/`--err`/`--info` each with `*-bg` (fill) and `*-border` (outline); `--warn-border-strong`/`--err-border-strong`; `--idle` + `--idle-bg`; `--link` | drive `.pill`, `.progress`, `.notice`. A tinted box is `background: var(--err-bg); border: 1px solid var(--err-border)` — never an `rgba()` |
-| Overlay | `--scrim` (modal backdrop / plate behind text on a camera feed), `--thumb-fallback` (file with no thumbnail) | |
+| Text | `--text-1`, `--text-3`, `--text-4` | primary / muted / chrome labels (all ≥4.5:1). There is no `--text-2` |
+| Accent | `--accent`, `--accent-hi`, `--accent-lo`, `--accent-tint` (10%, fills/selected), `--accent-glow` (25%, rings/glow) | chrome yellow; tint/glow derive from `--accent` |
+| Status | `--ok`/`--warn`/`--err`/`--idle`/`--info` | drive `.pill`, `.progress`, `.notice`. No stored tints: fill with `color-mix(in oklch, var(--tone) N%, transparent)` (12% fill / 30% border is the pill recipe). `--info` is also the link colour |
+| Overlay | `--scrim` | modal backdrop, and the dark plate behind text laid over a camera feed |
 | Type | `--font-sans` (IBM Plex Sans), `--font-mono` (IBM Plex Mono) | base body 13.5px |
 | Spacing | `--pad-1`…`--pad-6`, `--row-h`, `--card-pad`, `--gap-stack` | **density-dependent** (see below) |
-| Radii | `--r-1`(0)…`--r-5`(4px) | square-cornered look; read the values in `:root` |
+| Radii | `--r-1` (0), `--r-2` (2px), `--r-3` (4px, max) | the system is square |
 | Shadow | `--shadow-1` (subtle), `--shadow-2` (elevated/modal) | |
 | Sidebar | `--sb-collapsed` (64px), `--sb-expanded` (232px), runtime `--sb-w` | |
 
@@ -33,8 +33,9 @@ Everything references tokens — never hard-code a hex/px when a token exists.
 - **Density** — `[data-density="dense"|"roomy"]` overrides the spacing tokens (`--pad-*`, `--row-h`,
   `--card-pad`, `--gap-stack`). Default (no attr) is the comfortable middle. `.content[data-density]`
   also adjusts page padding. So size with tokens and a component auto-responds to density.
-- **Accent** — `[data-accent="azure"|"cyan"|"indigo"|"amber"|"mint"]` swaps the `--accent*` set. Use
-  `var(--accent)` (not a literal amber) so accent theming works.
+- **Accent** — no runtime accent themes (the old `data-accent` variants collided with status hues and were
+  never wired up). Still use `var(--accent)`, never a literal yellow. A future theme must avoid hues
+  20/95/155/196 (err/warn/ok/info).
 - **Nav** — `.app[data-nav="collapsed"|"hidden"]` drives `--sb-w` (sidebar width) + hides labels.
 
 ## Component & utility class vocabulary (app.css)
@@ -67,7 +68,7 @@ Reach for these before inventing classes. Composable via space-separated `classN
 ## Status → visual mapping (the `StatusKey` ↔ pill-tone bridge)
 
 `StatusPill` (`ui.tsx`) maps a `StatusKey` to a `.pill` tone class + label via an internal `map`. Current
-keys (`data/types.ts`): `printing→info, queued/waiting/offline→idle, claiming/slicing→accent,
+keys (`data/types.ts`): `printing→info, queued/waiting/offline→idle, claiming/slicing/uploading→info,
 paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress→info`.
 - `StatusKey` (`data/types.ts`) is the **styled** status set. Job statuses (`backend.md`) can exceed it
   (`blocked`, `failed`, `cancelled`, `uploading`) → cast `as StatusKey`/`as never` at the call site; an
@@ -96,11 +97,11 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
 - **Colours that are data, not chrome** (material palette, group colours, the unknown-filament swatch `UNKNOWN_COLOR` /
   `NEW_SLOT_COLOR` in `data/helpers.ts`) live in the files listed in `PALETTE_FILES` in `styleTokens.test.ts`; import the
   constant, don't retype the hex.
-- **Add a token** → define in `:root` in `app.css`; if it should react to density/accent, add the
-  override under the matching `[data-density]`/`[data-accent]` block too.
+- **Add a token** → define in `:root` in `app.css`; if it should react to density, add the override under
+  the matching `[data-density]` block too. Don't add a colour within ~2 ΔE (OKLab) of an existing one, and
+  derive tints with `color-mix` rather than adding a token.
 - **Add a styled status** → extend `StatusKey` (`data/types.ts`) + the `StatusPill` `map` (`ui.tsx`);
-  pick an existing tone (`ok/warn/err/info/idle/accent`).
-- **New accent theme** → add a `[data-accent="x"]` block setting the four `--accent*` vars.
+  pick an existing tone (`ok/warn/err/info/idle`; `.pill.accent` is for non-status chips only).
 
 ## Gotchas
 

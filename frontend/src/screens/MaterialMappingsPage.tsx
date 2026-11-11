@@ -64,7 +64,7 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
   const orphanedPresets = Object.keys(saved).filter(p => !presetPrinterMap.has(p));
 
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div
         className="row gap-3"
         style={{ padding: '12px 16px', cursor: 'pointer', alignItems: 'center' }}
@@ -229,7 +229,7 @@ export function MaterialMappingsPage() {
   }
   if (error) {
     return (
-      <div style={{ padding: '12px 16px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+      <div style={{ padding: '12px 16px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
         {error}
       </div>
     );
@@ -267,7 +267,7 @@ export function MaterialMappingsPage() {
           {searchOpen && searchResults.length > 0 && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-              background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+              background: 'var(--bg-1)', border: '1px solid var(--border-2)',
               borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
               marginTop: 2,
             }}>
@@ -276,7 +276,7 @@ export function MaterialMappingsPage() {
                   key={f.ref}
                   onMouseDown={() => addFilament(f)}
                   style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border-1)' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
                   <span className="fw-500">{materialDisplayName(f)}</span>

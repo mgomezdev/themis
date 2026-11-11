@@ -126,7 +126,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
       }}>
         <div className="row between" style={{
           padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
-          alignItems: 'center', background: 'var(--bg-3)',
+          alignItems: 'center', background: 'var(--bg-2)',
         }}>
           <div className="row gap-3">
             <div style={{
@@ -260,7 +260,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
                 onClick={() => setNoSnapshotsWhileIdle(v => !v)}
                 style={{
                   width: 38, height: 22, borderRadius: 999,
-                  background: noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--bg-3)',
+                  background: noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--bg-2)',
                   border: `1px solid ${noSnapshotsWhileIdle ? 'var(--accent)' : 'var(--border-2)'}`,
                   position: 'relative', cursor: 'pointer', flexShrink: 0,
                   boxShadow: noSnapshotsWhileIdle ? '0 0 0 3px var(--accent-glow)' : 'none',
@@ -285,7 +285,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
 
         <div className="row between" style={{
           padding: '14px 20px', borderTop: '1px solid var(--border-1)',
-          background: 'var(--bg-3)', alignItems: 'center',
+          background: 'var(--bg-2)', alignItems: 'center',
         }}>
           {confirmDelete ? (
             <div className="row gap-2">

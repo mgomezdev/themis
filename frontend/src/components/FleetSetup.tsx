@@ -18,7 +18,7 @@ export function QueueStateBadges({ printer: p }: { printer: Printer }) {
     {!p.queueOn && (
       <span className="tiny" data-testid="queue-off-badge" style={{
         padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', fontWeight: 600,
-        background: 'var(--idle-bg)', color: 'var(--text-3)',
+        background: 'color-mix(in oklch, var(--idle) 18%, transparent)', color: 'var(--text-3)',
       }}>QUEUE OFF</span>
     )}
   </>;

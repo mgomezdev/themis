@@ -18,7 +18,7 @@ export function DormantBadge({ reason }: { reason: string }) {
   return (
     <span className="tiny" title={reason} style={{
       padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'var(--idle-bg)', color: 'var(--text-3)', fontWeight: 600,
+      background: 'color-mix(in oklch, var(--idle) 18%, transparent)', color: 'var(--text-3)', fontWeight: 600,
     }}>DORMANT</span>
   );
 }
@@ -162,7 +162,7 @@ export function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRow
       display: 'grid',
       gridTemplateColumns: 'auto auto 1.4fr auto 1.6fr 1fr auto',
       alignItems: 'center', gap: 16,
-      background: expanded ? 'var(--bg-3)' : undefined,
+      background: expanded ? 'var(--bg-2)' : undefined,
       ...(expanded ? { borderColor: 'var(--accent)' } : cardCueStyle(p)),
     }}>
       <span style={{ display: 'inline-flex', color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 120ms ease' }}>
@@ -264,7 +264,7 @@ export function AddPrinterCard({ onClick, variant }: { onClick: () => void; vari
                      color: 'var(--text-3)', cursor: 'pointer', transition: 'all 140ms ease' }}
             onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
       <div style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center',
-                    background: 'var(--bg-3)', border: '1px solid var(--border-1)' }}>
+                    background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
         {Icons.plus}
       </div>
       <div className="small fw-500">Add printer</div>

@@ -3,7 +3,7 @@
 // components reference them as `var(--token)`. CSS is not type-checked, so three mistakes are otherwise silent:
 //   1. `var(--border)` for a token that does not exist: the declaration is dropped and the element loses its border.
 //   2. `var(--ok, #22c55e)`: a second, different definition of the colour that hides mistake 1 behind an off-palette value.
-//   3. A new `rgba(239,68,68,0.12)` literal next to the `--err-bg` token that already says the same thing.
+//   3. A new `rgba(239,68,68,0.12)` literal where `color-mix(in oklch, var(--err) 12%, transparent)` is the house form.
 // 1 and 2 are forbidden outright. 3 is a ratchet: the literals left in component code are counted and the count may only
 // go down. Lower LITERAL_BUDGET when you remove some; never raise it (add a token, or a named constant in an allowed file).
 import { describe, expect, it } from 'vitest';
@@ -48,10 +48,9 @@ const LITERAL = /['"`][^'"`\n<>{}]*?(?<![&\w])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-
 const literalCount = (files: readonly (readonly [string, string])[]) =>
   files.filter(([path]) => !(path in PALETTE_FILES)).reduce((n, [, text]) => n + (text.match(LITERAL)?.length ?? 0), 0);
 
-// Measured 2026-11-10 (34 before the Settings and Files screens were split: both were exempt as whole files for the palettes
-// they held, which now live in screens/settings/TagsPage.tsx and screens/files/palette.ts, so their other literals count). What is left is mostly drop shadows and
+// Measured 2026-11-11, after develop's palette consolidation was merged in. What is left is mostly drop shadows and
 // white-on-thumbnail overlays; turn those into tokens and lower this.
-const LITERAL_BUDGET = 49;
+const LITERAL_BUDGET = 37;
 
 // Class names: `className="row gap-1"` for a class app.css never defined renders with no styling and no error (it happened:
 // `gap-1` was used 50 times before it existed, and four tables said `table` where the class is `tbl`).
@@ -100,7 +99,7 @@ describe('style tokens', () => {
 
   it('scans the whole source tree and the stylesheet', () => {
     expect(prod.length).toBeGreaterThan(100);
-    expect(defined(css).has('--err-border')).toBe(true);
+    expect(defined(css).has('--scrim')).toBe(true);
   });
 
   it('can fail: a planted undefined var, fallback and literal are each caught', () => {

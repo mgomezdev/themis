@@ -271,7 +271,7 @@ export function EditForm({
           <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>
           <div className="col gap-3">
             {slots.map((s, i) => (
-              <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-1)' }}>
+              <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-0)' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                   <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
                   <input
@@ -441,8 +441,8 @@ export function PrinterAddForm({
                 width: 24, height: 24, borderRadius: 12,
                 display: 'grid', placeItems: 'center',
                 fontSize: 11, fontWeight: 600,
-                background: step >= s.n ? 'var(--accent)' : 'var(--bg-3)',
-                color: step >= s.n ? '#04101f' : 'var(--text-3)',
+                background: step >= s.n ? 'var(--accent)' : 'var(--bg-2)',
+                color: step >= s.n ? 'var(--bg-0)' : 'var(--text-3)',
                 border: step === s.n ? '2px solid var(--accent-hi)' : '1px solid var(--border-1)',
               }}>
                 {step > s.n ? '✓' : s.n}
