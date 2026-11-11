@@ -1,6 +1,10 @@
 # ProjectBuilderScreen refactor
 
-**Status:** all four steps done (990 → 153-line screen). Bugs found on the way are fixed with tests, listed per step.
+**Status:** all four steps done, **on develop's Builder** (tabs, print groups, 3MF/gcode items, BIZ-356/360/363): screen 1169 → ~370 lines.
+The first pass was written against `main`'s older screen; `develop` was merged in and every step redone on top of it
+(commits after the merge). Where develop had already fixed a bug found in the first pass (repeat-save duplicates,
+retry re-deletes, a stale "Save" after Queue), only the extraction remains; the step notes below say which fixes are
+new on develop.
 
 **Goal:** break `frontend/src/screens/ProjectBuilderScreen.tsx` (990 lines, ~25 `useState`, save/sync,
 undo, dirty tracking and ~450 lines of JSX in one component) into tested units, with **no user-visible
@@ -43,26 +47,31 @@ behavior change** except the two bug fixes listed in Step 1.
   edit-mode dirty tracking (no Save on load → appears on edit → hidden after reverting → hidden after save),
   folder navigation, undo of a removed part item / link / non-printed part.
 
+## Step 1 on develop
+`lib/stlTree.ts` (`isPickableModel`: stl/3mf/gcode), `lib/projectDraft.ts` (LocalItem with kind/source_ref/pack_rule/
+group_id, multi-item undo snapshot, `draftSnapshot(draft, deletedItemIds)` = develop's `computeSnap` incl. `del`),
+`components/StlFolderTree.tsx` (develop's FolderRow verbatim). **Fixes (still present on develop):** the repeated
+folder name path and the trailing-slash folder filter.
+
 ## Step 2 — `syncProject` (`src/api/projectSync.ts`)
-`syncProject(projectId | null, draft, deleted, onEvent)` replaces the screen's `saveProject` (own module rather than
-`api/projects.ts`, to avoid a type cycle with `lib/projectDraft`). Same request order/bodies; tested directly with
-`stubFetch`. **Fixes:** (a) removing a saved part item never deleted it server-side (now `DELETE /items/{id}`,
-undoable); (b) in edit mode a second save re-POSTed rows added since load (duplicates) — rows are stamped with
-their new server ids; (c) a save failing part-way re-sent creates (duplicates) and deletes (404 → every later
-save fails) on retry — `onEvent` reports each create/delete as it succeeds and the screen records it at once.
+`syncProject(projectId | null, draft, deleted, onEvent)` replaces the screen's `saveProject`: same order and bodies
+(pack rule; group only when set; kind/source on create). Develop already stamped new ids and dropped deletes inline;
+that is now `onEvent`. A reply without a numeric id stays unstamped, as before.
 
 ## Step 3 — reducer + hooks
-`lib/projectBuilderState.ts` (pure `builderReducer`: draft, pending deletes, clean baseline, undo snapshot;
-`isDirty`, `withServerIds`), `components/projectBuilder/useProjectDraft.ts` (reducer + load + undo timeout +
-`save()`), `components/useAutoDismiss.ts` (toast timers). **Fixes:** undo after a saved delete re-creates the
-row instead of PUTting a deleted id; a save before Generate now counts (no stale "Save changes"); a slow load for a
-project the builder moved off is ignored; toast timers are cleared on unmount; a reload clears the undo snapshot.
+`lib/projectBuilderState.ts` (pure `builderReducer`; item ops incl. `removeItems`, `moveItems`, `setItemsRule` (only
+where the kind allows it), `setItemsQuantity`, `setItemsAsk`, `groupsListed` (dead group → Default Group), `promoted`),
+`components/builder/useProjectDraft.ts`, `components/useAutoDismiss.ts`. Groups, Review, tabs and bulk-ask state stay
+in the screen. **Fixes (new on develop):** undoing a removal whose delete was already saved PUT to the deleted id
+(items, links, parts) — it now re-creates the row; a removal made *during* a save was dropped when it finished (the
+lists were cleared wholesale) — only successful deletes are dropped now; a slow load for a project the Builder moved
+off is ignored; toast timers are cleared on unmount.
 
 ## Step 4 — JSX split
-`components/projectBuilder/`: `StlPicker` (owns folder/search state), `ProjectMetaFields`, `ProjectLinksEditor`,
-`ProjectPartsEditor`, `ProjectItemsTable`, `GeneratePanel` (`GeneratePicker`/`GenerateSuccess`/`GenerateError`),
-`Toasts` (`SavedToast`/`UndoToast`). Markup moved verbatim: the step-3 and step-4 screens were rendered on the same
-project and their `innerHTML` compared equal. Each component has its own test file.
+`components/builder/`: `ProjectMetaFields`, `ProjectLinksEditor`, `ProjectPartsEditor`, `ModelPicker` (owns
+folder/search state), `ItemRow`, `BulkFilamentCard`, `QueueResult` (`QueueSuccess`/`QueueError`), `Toasts`. Markup
+moved verbatim: the step-3 and step-4 screens were rendered on the same project (Items with a selection, Details after a
+removal, Review) and their `innerHTML` compared equal once local-id-derived test ids are normalized.
 
 ## Review
 Each step: one fresh reviewer pass against `docs/agent/frontend-review.md`. Independent second-opinion

@@ -8,9 +8,9 @@
 > You are reviewing a behavior-preserving refactor of `frontend/src/screens/ProjectBuilderScreen.tsx` in the
 > Themis repo. The plan is `docs/superpowers/plans/2026-11-11-project-builder-refactor.md`; this file
 > (`docs/superpowers/plans/2026-11-11-project-builder-refactor-review-handoff.md`) is your checklist.
-> Find the refactor commits with
-> `git log --oneline -- frontend/src/screens/ProjectBuilderScreen.tsx frontend/src/lib/projectDraft.ts frontend/src/lib/stlTree.ts`
-> and diff each step against its parent. Don't trust the author's summary or the tests: check the code against
+> The branch merged `develop` mid-way; review only the commits **after** that merge (`git log --oneline --first-parent`
+> — the redo of steps 1–4 on develop's Builder) and diff each against its parent; the PR diff against `develop` is the
+> net change. Don't trust the author's summary or the tests: check the code against
 > the pre-refactor version (`git show <base>:frontend/src/screens/ProjectBuilderScreen.tsx`). Work through every
 > section below, run the commands, and report findings ranked Critical / Important / Minor, each with file:line
 > and a concrete failing scenario. Don't fix anything unless asked; if you're asked to fix, follow CLAUDE.md's
@@ -18,7 +18,7 @@
 
 ## What changed
 
-All four steps are in. Step 1 in detail below; steps 2–4 in the plan file (per-step fix list).
+All four steps are in, on develop's Builder. The table below is step 1 as first written (paths still hold; `isPickableStl` is now `isPickableModel`, `stlFilesInView` is `filesInView`); the plan file has every step on develop and its fix list.
 
 ### Step 1
 
@@ -106,8 +106,12 @@ exactly the fixes listed per step in the plan file; everything else must be equi
       undo; `save()` baseline = the draft *as it was when save started*, stamped with new ids (edits made during the
       save stay dirty). `useAutoDismiss`: a new snapshot object restarts the 6 s timer; cleared on unmount.
 - [ ] **Step 4 JSX split:** markup verbatim (re-run the DOM comparison: render the step-3 screen from git next to
-      the current one on the same fixture and compare `innerHTML` after normalizing `item-ask-<n>` ids). No setter
+      the current one on the same fixture — Items with rows selected, Details, Review — and compare `innerHTML` after
+      normalizing `item-ask-<n>` and `row-<n>` ids). No setter
       bypasses the reducer; labels/titles/placeholders unchanged.
+- [ ] Develop-specific: `addFile` merges an STL only within the same group (Default Group by id or null alike);
+      `setItemsRule` skips kinds that can't use the rule; `groupsListed` never leaves a dead `group_id`; the Review
+      effect still saves before checking and the Queue gate still compares `reviewedSnap` with the current snapshot.
 - [ ] Known, **not** fixed (out of scope): a *new* project whose save fails after `POST /projects` succeeded creates
       a second project on retry (the builder stays on `/projects/new`). Confirm it's still the only such gap.
 
