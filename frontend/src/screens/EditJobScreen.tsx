@@ -163,7 +163,7 @@ export function EditJobScreen() {
     return (
       <div className="col gap-3">
         <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate(-1)}>{Icons.chevL} Back</button>
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>{loadError}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{loadError}</div>
       </div>
     );
   }
@@ -177,24 +177,24 @@ export function EditJobScreen() {
       </div>
 
       {saveError && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>{saveError}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{saveError}</div>
       )}
 
       {job && (
         <div className="card" style={{ padding: '12px 16px' }}>
-          <div className="row gap-3" style={{ alignItems: 'center' }}>
+          <div className="row gap-3">
             <span className="mono tiny muted">#{job.id}</span>
-            <span className="small" style={{ fontWeight: 500 }}>
+            <span className="small fw-500">
               Plate {job.plate_number}
               {job.file && <span className="muted" style={{ fontWeight: 400 }}> · {job.file.original_filename}</span>}
             </span>
             {job.status === 'blocked' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'color-mix(in oklch, var(--warn) 12%, transparent)', color: 'var(--warn)', fontWeight: 500 }}>
+              <span className="tiny tone-warn tint-bg tone-text" style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
                 BLOCKED
               </span>
             )}
             {job.status === 'failed' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'color-mix(in oklch, var(--err) 12%, transparent)', color: 'var(--err)', fontWeight: 500 }}>
+              <span className="tiny tone-err tint-bg tone-text" style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
                 FAILED
               </span>
             )}
@@ -261,7 +261,7 @@ export function EditJobScreen() {
         {/* Sidebar */}
         <div className="col gap-4">
           <div className="card" style={{ padding: 18 }}>
-            <button className="btn primary" style={{ width: '100%' }}
+            <button className="btn primary w-full"
                     disabled={!isComplete || saving || !job}
                     onClick={handleSave}>
               {Icons.check} {saving ? 'Saving…' : 'Save & re-queue'}
@@ -286,7 +286,7 @@ export function EditJobScreen() {
                   const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
                   const done = gcode ? !!pp : pp?.printProfile != null;
                   return (
-                    <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div key={sid} className="row gap-2">
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
                       <span className="small" style={{ flex: 1, minWidth: 0, color: done ? 'var(--text-1)' : 'var(--text-3)' }}>
                         {label}
@@ -324,16 +324,8 @@ export function EditJobScreen() {
                   {verifyRunning ? 'Slicing…' : `${Icons.refresh} Run test slice`}
                 </button>
                 {verifyResult && (
-                  <div style={{
-                    padding: '10px 12px', borderRadius: 8,
-                    background: verifyResult.ok ? 'color-mix(in oklch, var(--ok) 8%, transparent)' : 'color-mix(in oklch, var(--err) 8%, transparent)',
-                    border: `1px solid ${verifyResult.ok ? 'color-mix(in oklch, var(--ok) 30%, transparent)' : 'color-mix(in oklch, var(--err) 25%, transparent)'}`,
-                  }}>
-                    <div className="tiny" style={{
-                      fontWeight: 600,
-                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
-                      marginBottom: verifyResult.error ? 4 : 0,
-                    }}>
+                  <div className={`tint tone-${verifyResult.ok ? 'ok' : 'err'}`} style={{ padding: '10px 12px', borderRadius: 8 }}>
+                    <div className="tiny tone-text" style={{ fontWeight: 600, marginBottom: verifyResult.error ? 4 : 0 }}>
                       {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
                     </div>
                     {verifyResult.error && (

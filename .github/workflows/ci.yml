@@ -20,7 +20,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether this run can affect anything the jobs below test. A pull request into develop that touches only
+  # documentation (docs/**, *.md, LICENSE; not the docs the test suite reads, and not .claude/) sets code=false, and every test, image and e2e job is skipped:
+  # no image build, no three-container e2e. Anything else runs the full pipeline: pushes, tags, manual runs, release
+  # pull requests into main (e2e-full is their gate and must never be skipped), and any pull request with one
+  # non-documentation file. When in doubt (no base commit, a failed diff) it runs everything.
+  #
+  # REQUIRED CHECKS: a skipped job reports "skipped", which a branch ruleset accepts for that job's own check. A check
+  # produced INSIDE a called workflow (e.g. "e2e-core / e2e") is never created when its caller is skipped, so a ruleset
+  # that requires it would leave a docs-only pull request waiting forever. Require the `gate` job at the bottom of
+  # this file instead: it always runs, and is green only when every job it needs succeeded or was skipped.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ] || [ "$BASE_REF" = "main" ]; then
+            echo "Not a pull request into a non-release branch: running everything."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # --no-renames: a code file renamed into docs/ must be listed under its old path too, or the diff looks docs-only.
+          if ! files="$(git diff --name-only --no-renames "$BASE_SHA"...HEAD)"; then
+            echo "Could not diff against $BASE_SHA: running everything."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          code="$(printf '%s\n' "$files" | python3 scripts/ci_changed_code.py)"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   backend:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,11 +81,17 @@ jobs:
       # No services needed: backend/tests/conftest.py runs against a per-test SQLite
       # file over an ASGI transport, so there is no DB server, network or sidecar.
       # --cov enforces the `fail_under` floor in backend/pyproject.toml ([tool.coverage.report]).
+      # -n auto (pytest-xdist): one worker per core. Every test has its own database file and
+      # tmp_path, so they are independent; measured 7m05s serial -> 2m33s on 4 cores with the
+      # same 4001 passes and the same coverage. -v is off: 4000 PASSED lines bury the failure
+      # that -ra already lists in full.
       - name: Run backend tests
         working-directory: backend
-        run: pytest -v -ra --cov
+        run: pytest -ra -n auto --cov
 
   mcp-server:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -64,6 +110,8 @@ jobs:
         run: pytest -v -ra
 
   frontend:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -79,7 +127,8 @@ jobs:
 
       - run: npm ci
 
-      # Warnings (react-refresh, exhaustive-deps, `any` in app code) don't fail the job; errors do.
+      # Errors fail the job. Warnings (react-refresh, exhaustive-deps) are a ratchet: `--max-warnings` in
+      # package.json is the count on develop, so a new one fails; lower the number when you fix some.
       - name: Lint
         run: npm run lint
 
@@ -92,6 +141,8 @@ jobs:
         run: npm run test:cov
 
   frontend-e2e:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-24.04   # Playwright 1.60 cannot install chromium deps on ubuntu-latest (26.04)
     timeout-minutes: 15
     defaults:
@@ -106,7 +157,22 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+
+      # The browser download is the slow half of `playwright install`; key it on the resolved
+      # Playwright version so a dependency bump refetches it. The apt packages it needs are not
+      # cacheable, so install-deps still runs on a hit.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       # Backend-free: frontend/e2e/mock-api.ts intercepts routes, and
       # playwright.config.ts starts the Vite dev server itself.
@@ -114,6 +180,8 @@ jobs:
         run: npm run test:e2e
 
   spec:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -192,6 +260,8 @@ jobs:
           fi
 
   image:
+    needs: [changes]
+    if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -380,3 +450,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: openapi.json
+
+  # The one check a branch ruleset should require (see the note on `changes`). Always runs; fails if any job it needs
+  # failed or was cancelled, passes when each succeeded or was skipped (a docs-only pull request, an unchanged Ordinus
+  # surface, e2e-full outside a release pull request).
+  gate:
+    needs: [changes, backend, mcp-server, frontend, frontend-e2e, spec, image, e2e-core, e2e-push, e2e-full]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every required job succeeded or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["RESULTS"])
+          bad = {job: n["result"] for job, n in needs.items() if n["result"] not in ("success", "skipped")}
+          if needs["changes"]["result"] != "success":
+              bad["changes"] = needs["changes"]["result"]     # the filter itself may never be skipped
+          print("failed:", bad or "none")
+          sys.exit(1 if bad else 0)
+          PY

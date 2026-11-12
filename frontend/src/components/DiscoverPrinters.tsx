@@ -227,7 +227,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
 
   return (
     <div className="card" style={{ padding: 16, marginBottom: 16 }} data-testid="discover-printers">
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <input className="input" aria-label="Network ranges" style={{ maxWidth: 320 }}
                placeholder="192.168.x.x or 192.168.7.0/24"
                disabled={scanning}
@@ -259,7 +259,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
               <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>
                 {fresh.find(p => (p.plugin_id ?? p.printer_type) === g)!.display_name}
               </div>
-              <table className="tbl" style={{ width: '100%' }}>
+              <table className="tbl w-full">
                 <tbody>
                   {fresh.filter(p => (p.plugin_id ?? p.printer_type) === g).map(p => {
                     const key = keyOf(p);
@@ -282,7 +282,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
           {fleet.length > 0 && (
             <section aria-label="Already in your fleet" style={{ marginTop: 16 }}>
               <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Already in your fleet</div>
-              <table className="tbl" style={{ width: '100%' }}>
+              <table className="tbl w-full">
                 <tbody>
                   {fleet.map(p => {
                     const key = keyOf(p);
@@ -308,7 +308,7 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
                             <button className="btn sm" aria-label={`Edit ${p.added_printer.name}`} onClick={() => patch(key, { editing: true })}>Edit</button>
                             <button className="btn ghost sm" aria-label={`Test ${p.ip}`} onClick={() => void test(p)}>Test</button>
                           </>}
-                          {row.error && <span role="alert" className="tiny" style={{ color: 'var(--err)' }}>{row.error}</span>}
+                          {row.error && <span role="alert" className="tiny text-err">{row.error}</span>}
                         </td>
                       </tr>
                     );
@@ -324,10 +324,10 @@ export function DiscoverPrinters({ pluginId, types: givenTypes, onMoreSettings, 
               <button className="btn ghost sm" onClick={() => select(p => !p.ip_in_use_by)}>All new</button>
               <button className="btn ghost sm" onClick={() => select(p => !p.ip_in_use_by && derived(p, rows[keyOf(p)]).status === 'ready')}>Complete only</button>
               <button className="btn ghost sm" onClick={() => select(() => false)}>None</button>
-              {incomplete.length > 0 && <span className="tiny" style={{ color: 'var(--warn)' }}>
+              {incomplete.length > 0 && <span className="tiny text-warn">
                 {incomplete.length} selected {incomplete.length === 1 ? 'printer is' : 'printers are'} missing details — {incomplete.length === 1 ? 'it' : 'they'} will be added as not configured and kept out of the queue until finished.
               </span>}
-              {noModel.length > 0 && <span className="tiny" style={{ color: 'var(--warn)' }}>
+              {noModel.length > 0 && <span className="tiny text-warn">
                 Choose a model for {noModel.map(p => p.ip).join(', ')} to add {noModel.length === 1 ? 'it' : 'them'}.
               </span>}
               <button className="btn primary sm" style={{ marginLeft: 'auto' }} disabled={busy || addableSel.length === 0}
@@ -354,7 +354,7 @@ function QuickInputs({ ip, fields, row, patch }: {
   ip: string; fields: PrinterType['connection_fields']; row: Row; patch: (r: Partial<Row>) => void;
 }) {
   if (fields.length === 0) return <span className="tiny muted">Nothing to enter</span>;
-  return <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+  return <div className="row gap-2 wrap">
     {fields.map(f => (
       <label key={f.name} className="col tiny" style={{ gap: 2 }}>
         <span>{f.label}{row.fromScan.includes(f.name) && <span className="muted"> · from scan</span>}</span>
@@ -398,7 +398,7 @@ function NewRow({ p, row, options, type, state, busy, patch, onAdd, onTest, onSa
                  }} />
           <datalist id={listId}>{options.map(o => <option key={modelKey(o)} value={modelLabel(o)} />)}</datalist>
         </div>
-        {p.note && <div className="tiny" style={{ color: 'var(--warn)' }}>{p.note}</div>}
+        {p.note && <div className="tiny text-warn">{p.note}</div>}
         {p.ip_in_use_by && (
           <div className="tiny" role="note" style={{ color: 'var(--warn)', marginTop: 4 }}>
             {p.ip} is already used by {p.ip_in_use_by.name}{p.ip_in_use_by.model ? ` (${p.ip_in_use_by.model})` : ''} — the address may have changed.{' '}
@@ -418,7 +418,7 @@ function NewRow({ p, row, options, type, state, busy, patch, onAdd, onTest, onSa
       <td><QuickInputs ip={p.ip} fields={fields} row={row} patch={patch} /></td>
       <td><Chip status={state.status} detail={state.detail} />
         {row.error && <div role="alert" className="tiny" style={{ color: 'var(--err)', marginTop: 2 }}>{row.error}</div>}</td>
-      <td className="row gap-2" style={{ flexWrap: 'wrap' }}>
+      <td className="row gap-2 wrap">
         {fields.length > 0 && <button className="btn ghost sm" aria-label={`Test ${p.ip}`} disabled={working || !filled} onClick={onTest}>Test</button>}
         {saved
           ? state.status === 'added_unconfigured' && <button className="btn sm" aria-label={`Save ${p.ip}`} onClick={onSave}>Save</button>

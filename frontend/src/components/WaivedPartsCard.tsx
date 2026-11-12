@@ -31,12 +31,12 @@ export function WaivedPartsCard({ printerId, flagAt, stopAt, onThresholds }: {
     <div data-testid="waived-parts">
       <div className="label" style={{ marginBottom: 6 }}>Waived parts</div>
       <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
-        <label className="row gap-1 small" style={{ alignItems: 'center' }}>
+        <label className="row gap-1 small">
           Flag at
           <input className="input" type="number" min={0} aria-label="Flag at waived parts" value={flagAt} style={{ width: 70 }}
                  onChange={e => onThresholds({ waiver_flag_at: Math.max(0, Math.trunc(Number(e.target.value)) || 0), waiver_stop_at: stopAt })} />
         </label>
-        <label className="row gap-1 small" style={{ alignItems: 'center' }}>
+        <label className="row gap-1 small">
           Stop taking jobs at
           <input className="input" type="number" min={0} aria-label="Stop at waived parts" value={stopAt} style={{ width: 70 }}
                  onChange={e => onThresholds({ waiver_flag_at: flagAt, waiver_stop_at: Math.max(0, Math.trunc(Number(e.target.value)) || 0) })} />
@@ -50,7 +50,7 @@ export function WaivedPartsCard({ printerId, flagAt, stopAt, onThresholds }: {
       ) : (
         <div className="col gap-2">
           {waivers.map(w => (
-            <div key={w.id} className="row gap-2 small" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <div key={w.id} className="row gap-2 small wrap">
               <span style={{ flex: 1, minWidth: 160 }}>
                 {w.file_name ?? 'Part'} <span className="muted">· failed {w.failures}× here
                 {w.last_failure_at ? `, last ${new Date(w.last_failure_at).toLocaleDateString()}` : ''}

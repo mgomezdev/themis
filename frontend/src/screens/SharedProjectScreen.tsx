@@ -81,7 +81,7 @@ export function SharedProjectScreen() {
         )}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-4)', marginBottom: 16 }}>
           {dueStr && <span>Due {dueStr}</span>}
-          {project.on_hold && <span style={{ color: 'var(--warn)' }}>On hold</span>}
+          {project.on_hold && <span className="text-warn">On hold</span>}
         </div>
 
         <div style={{ fontSize: 14, color: 'var(--text-1)', marginBottom: 16 }}>

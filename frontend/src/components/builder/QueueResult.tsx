@@ -27,11 +27,7 @@ export function QueueSuccess({ jobCount, warnings, onOpenQueue, onOpenProject }:
 
 export function QueueError({ message, busy, onRetry }: { message: string; busy: boolean; onRetry: () => void }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
-      borderRadius: 6, padding: '10px 14px',
-    }}>
+    <div className="tone-err tint" style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 6, padding: '10px 14px' }}>
       <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
       <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{message}</span>
       <button className="btn sm" onClick={onRetry} disabled={busy}>Retry</button>

@@ -16,10 +16,7 @@ export function QueueStateBadges({ printer: p }: { printer: Printer }) {
       }}>SETUP INCOMPLETE</span>
     )}
     {!p.queueOn && (
-      <span className="tiny" data-testid="queue-off-badge" style={{
-        padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', fontWeight: 600,
-        background: 'color-mix(in oklch, var(--idle) 18%, transparent)', color: 'var(--text-3)',
-      }}>QUEUE OFF</span>
+      <span className="tiny tone-idle tint-bg" data-testid="queue-off-badge" style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--text-3)' }}>QUEUE OFF</span>
     )}
   </>;
 }
@@ -55,7 +52,7 @@ export function SetupIncompleteCard({ printer: p, refetchFleet }: { printer: Pri
   return (
     <div data-testid="setup-card" onClick={e => e.stopPropagation()}
          style={{ padding: '8px 14px 12px', borderTop: '1px solid var(--border-1)' }}>
-      <div className="tiny" style={{ color: 'var(--warn)' }}>
+      <div className="tiny text-warn">
         Setup incomplete — {p.configError ?? 'waiting for a connection test'}. It takes no queue work until a connection succeeds.
       </div>
       {form && (

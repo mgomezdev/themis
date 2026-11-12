@@ -129,7 +129,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: 'var(--bg-1)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         <div style={{ padding: '24px 24px 12px', overflowY: 'auto', flex: 1 }}>
@@ -139,7 +139,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
           </p>
 
           {inventory_error && (
-            <div style={{ background: 'color-mix(in oklch, var(--err) 20%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 35%, transparent)', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+            <div className="tone-err tint" style={{ padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
               Inventory references could not be fully checked: {inventory_error}
             </div>
           )}
@@ -293,7 +293,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
         {/* Footer outside scroll area — always visible */}
         <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border-1)' }}>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={onCancel} disabled={submitting} style={{ padding: '6px 16px' }}>
+            <button className="btn" onClick={onCancel} disabled={submitting}>
               Cancel
             </button>
             <button

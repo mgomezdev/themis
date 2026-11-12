@@ -79,8 +79,7 @@ describe('Queue badges — individual types', () => {
     renderOnFleet(3, 0, 0);
     const badge = screen.getByTestId('badge-active');
     expect(badge.textContent).toBe('3');
-    expect(badge.style.color).toBe('var(--ok)');
-    expect(badge.style.background).toBe('color-mix(in oklch, var(--ok) 12%, transparent)');
+    expect(badge.classList.contains('tone-ok')).toBe(true);                     // the tone's colours are .count.tone-ok in app.css
     expect(screen.queryByTestId('badge-pending')).toBeNull();
     expect(screen.queryByTestId('badge-blocked')).toBeNull();
   });
@@ -89,8 +88,8 @@ describe('Queue badges — individual types', () => {
     renderOnFleet(0, 5, 0);
     const badge = screen.getByTestId('badge-pending');
     expect(badge.textContent).toBe('5');
-    // Pending uses the default .count class styling (no inline color override)
-    expect(badge.style.color).toBe('');
+    // Pending uses the default .count styling: no tone class
+    expect([...badge.classList].filter(c => c.startsWith('tone-'))).toEqual([]);
     expect(screen.queryByTestId('badge-active')).toBeNull();
     expect(screen.queryByTestId('badge-blocked')).toBeNull();
   });
@@ -99,7 +98,7 @@ describe('Queue badges — individual types', () => {
     renderOnFleet(0, 0, 2);
     const badge = screen.getByTestId('badge-blocked');
     expect(badge.textContent).toBe('2');
-    expect(badge.style.color).toBe('var(--err)');
+    expect(badge.classList.contains('tone-err')).toBe(true);
     expect(screen.queryByTestId('badge-active')).toBeNull();
     expect(screen.queryByTestId('badge-pending')).toBeNull();
   });

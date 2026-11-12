@@ -135,11 +135,8 @@ def test_slice_raises_without_sidecar():
         machine_preset="m", process_preset="p", filament_presets=["f"],
     )
     with patch("app.services.providers.slicing.configured_server_url", return_value=None):
-        try:
+        with pytest.raises(SliceError, match="Settings -> Laminus"):
             svc.slice(req)
-            assert False, "expected SliceError"
-        except SliceError as e:
-            assert "Settings -> Laminus" in str(e)
 
 
 # ---------------------------------------------------------------------------

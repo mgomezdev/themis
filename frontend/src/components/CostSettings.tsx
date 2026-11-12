@@ -45,19 +45,19 @@ export function CostSettings() {
       </div>
       {!loaded ? <div className="muted small">Loading…</div> : (
         <div className="col gap-3">
-          <label className="row gap-2" style={{ alignItems: 'center' }}>
+          <label className="row gap-2">
             <span style={{ width: 170, fontSize: 13 }}>Machine rate</span>
             <input className="input" type="number" min="0" step="0.01" aria-label="Machine rate per hour" style={{ width: 110 }}
                    value={machine} onChange={e => setMachine(e.target.value)} />
             <span className="muted small">$ per hour of print time (power, wear, depreciation). A printer can override it in its settings.</span>
           </label>
-          <label className="row gap-2" style={{ alignItems: 'center' }}>
+          <label className="row gap-2">
             <span style={{ width: 170, fontSize: 13 }}>Labour rate</span>
             <input className="input" type="number" min="0" step="0.01" aria-label="Labour rate per hour" style={{ width: 110 }}
                    value={labour} onChange={e => setLabour(e.target.value)} />
             <span className="muted small">$ per hour of logged labour (setup, post-processing, assembly, packing).</span>
           </label>
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             <button className="btn primary sm" disabled={!valid || saving} onClick={save}>{saving ? 'Saving…' : 'Save rates'}</button>
             {msg && <span role={msg.ok ? 'status' : 'alert'} className="small" style={{ color: msg.ok ? 'var(--ok)' : 'var(--err)' }}>{msg.text}</span>}
           </div>

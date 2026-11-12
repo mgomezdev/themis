@@ -159,7 +159,7 @@ export function SearchModal({ open, onClose, jobs, printers }: SearchModalProps)
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 1000,
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '12vh',
       }}
     >

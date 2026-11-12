@@ -86,11 +86,11 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
   return (
     <div className="col gap-2" data-testid="item-sections">
       <div className="row between" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <label className="row gap-2 small" style={{ alignItems: 'center' }}>
+        <label className="row gap-2 small">
           <TriBox ids={visible.map(i => i.localId)} selected={selected} onChange={toggle} label="Select every shown item" />
           {visible.length} shown
         </label>
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
+        <div className="row gap-2">
           <span className="tiny muted">Show</span>
           <button className={view === 'file' ? 'btn sm primary' : 'btn sm'} onClick={() => setView('file')}>By file</button>
           <button className={view === 'group' ? 'btn sm primary' : 'btn sm'} onClick={() => setView('group')}>By group</button>
@@ -101,9 +101,8 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
       </div>
 
       {chosen.length > 0 && (
-        <div className="row gap-2" role="toolbar" aria-label="Bulk edit" data-testid="bulk-bar"
-             style={{ flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderRadius: 6,
-                      border: '1px solid var(--accent)', background: 'color-mix(in oklch, var(--accent) 8%, transparent)' }}>
+        <div className="row gap-2 tone-accent tint-bg" role="toolbar" aria-label="Bulk edit" data-testid="bulk-bar"
+             style={{ flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--accent)' }}>
           <b className="small">{chosen.length} selected</b>
           <select className="select" aria-label="Move selected to group" value=""
                   onChange={e => { if (e.target.value) onBulk(ids, { kind: 'group', groupId: Number(e.target.value) }); }}>
@@ -136,7 +135,7 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
               <TriBox ids={rowIds} selected={selected} onChange={toggle} label={`Select all in ${sec.title}`} />
               <span aria-hidden>{open ? '▾' : '▸'}</span>
               <span style={{ fontWeight: 600, fontSize: 13 }}>{sec.title}</span>
-              <span className="tiny muted" style={{ flex: 1 }}>
+              <span className="tiny muted grow">
                 {sec.rows.length} item{sec.rows.length === 1 ? '' : 's'} · {parts} part{parts === 1 ? '' : 's'}
               </span>
               {!open && (
@@ -158,7 +157,7 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
                       <input type="checkbox" aria-label={`Select ${r.file_name}`} checked={selected.has(r.localId)}
                              onChange={e => toggle([r.localId], e.target.checked)} style={{ marginTop: 8 }} />
                       <span aria-hidden title="Drag onto a group" style={{ cursor: 'grab', color: 'var(--text-4)', paddingTop: 6 }}>⋮⋮</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>{renderRow(r)}</div>
+                      <div className="grow min-0">{renderRow(r)}</div>
                       {r.kind !== 'gcode' && g && (
                         <span className="tiny" style={{ paddingTop: 8, whiteSpace: 'nowrap', color: groupColour(groups, g.id) }}>{g.name}</span>
                       )}

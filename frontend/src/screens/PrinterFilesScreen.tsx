@@ -77,7 +77,7 @@ export function PrinterFilesScreen() {
   const needle = filter.trim().toLowerCase();
 
   return (
-    <div className="page" data-testid="printer-files">
+    <div data-testid="printer-files">
       <div className="row gap-3" style={{ alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <input className="input" placeholder="Filter by file name…" aria-label="Filter files" style={{ maxWidth: 280 }}
                value={filter} onChange={e => setFilter(e.target.value)} />
@@ -111,11 +111,11 @@ export function PrinterFilesScreen() {
                 {s.busy && <span className="small muted">working…</span>}
               </div>
               {s.error ? (
-                <div className="small" style={{ color: 'var(--warn)' }}>{s.error}</div>
+                <div className="small text-warn">{s.error}</div>
               ) : rows.length === 0 ? (
                 <div className="small muted">{s.files.length === 0 ? 'No files.' : 'No files match the filter.'}</div>
               ) : (
-                <table className="table" style={{ width: '100%' }}>
+                <table className="tbl w-full">
                   <thead><tr><th>Name</th><th>Size</th><th>Print</th><th>Modified</th><th /></tr></thead>
                   <tbody>
                     {rows.map(f => (

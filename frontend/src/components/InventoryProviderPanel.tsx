@@ -42,7 +42,7 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
 
       {remote && status && (
         <div className="col gap-2" style={{ marginBottom: 16 }}>
-          <div className="row between" style={{ alignItems: 'center' }}>
+          <div className="row between">
             <div style={{ fontSize: 13, fontWeight: 600 }}>Sync status</div>
             <span style={{ color: toneColor, fontSize: 12, fontWeight: 500 }} data-testid="sync-tone">
               {tone === 'disconnected' ? 'Unreachable' : tone === 'fail' ? 'Sync failing' : tone === 'stale' ? 'Stale' : 'Synced'}
@@ -51,12 +51,12 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
           <div className="small muted">Last successful sync: {fmt(status.last_sync_at)}</div>
           {status.cache_as_of && <div className="small muted">Last-known data cached {fmt(status.cache_as_of)}</div>}
           {status.disconnected_since && (
-            <div className="small" style={{ color: 'var(--err)' }} data-testid="outage">
+            <div className="small text-err" data-testid="outage">
               Unreachable since {fmt(status.disconnected_since)}
               {status.max_disconnect_minutes ? ` (alert after ${status.max_disconnect_minutes} min${status.disconnect_alerted ? ' — sent' : ''})` : ''}
             </div>
           )}
-          {status.last_error && <div className="small" style={{ color: 'var(--err)' }}>{status.last_error_code ? `[${status.last_error_code}] ` : ''}{status.last_error}</div>}
+          {status.last_error && <div className="small text-err">{status.last_error_code ? `[${status.last_error_code}] ` : ''}{status.last_error}</div>}
           <div><button className="btn sm" onClick={() => act(syncNow, 'Synced')}>Sync now</button></div>
         </div>
       )}
@@ -74,7 +74,7 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
                   Spool #{w.spool_ref}: {w.pre_weight_g !== null ? `${Math.round(w.pre_weight_g)} g` : '?'} at print start, <span className="num">{Math.round(found)} g</span> now
                   {w.job_id ? ` · job #${w.job_id} used ${Math.round(spent)} g` : ''}
                 </span>
-                <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+                <div className="row gap-2 wrap">
                   <button className="btn sm" aria-label={`Set spool ${w.spool_ref} to ${Math.round(w.target_g)} g`}
                           onClick={() => act(() => resolveWeightConflict(w.id, 'themis'), 'Weight updated')}>Use {Math.round(w.target_g)} g</button>
                   <button className="btn sm" aria-label={`Keep spool ${w.spool_ref} at ${Math.round(found)} g`}
@@ -96,7 +96,7 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
             <div key={w.id} className="row gap-2" data-testid={`pending-${w.id}`} style={{ alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13 }}>Spool #{w.spool_ref} → <span className="num">{Math.round(w.target_g)} g</span></span>
               <span className="tiny muted">{w.source === 'manual_complete' ? 'manual completion' : 'job'}{w.job_id ? ` #${w.job_id}` : ''} · {w.attempts} attempt{w.attempts === 1 ? '' : 's'}</span>
-              {w.last_error && <span className="tiny" style={{ color: 'var(--err)' }}>{w.last_error}</span>}
+              {w.last_error && <span className="tiny text-err">{w.last_error}</span>}
               <button className="btn sm" onClick={() => act(() => resolvePendingWrite(w.id), 'Applied')}>Apply now</button>
               <button className="btn ghost sm" aria-label={`Discard update for spool ${w.spool_ref}`}
                       onClick={() => act(() => discardPendingWrite(w.id), 'Discarded')}>Discard</button>

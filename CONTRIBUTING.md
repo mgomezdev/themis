@@ -44,7 +44,7 @@ For deeper code maps, see [the architecture index](docs/agent/README.md). The SQ
 
 ```sh
 # Backend (from backend/)
-pytest -v
+pytest -n auto                    # whole suite, one worker per core
 pytest tests/services/test_queue_engine.py -q
 
 # Frontend (from frontend/)

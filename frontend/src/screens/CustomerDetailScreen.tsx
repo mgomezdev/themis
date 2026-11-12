@@ -54,7 +54,7 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Financial summary</div>
-      <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <Stat label="Outstanding" value={fmtMoney(all.outstanding)}
               tone={all.outstanding > 0 ? 'var(--warn)' : undefined} />
         <Stat label="Revenue (all time)" value={fmtMoney(all.revenue)} />
@@ -106,7 +106,7 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
       <div className="small muted">
         Revenue is by the date payments were received; the rest is by project start date. Machine and labour use today&apos;s rates (Settings → Costs).
         {financials.unpriced_unpaid > 0 && (
-          <span style={{ color: 'var(--warn)' }}>
+          <span className="text-warn">
             {' '}{financials.unpriced_unpaid} unpaid project{financials.unpriced_unpaid !== 1 ? 's have' : ' has'} no
             price set, so {financials.unpriced_unpaid !== 1 ? 'their balances aren’t' : 'its balance isn’t'} counted
             as outstanding.
@@ -127,7 +127,7 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
 
   return (
     <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)', marginRight: 8 }}>Projects</div>
         {(['current', 'past', 'all'] as ProjectTab[]).map(t => (
           <button key={t} className={`btn sm ${tab === t ? 'primary' : 'ghost'}`}
@@ -135,7 +135,7 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
             {t}<span style={{ marginLeft: 5, opacity: 0.7 }}>({counts[t]})</span>
           </button>
         ))}
-        <div style={{ flex: 1 }} />
+        <div className="grow" />
         <button className="btn sm" onClick={() => navigate(`/projects/new?customer=${customerId}`)}>
           {Icons.plus} New project
         </button>
@@ -150,9 +150,9 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
             <thead>
               <tr>
                 <th>Project</th><th>Status</th><th>Progress</th><th>Due</th>
-                <th style={{ textAlign: 'right' }}>Price</th>
-                <th style={{ textAlign: 'right' }}>Paid</th>
-                <th style={{ textAlign: 'right' }}>Outstanding</th>
+                <th className="text-right">Price</th>
+                <th className="text-right">Paid</th>
+                <th className="text-right">Outstanding</th>
               </tr>
             </thead>
             <tbody>
@@ -178,8 +178,8 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
                     ) : <span className="muted">—</span>}
                   </td>
                   <td>{fmtDate(p.due_date) ?? <span className="muted">—</span>}</td>
-                  <td style={{ textAlign: 'right' }}>{p.price != null ? fmtMoney(p.price) : <span className="muted">—</span>}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className="text-right">{p.price != null ? fmtMoney(p.price) : <span className="muted">—</span>}</td>
+                  <td className="text-right">
                     {p.amount_paid != null ? fmtMoney(p.amount_paid) : <span className="muted">—</span>}
                     <div className="small muted" style={{ textTransform: 'capitalize' }}>{p.payment_status}</div>
                   </td>
@@ -217,15 +217,15 @@ function PaymentHistoryCard({ customerId }: { customerId: number }) {
         : (
           <div style={{ overflowX: 'auto' }}>
             <table className="tbl">
-              <thead><tr><th>Received</th><th>Project</th><th>Method</th><th>Note</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+              <thead><tr><th>Received</th><th>Project</th><th>Method</th><th>Note</th><th className="text-right">Amount</th></tr></thead>
               <tbody>
                 {payments.map(p => (
                   <tr key={p.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(p.received_on)}</td>
+                    <td className="nowrap">{fmtDate(p.received_on)}</td>
                     <td><Link to={`/projects/${p.project_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.project_name}</Link></td>
                     <td>{methodLabel(p.method)}</td>
                     <td className="muted">{p.note ?? ''}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtMoney(p.amount)}</td>
+                    <td className="text-right">{fmtMoney(p.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -292,10 +292,10 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
 
   return (
     <form className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save}>
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Details</div>
         <span className={`pill ${status.tone}`} style={{ fontSize: 10 }}>{status.label}</span>
-        <div style={{ flex: 1 }} />
+        <div className="grow" />
         <button type="button" className="btn ghost sm" disabled={saving} onClick={resetPassword}>
           {customer.has_password ? 'Reset password' : 'Set password'}
         </button>
@@ -310,20 +310,20 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
         </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-        <label className="col" style={{ gap: 4 }}><span className="label">Name</span>
+        <label className="col gap-1"><span className="label">Name</span>
           <input className="input" {...field('name')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Email</span>
+        <label className="col gap-1"><span className="label">Email</span>
           <input className="input" type="email" {...field('email')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Company</span>
+        <label className="col gap-1"><span className="label">Company</span>
           <input className="input" {...field('company')} /></label>
-        <label className="col" style={{ gap: 4 }}><span className="label">Phone</span>
+        <label className="col gap-1"><span className="label">Phone</span>
           <input className="input" type="tel" {...field('phone')} /></label>
       </div>
-      <label className="col" style={{ gap: 4 }}><span className="label">Notes</span>
+      <label className="col gap-1"><span className="label">Notes</span>
         <textarea className="textarea" rows={3} {...field('notes')} /></label>
       <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end' }}>
         {error && <span className="small" style={{ color: 'var(--err)', marginRight: 'auto' }}>{error}</span>}
-        {notice && !dirty && <span className="small" style={{ color: 'var(--ok)' }}>{notice}</span>}
+        {notice && !dirty && <span className="small text-ok">{notice}</span>}
         {dirty && (
           <button type="button" className="btn sm" onClick={() => setForm(saved)} disabled={saving}>Discard</button>
         )}

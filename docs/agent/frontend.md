@@ -22,7 +22,7 @@ Every `api/*.ts` file calls `apiFetch(url, init)` (`api/client.ts`) instead of r
 `X-Api-Key` from the stored key. `withKeyParam(url)` (same file) appends `?key=` for the handful of
 things that can't set a header: the 3 `/ws` connections (`queue.ts`/`orders.ts`/`fleet.ts`, all opened through `openLiveSocket` in `client.ts`), the printer
 snapshot/camera `<img>` src in `ui.tsx`, and `plateThumbnailUrl` in `queue.ts`. Manage keys at
-Settings → API Keys (`SettingsScreen.tsx`'s `ApiKeysPage`, backed by `api/apiKeys.ts`).
+Settings → API Keys (`screens/settings/ApiKeysPage.tsx`, backed by `api/apiKeys.ts`).
 
 ## App shell & routing (`App.tsx`)
 
@@ -42,6 +42,12 @@ mapping now lives at Settings → Filament Mappings, see the Screens table.) To 
 `screenConfig` entry (+ path-normalization case if it's a detail route), and a Sidebar link if top-level.
 
 ## Screens (`src/screens/*.tsx`)
+
+**Layout.** One file per route in `src/screens/`. A screen whose dialogs, panels and cards grew large keeps them in a folder
+named after it: `screens/settings/` (one `*Page.tsx` per settings page + `icons.tsx`; `SettingsScreen.tsx` is the nav shell),
+`screens/newJob/`, `screens/fleet/`, `screens/files/`, `screens/queue/`. In those folders a `.tsx` file exports components
+only; shared types, constants and pure helpers go in a sibling `.ts` (`model.ts`, `palette.ts`, `versions.ts`, `cardCue.ts`).
+A file in `screens/<x>/` never imports from `../<X>Screen` (that would be a cycle): move the shared piece down instead.
 
 | Screen | Purpose / notes |
 |---|---|

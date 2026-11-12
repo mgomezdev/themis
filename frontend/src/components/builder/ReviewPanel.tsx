@@ -27,7 +27,7 @@ export function ReviewPanel({ review, loading, error, onGo }: {
         <div key={i} className="row gap-3" data-testid={`check-${ch.level}`}
              style={{ alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border-1)', borderRadius: 6 }}>
           <span className={PILL[ch.level].cls}>{PILL[ch.level].label}</span>
-          <span className="small" style={{ flex: 1 }}>{ch.message}</span>
+          <span className="small grow">{ch.message}</span>
           {ch.level === 'error'
             ? <button className="btn sm" onClick={() => onGo(ch.tab, ch)}>Go to {TAB_LABEL[ch.tab]}</button>
             : <span className="tiny muted">—</span>}

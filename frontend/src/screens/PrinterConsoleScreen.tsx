@@ -23,7 +23,7 @@ function SetpointRow({ label, current, target, onSet, disabled }: {
   const [busy, setBusy] = useState(false);
   const run = async (c: number) => { setBusy(true); try { await onSet(c); } finally { setBusy(false); } };
   return (
-    <div className="row gap-3" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="row gap-3 wrap">
       <div style={{ width: 90 }} className="small">{label}</div>
       <div className="num small" style={{ width: 120 }}>
         {current != null ? `${current.toFixed(0)}°C` : '—'}
@@ -70,7 +70,7 @@ export function PrinterConsoleScreen() {
 
   if (!printer) {
     return (
-      <div className="page">
+      <div>
         <div className="muted" style={{ padding: 24 }}>
           {fleet.length === 0 ? 'Loading printer…' : 'Printer not found.'}{' '}
           <button className="btn ghost sm" onClick={() => navigate('/fleet')}>Back to Fleet</button>
@@ -120,7 +120,7 @@ export function PrinterConsoleScreen() {
     act(`Jog ${axis}${sign > 0 ? '+' : '−'}${step}`, () => jogAxis(printer.id, axis, sign * step));
 
   return (
-    <div className="page" data-testid="printer-console">
+    <div data-testid="printer-console">
       <div className="row gap-3" style={{ alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <button className="btn ghost sm" onClick={() => navigate('/fleet')}>{Icons.chevL} Fleet</button>
         <button className="btn icon sm" aria-label="Previous printer" disabled={printers.length < 2} onClick={() => go(-1)}>{Icons.chevL}</button>
@@ -149,7 +149,7 @@ export function PrinterConsoleScreen() {
                       onClick={() => setStep(s)}>{s} mm</button>
             ))}
           </div>
-          <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+          <div className="row gap-2 wrap">
             {caps.axis_jog && (['X', 'Y'] as Axis[]).map(a => (
               <span key={a} className="row gap-1">
                 <button className="btn sm" disabled={motionDisabled} onClick={() => jog(a, -1)}>{a}−</button>
@@ -200,7 +200,7 @@ export function PrinterConsoleScreen() {
         {caps.direct_upload && (
           <div className="card" style={{ padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Send a file</div>
-            <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="row gap-2 wrap">
               <input type="file" aria-label="File to send" accept=".gcode,.3mf,.bgcode"
                      onChange={e => setFile(e.target.files?.[0] ?? null)} />
               <button className="btn sm" disabled={!file || uploading || offline} onClick={() => upload(false)}>

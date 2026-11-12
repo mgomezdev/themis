@@ -5,7 +5,10 @@ Sass. Styling is a single global stylesheet of design tokens + hand-written util
 applied via `className` strings, with `style={{ '--token' }}`/inline `style` for one-offs. Match this —
 don't introduce a framework or per-component CSS files.
 
-- **The stylesheet**: `frontend/src/styles/app.css` (~650 lines). Imported once (via `main.tsx`/`App`).
+- **The stylesheet**: `frontend/src/styles/app.css`. Imported once (via `main.tsx`/`App`).
+- **The guard**: `frontend/src/styleTokens.test.ts` fails on a `var(--token)` that `app.css` does not define, on a
+  `var(--token, #hex)` fallback, and on a new hex / `rgba()` / `oklch()` literal in component code (a ratchet: `LITERAL_BUDGET` only goes down). It does not
+  see named colours (`'white'`) or the files listed in its `PALETTE_FILES`.
 - **Shared styled components**: `frontend/src/components/ui.tsx`. Use these before writing new markup.
 
 ## Design tokens (CSS variables, `:root` in app.css)
@@ -18,7 +21,8 @@ Everything references tokens — never hard-code a hex/px when a token exists.
 | Borders | `--border-1`…`--border-3` | low→high contrast |
 | Text | `--text-1`, `--text-3`, `--text-4` | primary / muted / chrome labels (all ≥4.5:1). There is no `--text-2` |
 | Accent | `--accent`, `--accent-hi`, `--accent-lo`, `--accent-tint` (10%, fills/selected), `--accent-glow` (25%, rings/glow) | chrome yellow; tint/glow derive from `--accent` |
-| Status | `--ok`/`--warn`/`--err`/`--idle`/`--info` | drive `.pill`, `.progress`. No stored tints: fill with `color-mix(in oklch, var(--tone) N%, transparent)` (12% fill / 30% border is the pill recipe). `--info` is also the link colour |
+| Status | `--ok`/`--warn`/`--err`/`--idle`/`--info` | drive `.pill`, `.progress`, `.notice`. No stored tints: a tinted box is **classes** — `tone-err tint` (see *Tinting by status* below). `--info` is also the link colour |
+| Overlay | `--scrim` | modal backdrop, and the dark plate behind text laid over a camera feed |
 | Type | `--font-sans` (IBM Plex Sans), `--font-mono` (IBM Plex Mono) | base body 13.5px |
 | Spacing | `--pad-1`…`--pad-6`, `--row-h`, `--card-pad`, `--gap-stack` | **density-dependent** (see below) |
 | Radii | `--r-1` (0), `--r-2` (2px), `--r-3` (4px, max) | the system is square |
@@ -42,15 +46,17 @@ Reach for these before inventing classes. Composable via space-separated `classN
 |---|---|
 | `.pill` + tone `.ok/.warn/.err/.info/.idle/.accent` (with `.dot`) | status chip — **use `<StatusPill>`**, don't hand-roll |
 | `.progress` (+`.warn`/`.err`/`.lg`, inner `.bar`) | progress bar — **use `<Progress>`** |
-| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons |
+| `.btn` (+`.primary`/`.ghost`/`.sm`/`.icon`, inner `.ico`) | buttons; `:disabled` dims it, so new code needs no inline `opacity` (a few older call sites still set one, which wins) |
+| `.notice` + tone `.ok/.warn/.err/.info` | inline message box (failed save, warning above a form) |
 | `.card` (+`.flat`/`.raised`) | panel surface — **use `<Card>`** |
 | `.input`, `.textarea`, `.select`, `.label` | form controls |
 | `.tbl` (`th`/`td`, `tr.selected`, hover) | data tables |
 | `.video` (+`.live`), `.feed-scene`, `.swatch`(+`.lg`) | camera tile, color swatch |
 | `.elig`(+`.on`/`.off`), `.tweaks-panel`, `.tag-key`, `.live-dot`, `.shimmer-bar` | domain bits |
 | **Layout/util**: `.app`, `.main`, `.sidebar`, `.topbar`, `.content`, `.screen-grid`, `.layout-main-sidebar` | shells |
-| `.row`(+`.between`), `.col`, `.gap-2`…`.gap-6`, `.divider` | flex helpers |
+| `.row`(+`.between`), `.col`, `.divider` | flex helpers |
 | `.muted`, `.tiny`, `.small`, `.mono`, `.num` | text helpers (`.num` = tabular mono figures) |
+| `.gap-1`…`.gap-6`, `.wrap`, `.grow`, `.min-0`, `.shrink-0`, `.w-full`, `.nowrap`, `.text-right`, `.text-err`/`.text-warn`/`.text-ok`, `.fw-500`/`.fw-600` | one-property helpers (end of `app.css`). Use these, not `style={{ flex: 1 }}` / `style={{ color: 'var(--err)' }}`. `.row` already centres its items: don't add `alignItems: 'center'` |
 
 ## Shared components (`components/ui.tsx`) — prefer these over raw markup
 
@@ -70,6 +76,30 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
   status that should render styled, add it to `StatusKey` AND the `StatusPill` map** — otherwise it
   shows up as a grey pill with the raw key.
 
+## Tinting by status
+
+Anything tinted by a status colour is built from **tone helper classes** (end of `app.css`), not a hand-written `color-mix()`
+(`styleTokens.test.ts` fails on one in component code). Pick a tone, then what to draw with it:
+
+| Class | Does |
+|---|---|
+| `tone-ok` / `tone-warn` / `tone-err` / `tone-info` / `tone-idle` / `tone-accent` | sets `--tone` (inherited, so a child can use `tone-text` with no tone class of its own) |
+| `tint-bg` · `edge` / `edge-top` / `edge-bottom` · `tint` | the fill · the 1px outline (all sides / one side) · both |
+| `tone-text` | the tone as the text colour |
+| `tone-solid` | a solid label with white text (laid over a thumbnail) |
+| `edge-strong` · `ring` | a flagged card's border and inner ring |
+
+```tsx
+<div className="tone-err tint tone-text" role="alert">Couldn't save</div>        {/* or <div className="notice err"> */}
+<div className={`tint ${failed ? 'tone-err' : 'tone-warn'}`}>…</div>             {/* a computed tone: just the class word */}
+```
+
+Strength is two variables in `:root`, `--tint` (12%) and `--edge` (30%); `.pill`, `.notice`, `.count.tone-*` and the helpers all
+read them, so every tinted box matches and one edit restyles them all. For a recurring shape (a boxed message), prefer a
+component class like `.notice` over repeating `tone-err tint` plus padding inline. A tone helper beats earlier single-class
+rules (`.card` borders) because the helpers come last in the file; inline `style` still beats them, so don't set the same
+property inline.
+
 ## Responsive / touch (BIZ-156)
 
 - One breakpoint does the work: `@media (max-width: 1024px)` in `app.css` swaps the sidebar for the bottom
@@ -88,15 +118,20 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
 
 - **Style a new element** → compose existing utility/component classes + tokens; only add a new class in
   `app.css` if nothing fits. Use `<Card>`, `<StatusPill>`, `<Progress>`, `.btn`, `.row/.col/.gap-*`.
+- **Colours that are data, not chrome** (material palette, group colours, the unknown-filament swatch `UNKNOWN_COLOR` /
+  `NEW_SLOT_COLOR` in `data/helpers.ts`) live in the files listed in `PALETTE_FILES` in `styleTokens.test.ts`; import the
+  constant, don't retype the hex.
 - **Add a token** → define in `:root` in `app.css`; if it should react to density, add the override under
   the matching `[data-density]` block too. Don't add a colour within ~2 ΔE (OKLab) of an existing one, and
-  derive tints with `color-mix` rather than adding a token.
+  never store a tint as a token: it is `tone-*` + `tint` (below).
 - **Add a styled status** → extend `StatusKey` (`data/types.ts`) + the `StatusPill` `map` (`ui.tsx`);
   pick an existing tone (`ok/warn/err/info/idle`; `.pill.accent` is for non-status chips only).
 
 ## Gotchas
 
-- No framework → no utility-class autocomplete/purge; class names are the ones in `app.css`, that's it.
+- No framework → no utility-class autocomplete/purge; class names are the ones in `app.css`, that's it. `styleTokens.test.ts` fails on a
+  `className` word that `app.css` does not define (it reads `className="…"` and the fixed words of a template literal; a
+  class chosen in an expression, `className={on ? 'a' : 'b'}`, is not checked).
 - One global stylesheet → class names are global; prefix domain-specific classes to avoid collisions.
 - Build/type-check is still `npm run build` (`tsc -b`); CSS isn't type-checked — a typo'd class name
-  silently no-ops. Verify against `app.css`.
+  and a typo'd `var(--token)` used to no-op silently; `styleTokens.test.ts` now catches both.

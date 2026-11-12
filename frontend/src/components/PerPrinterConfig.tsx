@@ -6,6 +6,8 @@ import { useSlotConflicts } from './useSlotConflicts';
 import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, slotIsLoaded, type FilamentAsk } from '../lib/filamentAsk';
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
+import { UNKNOWN_DOT_COLOR } from '../data/helpers';
+import { typeBadge } from '../api/fleet';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -37,10 +39,6 @@ export const askToCfg = (a: FilamentAsk): Pick<PerPrinterCfg, 'filamentManufactu
   filamentSubtype: a.filament_subtype, filamentColor: a.filament_color,
 });
 
-const BADGE: Record<string, string> = {
-  bambu: 'P1S', elegoo_centauri: 'ECC', snapmaker_extended: 'U1',
-};
-
 /** A model colour pinned to tool `t` (the default: filament N on tool N-1, clamped to the slots there are). */
 const pinned = (modelFilament: number, tool: number): FilamentMapEntry => ({ model_filament: modelFilament, tool_index: tool, ...NO_ASK });
 const entryAsk = (e: FilamentMapEntry): FilamentAsk => ({
@@ -65,21 +63,16 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-const CHIP = {
-  ok: { background: 'color-mix(in oklch, var(--ok) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)', color: 'var(--ok)' },
-  warn: { background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', color: 'var(--warn)' },
-} as const;
-
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
 function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; conflicts: number[]; testId?: string }) {
   const idx = firstMatchingSlot(ask, slots, conflicts);       // a slot in conflict with its bound spool is skipped, as the queue does
   const undefinedAsk = askIsUndefined(ask);
-  const tone = idx !== null || undefinedAsk ? CHIP.ok : CHIP.warn;
+  const tone = idx !== null || undefinedAsk ? 'tone-ok' : 'tone-warn';
   const text = idx !== null
     ? `✓ T${idx} · ${describeAsk({ ...NO_ASK, filament_type: slots[idx].type || null, filament_subtype: slots[idx].subtype ?? null, filament_color: slots[idx].color || null })}`
     : undefinedAsk ? '◉ Any loaded filament' : `⚠ nothing loaded matches ${describeAsk(ask)} — the job waits in the queue`;
   return (
-    <span data-testid={testId} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4, ...tone }}>
+    <span data-testid={testId} className={`tint tone-text ${tone}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4 }}>
       {text}
     </span>
   );
@@ -104,7 +97,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const conflicts = useSlotConflicts(pid, printer?.loaded_filaments, undefined, !!printer);
 
   if (!printer) return null;
-  const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
+  const badge = typeBadge(printer.printer_type);
   const slots = printer.loaded_filaments ?? [];
   const ask = cfgAsk(config);
   const multi = !!(modelFilaments?.length && (modelFilaments.length > 1 || slots.length >= 2));
@@ -139,8 +132,8 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
     <div style={{ padding: 14, background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
         <span className="elig on">{badge}</span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{printer.name}</div>
           <div className="tiny muted">{printer.printer_type}</div>
         </div>
       </div>
@@ -174,10 +167,10 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                 const unmatched = noMatch || unmatchedFilaments.includes(f.index);
                 return (
                   <div key={f.index}>
-                    <div className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div className="row gap-2">
                       <div style={{
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                        background: f.color || '#888', border: '1px solid var(--border-2)',
+                        background: f.color || UNKNOWN_DOT_COLOR, border: '1px solid var(--border-2)',
                       }} />
                       <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-1)' }}>
                         Filament {f.index}{f.type ? ` · ${f.type}` : ''}

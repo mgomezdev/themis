@@ -120,6 +120,9 @@ async def test_a_job_for_an_eligible_printer_is_created(client):
     r = await post_job(client, f["id"], [pid])
 
     assert r.status_code == 201, r.text
+    (job,) = (await client.get("/api/v1/jobs")).json()
+    assert (job["id"], job["uploaded_file_id"], job["status"]) == (r.json()["id"], f["id"], "queued")
+    assert [p["id"] for p in job["eligible_printers"]] == [pid]
 
 
 async def test_each_picked_printer_is_judged_on_its_own_and_only_the_incompatible_one_is_named(client):

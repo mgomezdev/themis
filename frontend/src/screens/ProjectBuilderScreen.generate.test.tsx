@@ -319,6 +319,39 @@ describe('ProjectBuilderScreen - review fixes (BIZ-363)', () => {
     expect(queueBtn().disabled).toBe(true);
   });
 
+  it('refreshes the checks after queueing, so Review shows what the queued project looks like now', async () => {
+    let calls = 0;
+    const api = await existing(open('/projects/7/edit', {
+      'GET /api/v1/projects/7/review': () => (++calls === 1 ? CLEAN
+        : { checks: [{ level: 'ok', tab: 'review', message: 'Jobs queued for every group', group_id: null, item_id: null }], open: 0 }),
+    }));
+    await reviewAndQueue();
+    await screen.findByText('2 jobs added to queue');
+    expect(await screen.findByText('Jobs queued for every group')).toBeTruthy();         // the second run's result replaced the first's
+    expect(screen.queryByText('Every item is in a group')).toBeNull();
+    expect(api.to('GET', '/api/v1/projects/7/review')).toHaveLength(2);
+  });
+
+  it('keeps Queue disabled when the checks describe an older draft than the one on screen', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const api = await existing();
+    const real = globalThis.fetch;
+    // From here on the delete of item 50 waits, so the save that Review starts is still running when the user undoes the removal.
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/projects/7/items/50' && init?.method === 'DELETE') await held;
+      return real(url, init);
+    }));
+    await userEvent.click(screen.getByTitle('Remove'));                                  // item 50 leaves the draft
+    await toTab(/^Review/);                                                              // Review saves first: PATCH, then the held DELETE
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7')).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));                 // the draft changes mid-save
+    release();
+    await screen.findByText('Every item is in a group');                                 // the checks ran, and are clean
+    expect(api.to('GET', '/api/v1/projects/7/review')).toHaveLength(1);                  // (the run for the draft as it was saved; none followed)
+    expect(queueBtn().disabled).toBe(true);                                              // ...so Queue must not trust them
+  });
+
   it('items of a group that was deleted move to the Default Group and save without it', async () => {
     let groups = [group(1, 'Default Group'), group(2, 'Fine')];
     const api = open('/projects/7/edit', {

@@ -135,7 +135,7 @@ export function NewOrderScreen() {
       </div>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{error}</div>
       )}
 
       <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
@@ -271,7 +271,7 @@ export function NewOrderScreen() {
           </div>
 
           <div className="card" style={{ padding: 18 }}>
-            <button className="btn primary" style={{ width: '100%' }}
+            <button className="btn primary w-full"
                     disabled={saving || !customer.trim() || !title.trim()} onClick={handleSubmit}>
               {Icons.check} {editingId == null ? 'Create order' : 'Save changes'}
             </button>

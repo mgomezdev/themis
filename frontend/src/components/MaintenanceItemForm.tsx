@@ -33,7 +33,7 @@ export function TriggerRow({ trigger, onChange, onRemove }: {
   trigger: MaintenanceTrigger; onChange: (t: MaintenanceTrigger) => void; onRemove: () => void;
 }) {
   return (
-    <div className="row gap-2" style={{ alignItems: 'center' }}>
+    <div className="row gap-2">
       <select className="select sm" value={trigger.trigger_type}
               onChange={e => onChange({ ...trigger, trigger_type: e.target.value as MaintenanceTrigger['trigger_type'], unit: e.target.value === 'calendar' ? 'months' : null })}>
         <option value="calendar">Calendar</option>
@@ -70,12 +70,12 @@ export function MaintenanceItemForm({ draft, catalog, onChange, onSave, onCancel
              onChange={e => onChange({ ...draft, name: e.target.value })} />
 
       <div className="row gap-2">
-        <label className="row gap-1" style={{ alignItems: 'center' }}>
+        <label className="row gap-1">
           <input type="radio" checked={draft.scope === 'general'}
                  onChange={() => onChange({ ...draft, scope: 'general' })} />
           General (any printer)
         </label>
-        <label className="row gap-1" style={{ alignItems: 'center' }}>
+        <label className="row gap-1">
           <input type="radio" checked={draft.scope === 'model'}
                  onChange={() => onChange({ ...draft, scope: 'model' })} />
           Model-specific

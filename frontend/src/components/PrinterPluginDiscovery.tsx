@@ -29,7 +29,7 @@ export function PrinterPluginDiscovery({ pluginId }: { pluginId: string }) {
       onCancel={() => setPicked(null)} onCreated={() => { setPicked(null); setCreated(true); }} />}
     <div hidden={!!picked}><DiscoverPrinters pluginId={pluginId} onMoreSettings={p => void pick(p)} /></div>
     {loading && <div role="status" className="small muted">Loading printer models…</div>}
-    {error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+    {error && <div role="alert" className="small text-err">{error}</div>}
     {created && <div role="status" className="small">Printer added. It is now available in Printers.</div>}
   </section>;
 }

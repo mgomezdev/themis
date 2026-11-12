@@ -56,7 +56,7 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
 
   return (
     <div className="col gap-2" data-testid="file-eligibility" style={{ marginTop: 12 }}>
-      <div className="small" style={{ fontWeight: 500 }}>Machine eligibility</div>
+      <div className="small fw-500">Machine eligibility</div>
       {known === false && (
         <div className="tiny" role="status" style={{ color: 'var(--warn)' }}>
           Unknown — this file has no recorded machine. Every job for it needs your confirmation. Tick the printer models it is for.
@@ -64,7 +64,7 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
       )}
       {error && <div className="tiny" role="alert" style={{ color: 'var(--err)' }}>{error}</div>}
       {offered.map(m => (
-        <label key={m.id} className="row gap-2" style={{ alignItems: 'center' }}>
+        <label key={m.id} className="row gap-2">
           <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggle(m.id)}
                  aria-label={`${m.manufacturer_name} ${m.display_name}`} />
           <span className="small">{m.manufacturer_name} {m.display_name}</span>

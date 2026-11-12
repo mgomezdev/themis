@@ -31,6 +31,10 @@
   --err:         oklch(62% 0.225 20);   /* red-orange */
   --idle:        oklch(48% 0.022 250);  /* cool metal grey */
   --info:        oklch(88% 0.15 196);   /* electric cyan — links, printing */
+  /* Tint strengths: every status-tinted fill / outline uses these two (see the tone helpers at the end of this file). */
+  --tint:        12%;
+  --edge:        30%;
+  --scrim:       oklch(0% 0 0 / 0.6);   /* modal backdrop, and the dark plate behind text laid over a camera feed */
 
   /* Type */
   --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -225,6 +229,13 @@ input, textarea, select { font-family: inherit; color: inherit; }
   color: var(--accent-hi);
   border-color: transparent;
 }
+.nav-item .count.tone-ok, .nav-item .count.tone-warn, .nav-item .count.tone-err,
+.nav-item.active .count.tone-ok, .nav-item.active .count.tone-warn, .nav-item.active .count.tone-err {
+  /* a toned badge keeps its tone on the active item too */
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
+  color: var(--tone);
+}
 
 /* collapsed sidebar */
 .app[data-nav="collapsed"] .sidebar .nav-item { justify-content: center; padding: 10px; }
@@ -349,6 +360,28 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .btn.ghost:hover { background: var(--bg-2); }
 .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: 0; }
 .btn.icon { padding: 7px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--bg-1); border-color: var(--border-2); filter: none; }
+.btn.primary:disabled:hover { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); border-color: var(--accent); }
+.btn.ghost:disabled:hover { background: transparent; border-color: transparent; }
+.btn:disabled:active { transform: none; }
+
+/* ---------- notice ---------- */
+/* Inline message box: an error after a failed save, a warning above a form. `.notice` + a tone, tinted like `.pill`. */
+.notice {
+  padding: 10px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 13px;
+}
+.notice.ok, .notice.warn, .notice.err, .notice.info {
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
+  color: var(--tone);
+}
+.notice.ok { --tone: var(--ok); } .notice.warn { --tone: var(--warn); } .notice.err { --tone: var(--err); } .notice.info { --tone: var(--info); }
 
 /* ---------- card ---------- */
 .card {
@@ -382,8 +415,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 /* Tone pills: one tint recipe, five tones. */
 .pill.ok, .pill.warn, .pill.err, .pill.info, .pill.idle, .pill.accent {
-  background: color-mix(in oklch, var(--tone) 12%, transparent);
-  border-color: color-mix(in oklch, var(--tone) 30%, transparent);
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
   color: var(--tone);
 }
 .pill.ok     { --tone: var(--ok); }
@@ -567,7 +600,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .row.between { justify-content: space-between; }
 .row.wrap { flex-wrap: wrap; }
 .col { display: flex; flex-direction: column; }
-.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
 .muted { color: var(--text-3); }
 .tiny  { font-size: 11px; }
 .small { font-size: 12px; }
@@ -790,3 +823,47 @@ input, textarea, select { font-family: inherit; color: inherit; }
   .topbar .btn, .layout-toggle button { min-height: 44px; }
   .more-sheet { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* ---------- one-property helpers ---------- */
+/* One-property helpers for what used to be repeated inline (`style={{ flex: 1 }}`, `style={{ color: 'var(--err)' }}`).
+   Compose them in className; reach for inline `style` only for a value that is computed or truly one-off.
+   Kept LAST in the file on purpose: these replace inline styles, so they must win over any single-class rule above
+   (`.muted`, `.btn`, ...) when both are on one element. */
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; }
+.min-0 { min-width: 0; }
+.shrink-0 { flex-shrink: 0; }
+.w-full { width: 100%; }
+.nowrap { white-space: nowrap; }
+.text-right { text-align: right; }
+.tbl th.text-right { text-align: right; }      /* `.tbl th` sets left with higher specificity */
+.text-err { color: var(--err); }
+.text-warn { color: var(--warn); }
+.text-ok { color: var(--ok); }
+.fw-500 { font-weight: 500; }
+.fw-600 { font-weight: 600; }
+
+/* ---------- tone helpers ---------- */
+/* Everything tinted by a status colour is built from these, never from a hand-written color-mix() (styleTokens.test.ts fails
+   on one). Pick a tone, then what to draw with it:
+     tone-ok | tone-warn | tone-err | tone-info | tone-idle | tone-accent    sets --tone
+     tint-bg      the fill                      edge / edge-top / edge-bottom   the 1px outline (all sides / one side)
+     tint         fill + outline                tone-text                       the tone as the text colour
+     tone-solid   a solid label (white text)    edge-strong / ring              a flagged card's border and inner ring
+   e.g. <div className="tone-err tint tone-text">. Strength is --tint / --edge in :root, so every tinted box matches.
+   Last in the file, like the one-property helpers: these must win over single-class rules above (`.card` borders, ...). */
+.tone-ok     { --tone: var(--ok); }
+.tone-warn   { --tone: var(--warn); }
+.tone-err    { --tone: var(--err); }
+.tone-info   { --tone: var(--info); }
+.tone-idle   { --tone: var(--idle); }
+.tone-accent { --tone: var(--accent); }
+.tint-bg     { background: color-mix(in oklch, var(--tone) var(--tint), transparent); }
+.edge        { border: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.edge-top    { border-top: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.edge-bottom { border-bottom: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.tint        { background: color-mix(in oklch, var(--tone) var(--tint), transparent); border: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.tone-text   { color: var(--tone); }
+.tone-solid  { background: color-mix(in oklch, var(--tone) 85%, transparent); color: white; }   /* label laid over a thumbnail */
+.edge-strong { border-color: color-mix(in oklch, var(--tone) 60%, transparent); }               /* a card flagged by its tone */
+.ring        { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--tone) var(--tint), transparent); }

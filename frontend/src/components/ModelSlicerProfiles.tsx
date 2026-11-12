@@ -117,9 +117,9 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
       ) : (
         <div className="col gap-1">
           {mine.map(r => (
-            <div key={r.id} className="row gap-2" style={{ alignItems: 'center' }} data-testid={`msp-row-${r.id}`}>
+            <div key={r.id} className="row gap-2" data-testid={`msp-row-${r.id}`}>
               <span className="small" style={{ minWidth: 110 }}>{variantLabel(variantOf(r))}</span>
-              <span className="small mono" style={{ flex: 1 }}>{r.machine_profile}</span>
+              <span className="small mono grow">{r.machine_profile}</span>
               {r.is_default
                 ? <span className="tiny muted">default</span>
                 : <button className="btn ghost sm" disabled={busy} onClick={() => run(() => updateModelSlicerProfile(modelUuid, r.id, { is_default: true }))}>Make default</button>}
@@ -134,7 +134,7 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
         <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
           <legend className="label">Suggested for {modelLabel}</legend>
           {offered.map(c => (
-            <label key={c.ref || c.name} className="row gap-2" style={{ alignItems: 'center' }}>
+            <label key={c.ref || c.name} className="row gap-2">
               <input type="radio" name={`msp-suggest-${modelUuid}`} checked={chosen === c.name} onChange={() => setChosen(c.name)} />
               <span className="small mono">{c.name}</span>
               <span className="tiny muted">{Math.round(c.confidence * 100)}% match</span>
@@ -154,9 +154,9 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
         <div className="col gap-1">
           <div className="label">Other nozzle variants of {modelLabel}</div>
           {otherVariants.map(v => (
-            <div key={v.ref || v.name} className="row gap-2" style={{ alignItems: 'center' }}>
+            <div key={v.ref || v.name} className="row gap-2">
               <span className="small" style={{ minWidth: 110 }}>{variantLabel({ diameter_mm: v.nozzle_diameter_mm as number, flow: v.flow })}</span>
-              <span className="small mono" style={{ flex: 1 }}>{v.name}</span>
+              <span className="small mono grow">{v.name}</span>
               <button className="btn ghost sm" disabled={busy} onClick={() => add(v.name, v.nozzle_diameter_mm as number, v.flow, false)}>Add</button>
             </div>
           ))}

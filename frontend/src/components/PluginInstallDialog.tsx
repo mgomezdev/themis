@@ -60,10 +60,10 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
   const existing = preview ? plugins.find(p => p.id === preview.id) : undefined;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
          onClick={e => { if (e.target === e.currentTarget) close(); }}>
       <div className="card" role="dialog" aria-label="Install plugin" style={{ width: 520, maxWidth: '92vw', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div className="row between" style={{ alignItems: 'center' }}>
+        <div className="row between">
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{initial ? 'Upgrade plugin' : 'Install plugin'}</h3>
           <button className="btn ghost icon sm" aria-label="Close" disabled={busy} onClick={close}>&#x2715;</button>
         </div>
@@ -84,10 +84,10 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
                   <input className="input" value={repo} onChange={e => setRepo(e.target.value)} placeholder="https://github.com/owner/repo" aria-label="Repository URL" />
                 </label>
                 <div className="row gap-2">
-                  <label className="col gap-1 small" style={{ flex: 1 }}>Ref (tag, branch or commit)
+                  <label className="col gap-1 small grow">Ref (tag, branch or commit)
                     <input className="input" value={ref} onChange={e => setRef(e.target.value)} placeholder="default branch" aria-label="Ref" />
                   </label>
-                  <label className="col gap-1 small" style={{ flex: 1 }}>Subdirectory
+                  <label className="col gap-1 small grow">Subdirectory
                     <input className="input" value={subdir} onChange={e => setSubdir(e.target.value)} placeholder="repo root" aria-label="Subdirectory" />
                   </label>
                 </div>
@@ -100,7 +100,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
         {preview && (
           <div className="col gap-2" data-testid="install-preview">
             <div>
-              <div style={{ fontWeight: 600 }}>{preview.name} <span className="muted small">v{preview.version}</span></div>
+              <div className="fw-600">{preview.name} <span className="muted small">v{preview.version}</span></div>
               <div className="muted small">{preview.description || preview.provides.map(x => x.capability).join(', ')}</div>
             </div>
             <dl className="small" style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px 12px', margin: 0 }}>
@@ -118,13 +118,13 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
               <strong>This plugin gets full access to Themis.</strong> It runs inside the Themis process and can read your data, every
               secret and API key, and control your printers. Only install code you trust. It does not run until you restart Themis.
             </div>
-            <label className="row gap-2 small" style={{ alignItems: 'center' }}>
+            <label className="row gap-2 small">
               <input type="checkbox" checked={trust} onChange={e => setTrust(e.target.checked)} /> I trust this plugin and its publisher
             </label>
           </div>
         )}
 
-        {error && <div role="alert" className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+        {error && <div role="alert" className="small text-err">{error}</div>}
 
         <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
           <button className="btn" disabled={busy} onClick={close}>Cancel</button>

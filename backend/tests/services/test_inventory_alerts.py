@@ -97,6 +97,30 @@ async def test_raising_a_threshold_alerts_newly_low_spools_and_other_spools_are_
     assert [l.spool_id for l in fresh] == [2] and _ids(alerted) == [1, 2]
 
 
+async def test_a_slow_channel_does_not_hold_up_processing_and_its_failure_is_logged_not_lost(session_factory, caplog):
+    """The notification runs as a tracked background task: `process` returns while the channel is still sending, the task
+    stays referenced until it ends (the loop only holds tasks weakly), and a channel that blows up is logged."""
+    import logging
+    from app.services.inventory import tasks as inventory_tasks
+    await _row(session_factory, low_stock_default_g=100)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_then_broken(*_a, **_k):
+        started.set()
+        await release.wait()
+        raise RuntimeError("smtp down")
+
+    with patch.object(spool_alerts.webhook_service, "schedule"), patch.object(spool_alerts, "notify", new=slow_then_broken):
+        await asyncio.wait_for(_process(session_factory, [spool(1, 80)]), timeout=1.0)     # did not wait for the channel
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert [t.get_name() for t in inventory_tasks._tasks] == ["low-stock-notify"]
+        release.set()
+        with caplog.at_level(logging.ERROR, logger="app"):
+            await asyncio.wait_for(inventory_tasks.drain(), timeout=1.0)
+    assert inventory_tasks._tasks == set()
+    assert any("Inventory background task failed" in r.getMessage() for r in caplog.records)
+
+
 async def test_no_thresholds_means_no_alerts_and_no_state(session_factory):
     await _row(session_factory)
     fresh, alerted = await _process(session_factory, [spool(1, 0)])

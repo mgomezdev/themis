@@ -70,7 +70,7 @@ export function OutcomeModal({ job, onClose, onSaved }: Props) {
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'var(--scrim)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}

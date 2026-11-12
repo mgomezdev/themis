@@ -248,7 +248,7 @@ export function ProjectBuilderScreen() {
         {isDraft && projectId && (
           <div className="row gap-3" role="status" style={{ alignItems: 'center', padding: '10px 14px', borderRadius: 6,
                                                             border: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
-            <span className="small" style={{ flex: 1 }}>This is a draft (a customer request). Promote it to planning to queue it.</span>
+            <span className="small grow">This is a draft (a customer request). Promote it to planning to queue it.</span>
             <button className="btn sm" onClick={promote}>Promote to planning</button>
           </div>
         )}
@@ -264,7 +264,7 @@ export function ProjectBuilderScreen() {
       <ModelPicker files={allFiles} onAdd={addFile} selectedFolder={selectedFolder} setSelectedFolder={setSelectedFolder}
                    search={search} setSearch={setSearch} />
 
-      <div className="col gap-3" style={{ minWidth: 0 }}>
+      <div className="col gap-3 min-0">
         {banner(true, false)}
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>Parts ({items.length})</span>
         {bulkAsk && (

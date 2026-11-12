@@ -67,7 +67,7 @@ export function AnalyticsScreen() {
 
   return (
     <div className="col gap-4" style={{ padding: '4px 0' }}>
-      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="row gap-2 wrap">
         <div role="group" aria-label="Date range" className="row gap-2">
           {PRESETS.map(p => (
             <button key={p.id} className={`btn sm ${preset === p.id ? 'primary' : ''}`} aria-pressed={preset === p.id}
@@ -75,7 +75,7 @@ export function AnalyticsScreen() {
           ))}
         </div>
         {preset === 'custom' && (
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             <input type="date" aria-label="Start date" value={customStart} max={customEnd || undefined}
                    onChange={e => setCustomStart(e.target.value)} />
             <span className="muted small">to</span>
@@ -96,7 +96,7 @@ export function AnalyticsScreen() {
 
       {!customInvalid && data && t && (
         <>
-          <div className="row gap-3" style={{ flexWrap: 'wrap' }}>
+          <div className="row gap-3 wrap">
             <Kpi testId="kpi-jobs" label="Jobs completed" value={String(t.completed)} sub={kpiSub(t)} />
             <Kpi testId="kpi-success" label="Success rate" value={fmtRate(t.success_rate)} sub="completed ÷ (completed + failed)" />
             <Kpi testId="kpi-hours" label="Print hours" value={fmtHours(t.print_seconds)} sub="completed jobs, slicer estimate" />
@@ -126,8 +126,8 @@ export function AnalyticsScreen() {
                         <td style={td}>{fmtRate(p.success_rate)}</td>
                         <td style={td}>{fmtHours(p.print_seconds)}</td>
                         <td style={td}>
-                          <div className="row gap-2" style={{ alignItems: 'center' }}>
-                            <div style={{ flex: 1 }}><Progress value={p.utilization_pct} /></div>
+                          <div className="row gap-2">
+                            <div className="grow"><Progress value={p.utilization_pct} /></div>
                             <span className="num" style={{ minWidth: 44, textAlign: 'right' }}>{p.utilization_pct}%</span>
                           </div>
                         </td>
@@ -146,9 +146,9 @@ export function AnalyticsScreen() {
             ) : (
               <div className="col gap-2">
                 {data.materials.map(m => (
-                  <div key={m.material} data-testid={`material-${m.material}`} className="row gap-3" style={{ alignItems: 'center' }}>
+                  <div key={m.material} data-testid={`material-${m.material}`} className="row gap-3">
                     <span style={{ width: 80, color: 'var(--text-1)' }}>{m.material}</span>
-                    <div style={{ flex: 1 }}><Progress value={(m.grams / maxGrams) * 100} /></div>
+                    <div className="grow"><Progress value={(m.grams / maxGrams) * 100} /></div>
                     <span className="num" style={{ minWidth: 150, textAlign: 'right', color: 'var(--text-1)' }}>
                       {fmtGrams(m.grams)} · {m.jobs} {m.jobs === 1 ? 'job' : 'jobs'}
                     </span>

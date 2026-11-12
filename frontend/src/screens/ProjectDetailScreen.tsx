@@ -196,7 +196,7 @@ export function ProjectDetailScreen() {
         {/* ── Header card ─────────────────────────────────────────────────── */}
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="grow min-0">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-1)' }}>
                   {project.name}
@@ -207,10 +207,8 @@ export function ProjectDetailScreen() {
                 }}>
                   #{project.id}
                 </span>
-                <span style={{
+                <span className={`tint-bg tone-text ${project.stage === 'queued' ? 'tone-ok' : 'tone-warn'}`} style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: project.stage === 'queued' ? 'color-mix(in oklch, var(--ok) 15%, transparent)' : 'color-mix(in oklch, var(--warn) 15%, transparent)',
-                  color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
                 {project.order_type === 'customer' && (
@@ -221,18 +219,11 @@ export function ProjectDetailScreen() {
                   }}>Customer</span>
                 )}
                 {project.on_hold && (
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                    background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
-                    textTransform: 'uppercase', letterSpacing: '0.04em',
-                  }}>On hold</span>
+                  <span className="tone-warn tint-bg tone-text" style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>On hold</span>
                 )}
-                <span style={{
+                <span className={project.payment_status === 'paid' ? 'tone-ok tint-bg tone-text' : project.payment_status === 'partial' ? 'tone-warn tint-bg tone-text' : undefined} style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: project.payment_status === 'paid' ? 'color-mix(in oklch, var(--ok) 15%, transparent)'
-                    : project.payment_status === 'partial' ? 'color-mix(in oklch, var(--warn) 15%, transparent)' : 'var(--bg-2)',
-                  color: project.payment_status === 'paid' ? 'var(--ok)'
-                    : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
+                  ...(project.payment_status === 'paid' || project.payment_status === 'partial' ? {} : { background: 'var(--bg-2)', color: 'var(--text-4)' }),
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>
                   {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
@@ -260,7 +251,7 @@ export function ProjectDetailScreen() {
                   <span>
                     Price: {fmtMoney(project.price)}
                     {project.payment_status !== 'paid' && project.price > (project.amount_paid ?? 0) && (
-                      <span style={{ color: 'var(--warn)' }}>
+                      <span className="text-warn">
                         {' '}· {fmtMoney(project.price - (project.amount_paid ?? 0))} outstanding
                       </span>
                     )}
@@ -278,7 +269,7 @@ export function ProjectDetailScreen() {
                   </label>
                 )}
                 {project.quote_accepted_at && (
-                  <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
+                  <span className="text-ok">Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
                 )}
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   Account
@@ -425,7 +416,7 @@ export function ProjectDetailScreen() {
               padding: '10px 14px', background: 'oklch(55% 0.15 142 / 0.06)',
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
-              <span style={{ color: 'var(--ok)' }}>{Icons.check}</span>
+              <span className="text-ok">{Icons.check}</span>
               <span style={{ fontSize: 13, flex: 1 }}>
                 {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
                 {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
@@ -440,12 +431,8 @@ export function ProjectDetailScreen() {
             </div>
           )}
           {generateError && (
-            <div style={{
-              marginTop: 12, display: 'flex', alignItems: 'center', gap: 8,
-              background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
-              borderRadius: 6, padding: '10px 14px',
-            }}>
-              <span style={{ color: 'var(--err)' }}>{Icons.alert}</span>
+            <div className="tone-err tint" style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, borderRadius: 6, padding: '10px 14px' }}>
+              <span className="text-err">{Icons.alert}</span>
               <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
             </div>
           )}

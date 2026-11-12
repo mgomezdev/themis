@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from app.plugins.capabilities import CORE
@@ -18,6 +20,6 @@ def test_capability_id_shape(cid, ok):
 
 
 def test_definition_is_immutable():
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         CORE["inventory.filament"].version = 2        # type: ignore[misc]
     assert isinstance(CORE["inventory.filament"], CapabilityDef)

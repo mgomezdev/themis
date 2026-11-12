@@ -37,6 +37,13 @@ export function fmtClock(mins: number | null | undefined): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+/** Swatch shown when a filament or material has no known colour. */
+export const UNKNOWN_COLOR = '#475472';
+/** The same, for a small dot drawn straight on a panel, where UNKNOWN_COLOR is too dark to see. */
+export const UNKNOWN_DOT_COLOR = '#94a3b8';
+/** Colour a newly added filament slot starts with (it is saved, and the operator can change it). */
+export const NEW_SLOT_COLOR = '#888888';
+
 export function matColor(material: string): string {
   const m = material.toLowerCase();
   if (m.includes('pa-cf') || m.includes('pacf')) return '#94a3b8';
@@ -46,7 +53,7 @@ export function matColor(material: string): string {
   if (m.includes('tpu')) return '#f87171';
   if (m.includes('pc') && !m.includes('pacf')) return '#fbbf24';
   if (m.includes('pla')) return '#60a5fa';
-  return '#475472';
+  return UNKNOWN_COLOR;
 }
 
 export function matTypeBg(t: string): string {

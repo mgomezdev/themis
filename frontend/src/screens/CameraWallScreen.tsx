@@ -80,12 +80,12 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
                        intervalMs={SNAPSHOT_MS + (Number(p.id) % 10) * 130} />}   /* staggered so 40 tiles don't all tick at once */
         <div style={{ position: 'absolute', top: 6, left: 6, right: 6, display: 'flex', justifyContent: 'space-between',
                       gap: 6, zIndex: 4, pointerEvents: 'none' }}>
-          <span className="tiny" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: 4, padding: '1px 6px',
+          <span className="tiny" style={{ background: 'var(--scrim)', color: 'var(--text-1)', borderRadius: 4, padding: '1px 6px',
                                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {!!p.alarmCount && p.alarmSeverity && (
               <span data-testid="wall-alarm" title={`${p.alarmCount} unacknowledged alarm${p.alarmCount === 1 ? '' : 's'} (worst: ${p.alarmSeverity})`}
-                    style={{ background: 'rgba(0,0,0,0.6)', color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`,
+                    style={{ background: 'var(--scrim)', color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`,
                              borderRadius: 999, padding: '0 6px', fontSize: 11, fontWeight: 600 }}>{label}</span>
             )}
             {asLive && <StatusPill status={p.status} />}      {/* snapshot tiles get theirs from VideoTile */}
@@ -117,13 +117,13 @@ export function CameraWallScreen() {
   const count = (f: Filter) => f === 'all' ? withCamera.length : withCamera.filter(p => p.status === f).length;
 
   return (
-    <div className="page" data-testid="camera-wall">
+    <div data-testid="camera-wall">
       <div className="row gap-3" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         {FILTERS.map(f => (
           <button key={f} className={`btn sm${prefs.filter === f ? ' primary' : ''}`} aria-pressed={prefs.filter === f}
                   onClick={() => set({ filter: f })}>{f[0].toUpperCase() + f.slice(1)} · {count(f)}</button>
         ))}
-        <span style={{ flex: 1 }} />
+        <span className="grow" />
         <label className="small muted" htmlFor="wall-cols">Columns</label>
         <select id="wall-cols" className="input" style={{ width: 'auto' }} value={prefs.columns}
                 onChange={e => set({ columns: Number(e.target.value) })}>

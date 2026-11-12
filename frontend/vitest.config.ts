@@ -14,6 +14,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
     exclude: ['e2e/**', 'node_modules/**'],
+    // Vitest blanks CSS imports by default; src/styleTokens.test.ts reads the stylesheet's text to check the tokens.
+    css: { include: [/styles\/app\.css/] },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],

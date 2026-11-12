@@ -152,6 +152,7 @@ async def test_delete_blocked_by_active_job(client, lib, session_factory):
         await session.commit()
     r = await client.delete(f"/api/v1/files/{up['id']}")
     assert r.status_code == 409
+    assert up["id"] in [f["id"] for f in (await client.get("/api/v1/files")).json()]      # the refusal left the file in place
 
 
 @pytest.mark.asyncio

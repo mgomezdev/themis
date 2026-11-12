@@ -1,0 +1,139 @@
+/// <reference types="vite/client" />
+// Style guard: colours live in one place. `styles/app.css` `:root` defines the design tokens (docs/agent/styling.md);
+// components reference them as `var(--token)`. CSS is not type-checked, so three mistakes are otherwise silent:
+//   1. `var(--border)` for a token that does not exist: the declaration is dropped and the element loses its border.
+//   2. `var(--ok, #22c55e)`: a second, different definition of the colour that hides mistake 1 behind an off-palette value.
+//   3. A new `rgba(239,68,68,0.12)` literal where `color-mix(in oklch, var(--err) 12%, transparent)` is the house form.
+// 1 and 2 are forbidden outright. 3 is a ratchet: the literals left in component code are counted and the count may only
+// go down. Lower LITERAL_BUDGET when you remove some; never raise it (add a token, or a named constant in an allowed file).
+import { describe, expect, it } from 'vitest';
+import css from './styles/app.css?raw';
+
+const sources = import.meta.glob('./**/*.{ts,tsx}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+
+const isTest = (path: string) => /\.test\.tsx?$/.test(path) || path.startsWith('./test/');
+const prod = Object.entries(sources).filter(([path]) => !isTest(path)).map(([path, text]) => [path.replace(/^\.\//, ''), text] as const);
+
+const defined = (text: string) => new Set([...text.matchAll(/(--[a-z0-9-]+)\s*:/gi)].map(m => m[1]));
+const referenced = (text: string) => [...text.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)].map(m => m[1]);
+// A component may set a custom property inline for its own class to read (`style={{ '--p': '40%' }}`).
+const setInline = (text: string) => [...text.matchAll(/['"](--[a-z0-9-]+)['"]\s*:/gi)].map(m => m[1]);
+
+const undefinedVars = (files: readonly (readonly [string, string])[], stylesheet: string) => {
+  const known = defined(stylesheet);
+  files.forEach(([, text]) => setInline(text).forEach(v => known.add(v)));
+  const out: string[] = [];
+  for (const [path, text] of [...files, ['styles/app.css', stylesheet] as const]) {
+    for (const v of new Set(referenced(text))) if (!known.has(v)) out.push(`${path}: ${v}`);
+  }
+  return out.sort();
+};
+
+const FALLBACK = /var\(\s*--[a-z0-9-]+\s*,\s*(#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\()/i;
+const literalFallbacks = (files: readonly (readonly [string, string])[]) => files.filter(([, text]) => FALLBACK.test(text)).map(([path]) => path);
+
+// Files whose job is to hold colour data, not to style the app's chrome.
+const PALETTE_FILES: Record<string, string> = {
+  'data/helpers.ts': 'material palette (matColor / matType*) and the named fallback swatches',
+  'api/fleet.ts': 'per-printer-type accent',
+  'components/builder/GroupBanner.tsx': 'the colours a print group can be given',
+  'components/StlPreview.tsx': 'canvas renderer: shades each triangle from its normal',
+  'screens/settings/TagsPage.tsx': 'the swatch picker offered for a material tag',
+  'screens/files/palette.ts': 'per-plate fallback colours for a file with no filament data',
+};
+// A hex colour anywhere inside a quoted string (`'#fff'`, `'1px solid #333'`, a gradient) or `rgba(…)` / `hsl(…)` / `oklch(…)`.
+// Not matched: `&#8203;` entities, `#123` in JSX text (not in a string), `'#' + id`, and named colours (`'white'`): those
+// last ones are a known gap, as is anything in PALETTE_FILES, which is exempt as a whole file.
+const LITERAL = /['"`][^'"`\n<>{}]*?(?<![&\w])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3})\b|rgba?\(\s*[\d$]|hsla?\(\s*\d|oklch\(\s*\d/gi;
+const literalCount = (files: readonly (readonly [string, string])[]) =>
+  files.filter(([path]) => !(path in PALETTE_FILES)).reduce((n, [, text]) => n + (text.match(LITERAL)?.length ?? 0), 0);
+
+// Measured 2026-11-11, after develop's palette consolidation was merged in. What is left is mostly drop shadows and
+// white-on-thumbnail overlays; turn those into tokens and lower this.
+const LITERAL_BUDGET = 37;
+
+// Class names: `className="row gap-1"` for a class app.css never defined renders with no styling and no error (it happened:
+// `gap-1` was used 50 times before it existed, and four tables said `table` where the class is `tbl`).
+const cssClasses = (stylesheet: string) =>
+  new Set([...stylesheet.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.([a-zA-Z_][\w-]*)/g)].map(m => m[1]));
+const usedClasses = (text: string) => [
+  ...[...text.matchAll(/className="([^"]*)"/g)].flatMap(m => m[1].split(/\s+/)),
+  // the fixed words of a template literal; `${…}` parts are computed and not checked
+  // (a word touching a `${…}`, like `tone-${tone}`, is computed too: it is dropped whole)
+  ...[...text.matchAll(/className=\{`([^`]*)`\}/g)].flatMap(m => m[1].replace(/\S*\$\{[^}]*\}\S*/g, ' ').split(/\s+/)),
+].filter(Boolean);
+const undefinedClasses = (files: readonly (readonly [string, string])[], stylesheet: string) => {
+  const known = cssClasses(stylesheet);
+  return [...new Set(files.flatMap(([path, text]) => usedClasses(text).filter(c => !known.has(c)).map(c => `${path}: ${c}`)))].sort();
+};
+
+// A status tint is a class (`tone-err tint`), never a hand-written color-mix(): the recipe and its two strengths (--tint,
+// --edge) live in app.css, so every tinted box matches and a restyle is one edit. rgba() is covered by LITERAL_BUDGET.
+const colorMixFiles = (files: readonly (readonly [string, string])[]) => files.filter(([, text]) => /color-mix\(/.test(text)).map(([path]) => path);
+
+describe('style tokens', () => {
+  it('component code has no color-mix(): tints come from the tone helper classes', () => {
+    expect(colorMixFiles(prod)).toEqual([]);
+  });
+
+  it('the tone helpers and tint strengths exist in app.css', () => {
+    const classes = cssClasses(css), vars = defined(css);
+    for (const c of ['tone-ok', 'tone-warn', 'tone-err', 'tone-info', 'tone-idle', 'tone-accent', 'tint', 'tint-bg', 'edge', 'tone-text']) {
+      expect(classes.has(c), c).toBe(true);
+    }
+    expect(vars.has('--tint') && vars.has('--edge')).toBe(true);
+  });
+
+  it('can fail: a planted color-mix() is caught', () => {
+    expect(colorMixFiles([['x.tsx', `<div style={{ background: 'color-mix(in oklch, var(--err) 12%, transparent)' }} />`]])).toEqual(['x.tsx']);
+    expect(colorMixFiles([['y.tsx', `<div className="tone-err tint" />`]])).toEqual([]);
+  });
+
+  it('every class name used in the source is defined in app.css', () => {
+    expect(undefinedClasses(prod, css)).toEqual([]);
+  });
+
+  it('can fail: an undefined class is caught, a defined one and a computed part are not', () => {
+    const planted = [['x.tsx', '<div className="row gap-9"><span className={`pill ${tone} tone-${t} nope`} /></div>']] as const;
+    expect(undefinedClasses(planted, '.row { display: flex; } .pill.ok { color: green; } /* .gap-9 { } */')).toEqual(['x.tsx: gap-9', 'x.tsx: nope']);
+  });
+
+  it('every var(--token) used in the source is defined in app.css (or set inline by a component)', () => {
+    expect(undefinedVars(prod, css)).toEqual([]);
+  });
+
+  it('no var() carries a literal colour fallback', () => {
+    expect(literalFallbacks(prod)).toEqual([]);
+  });
+
+  it('colour literals in component code stay within the budget', () => {
+    expect(literalCount(prod)).toBeLessThanOrEqual(LITERAL_BUDGET);
+  });
+
+  it('the budget is tight: lower LITERAL_BUDGET when literals are removed', () => {
+    expect(LITERAL_BUDGET - literalCount(prod)).toBeLessThan(5);
+  });
+
+  it('every palette file exists and still holds a colour literal', () => {
+    const stale = Object.keys(PALETTE_FILES).filter(path => !prod.some(([p, text]) => p === path && (text.match(LITERAL)?.length ?? 0) > 0));
+    expect(stale).toEqual([]);
+  });
+
+  it('scans the whole source tree and the stylesheet', () => {
+    expect(prod.length).toBeGreaterThan(100);
+    expect(defined(css).has('--scrim')).toBe(true);
+  });
+
+  it('can fail: a planted undefined var, fallback and literal are each caught', () => {
+    const planted = [['x.tsx', `<div style={{ border: '1px solid var(--border)', color: 'var(--ok, #22c55e)', background: 'rgba(239,68,68,0.12)' }} />`]] as const;
+    expect(undefinedVars(planted, ':root { --ok: green; }')).toEqual(['x.tsx: --border']);
+    expect(literalFallbacks(planted)).toEqual(['x.tsx']);
+    expect(literalCount(planted)).toBe(2);                                       // the fallback hex and the rgba()
+    expect(literalCount([['z.tsx', `border: '1px solid #333', background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)'`]])).toBe(2);
+    // …and the things that must not trip it.
+    const fine = [['y.tsx', `<div style={{ '--p': '40%', color: 'var(--ok)' } as React.CSSProperties}>Job #101 &#8203; {'#' + id}</div>`]] as const;
+    expect(undefinedVars(fine, ':root { --ok: green; } .bar { width: var(--p, 0%); }')).toEqual([]);
+    expect(literalFallbacks(fine)).toEqual([]);
+    expect(literalCount(fine)).toBe(0);
+  });
+});
