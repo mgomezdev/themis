@@ -16,10 +16,7 @@ import { cardCueStyle } from './cardCue';
 
 export function DormantBadge({ reason }: { reason: string }) {
   return (
-    <span className="tiny" title={reason} style={{
-      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
-      background: 'color-mix(in oklch, var(--idle) 18%, transparent)', color: 'var(--text-3)', fontWeight: 600,
-    }}>DORMANT</span>
+    <span className="tiny tone-idle tint-bg" title={reason} style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', color: 'var(--text-3)', fontWeight: 600 }}>DORMANT</span>
   );
 }
 

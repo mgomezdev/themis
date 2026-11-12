@@ -83,14 +83,14 @@ export function FilterCard({
                     const on = activeTags.includes(t);
                     const count = tagCounts[t] ?? 0;
                     return (
-                      <button key={t} onClick={() => toggleTag(t)}
+                      <button key={t} onClick={() => toggleTag(t)} className={on ? 'tone-accent edge' : undefined}
                               style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: 6,
                                 padding: '4px 10px',
                                 borderRadius: 0,
-                                border: `1px solid ${on ? 'color-mix(in oklch, var(--accent) 40%, transparent)' : 'var(--border-1)'}`,
+                                ...(on ? {} : { border: '1px solid var(--border-1)' }),      // `on` draws its outline with .edge
                                 background: on ? 'var(--accent-tint)' : 'var(--bg-0)',
                                 color: on ? 'var(--accent-hi)' : 'var(--text-1)',
                                 fontSize: 12,

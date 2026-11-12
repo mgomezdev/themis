@@ -31,14 +31,14 @@ export function JobCardRich({
 
   return (
     <div
-      className="card"
+      className={`card${selected ? '' : isFailed ? ' tone-err edge-strong ring' : isBlocked ? ' tone-warn edge-strong ring' : ''}`}
       onClick={onClick}
       style={{
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'color-mix(in oklch, var(--err) 55%, transparent)' : isBlocked ? 'color-mix(in oklch, var(--warn) 60%, transparent)' : undefined,
-        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : isFailed ? 'inset 0 0 0 1px color-mix(in oklch, var(--err) 15%, transparent)' : isBlocked ? 'inset 0 0 0 1px color-mix(in oklch, var(--warn) 12%, transparent)' : undefined,
+        borderColor: selected ? 'var(--accent)' : undefined,
+        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : undefined,
       }}
     >
       <div className="row gap-4" style={{ padding: 14 }}>
@@ -151,15 +151,8 @@ export function JobCardRich({
 
       {/* Error / Blocked strip — visible without opening the panel */}
       {isBlocked && job.blockReason && (
-        <div
-          style={{
-            padding: '10px 14px',
-            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
-            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
+        <div className="tone-warn tint-bg edge-top"
+          style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}
         >
           <div
             className="row gap-1"
@@ -181,15 +174,8 @@ export function JobCardRich({
         </div>
       )}
       {isFailed && (
-        <div
-          style={{
-            padding: '10px 14px',
-            borderTop: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
-            background: 'color-mix(in oklch, var(--err) 9%, transparent)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
+        <div className="tone-err tint-bg edge-top"
+          style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}
         >
           <div
             className="row gap-1"
@@ -211,15 +197,8 @@ export function JobCardRich({
         </div>
       )}
       {!isBlocked && !isFailed && job.lowStockWarning && (
-        <div
-          style={{
-            padding: '10px 14px',
-            borderTop: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
-            background: 'color-mix(in oklch, var(--warn) 9%, transparent)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
+        <div className="tone-warn tint-bg edge-top"
+          style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}
         >
           <div
             className="row gap-1"

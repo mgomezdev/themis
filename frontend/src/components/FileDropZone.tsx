@@ -83,10 +83,7 @@ export function FileDropZone({ onUploaded, label, style, children }: {
       <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: error ? 12 : 0 }}>{error}</div>
       {children}
       {over && (
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none',
-          border: '2px dashed var(--accent)', background: 'color-mix(in oklch, var(--accent) 6%, transparent)',
-        }}>
+        <div className="tone-accent tint-bg" aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none', border: '2px dashed var(--accent)' }}>
           <div style={{ position: 'sticky', top: '40vh', display: 'flex', justifyContent: 'center' }}>
             <div className="card" style={{ padding: '10px 16px', fontWeight: 600 }}>{label}</div>
           </div>

@@ -84,18 +84,10 @@ function ProjectCard({
           }}>Customer</span>
         )}
         {project.on_hold && (
-          <span style={{
-            fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-            background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
-            textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>On hold</span>
+          <span className="tone-warn tint-bg tone-text" style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>On hold</span>
         )}
         {project.stage !== 'queued' && (
-          <span style={{
-            fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-            background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
-            textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>{project.stage}</span>
+          <span className="tone-warn tint-bg tone-text" style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{project.stage}</span>
         )}
         <span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>#{project.id}</span>
       </div>

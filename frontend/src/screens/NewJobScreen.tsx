@@ -375,19 +375,12 @@ export function NewJobScreen() {
       </div>
 
       {successMsg && (
-        <div style={{
-          padding: '10px 14px', borderRadius: 8,
-          background: 'color-mix(in oklch, var(--ok) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)',
-          color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
-        }}>
+        <div className="tone-ok tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
           {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
         </div>
       )}
       {eligibilityPrompt && (
-        <div role="alert" data-testid="eligibility-prompt" style={{
-          padding: '10px 14px', borderRadius: 8,
-          background: 'color-mix(in oklch, var(--warn) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', fontSize: 13,
-        }}>
+        <div className="tone-warn tint" role="alert" data-testid="eligibility-prompt" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>
           <div>{eligibilityPrompt}</div>
           <div className="row gap-2" style={{ marginTop: 8 }}>
             <button className="btn primary sm" disabled={submitting} onClick={() => doCreate(true)}>Send anyway — I confirm it fits</button>
@@ -396,11 +389,7 @@ export function NewJobScreen() {
         </div>
       )}
       {error && (
-        <div style={{
-          padding: '10px 14px', borderRadius: 8,
-          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
-          color: 'var(--err)', fontSize: 13,
-        }}>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>
           {error}
         </div>
       )}

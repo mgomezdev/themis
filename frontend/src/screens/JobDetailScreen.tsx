@@ -16,7 +16,7 @@ import { typeBadge } from '../api/fleet';
 function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   if (cfg.slice_failed) {
     return (
-      <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'color-mix(in oklch, var(--err) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)' }}>
+      <div className="tone-err tint" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
         <div style={{ color: 'var(--err)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Slice failed</div>
         {cfg.slice_error && (
           <div className="mono tiny" style={{ color: 'var(--err)', opacity: 0.8, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cfg.slice_error}</div>
@@ -30,7 +30,7 @@ function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
 function LowStockStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   if (!cfg.low_stock_warning) return null;
   return (
-    <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
+    <div className="tone-warn tint" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Low filament</div>
       <div className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{cfg.low_stock_warning.message}</div>
     </div>
@@ -42,7 +42,7 @@ function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   const m = cfg.filament_match;
   if (!m || m.eligible) return null;
   return (
-    <div data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
+    <div className="tone-warn tint" data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Filament doesn't match</div>
       {m.reasons.map((r, i) => <div key={i} className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{r}</div>)}
     </div>
@@ -240,7 +240,7 @@ export function JobDetailScreen() {
         <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate(-1)}>
           {Icons.chevL} Back
         </button>
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>
           {error ?? 'Job not found'}
         </div>
       </div>
@@ -261,7 +261,7 @@ export function JobDetailScreen() {
       </button>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{error}</div>
       )}
 
       <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
@@ -284,12 +284,7 @@ export function JobDetailScreen() {
                 </span>
               )}
               {job.status === 'failed' && (
-                <div style={{
-                  position: 'absolute', bottom: 10, left: 10,
-                  padding: '3px 10px', borderRadius: 6,
-                  background: 'color-mix(in oklch, var(--err) 85%, transparent)', color: 'white',
-                  fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
-                }}>FAILED</div>
+                <div className="tone-err tone-solid" style={{ position: 'absolute', bottom: 10, left: 10, padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.05em' }}>FAILED</div>
               )}
             </div>
 
@@ -337,14 +332,7 @@ export function JobDetailScreen() {
               </div>
 
               {job.block_reason && (
-                <div style={{
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  background: job.status === 'failed' ? 'color-mix(in oklch, var(--err) 10%, transparent)' : 'color-mix(in oklch, var(--warn) 10%, transparent)',
-                  border: `1px solid ${job.status === 'failed' ? 'color-mix(in oklch, var(--err) 30%, transparent)' : 'color-mix(in oklch, var(--warn) 30%, transparent)'}`,
-                  color: job.status === 'failed' ? 'var(--err)' : 'var(--warn)',
-                  fontSize: 13
-                }}>
+                <div className={`tint tone-text ${job.status === 'failed' ? 'tone-err' : 'tone-warn'}`} style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13 }}>
                   {job.status === 'failed' ? 'Failure Reason: ' : 'Blocked: '}{job.block_reason}
                 </div>
               )}

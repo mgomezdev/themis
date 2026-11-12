@@ -31,6 +31,9 @@
   --err:         oklch(62% 0.225 20);   /* red-orange */
   --idle:        oklch(48% 0.022 250);  /* cool metal grey */
   --info:        oklch(88% 0.15 196);   /* electric cyan — links, printing */
+  /* Tint strengths: every status-tinted fill / outline uses these two (see the tone helpers at the end of this file). */
+  --tint:        12%;
+  --edge:        30%;
   --scrim:       oklch(0% 0 0 / 0.6);   /* modal backdrop, and the dark plate behind text laid over a camera feed */
 
   /* Type */
@@ -226,6 +229,13 @@ input, textarea, select { font-family: inherit; color: inherit; }
   color: var(--accent-hi);
   border-color: transparent;
 }
+.nav-item .count.tone-ok, .nav-item .count.tone-warn, .nav-item .count.tone-err,
+.nav-item.active .count.tone-ok, .nav-item.active .count.tone-warn, .nav-item.active .count.tone-err {
+  /* a toned badge keeps its tone on the active item too */
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
+  color: var(--tone);
+}
 
 /* collapsed sidebar */
 .app[data-nav="collapsed"] .sidebar .nav-item { justify-content: center; padding: 10px; }
@@ -367,8 +377,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   font-size: 13px;
 }
 .notice.ok, .notice.warn, .notice.err, .notice.info {
-  background: color-mix(in oklch, var(--tone) 12%, transparent);
-  border-color: color-mix(in oklch, var(--tone) 30%, transparent);
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
   color: var(--tone);
 }
 .notice.ok { --tone: var(--ok); } .notice.warn { --tone: var(--warn); } .notice.err { --tone: var(--err); } .notice.info { --tone: var(--info); }
@@ -405,8 +415,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 /* Tone pills: one tint recipe, five tones. */
 .pill.ok, .pill.warn, .pill.err, .pill.info, .pill.idle, .pill.accent {
-  background: color-mix(in oklch, var(--tone) 12%, transparent);
-  border-color: color-mix(in oklch, var(--tone) 30%, transparent);
+  background: color-mix(in oklch, var(--tone) var(--tint), transparent);
+  border-color: color-mix(in oklch, var(--tone) var(--edge), transparent);
   color: var(--tone);
 }
 .pill.ok     { --tone: var(--ok); }
@@ -832,3 +842,28 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .text-ok { color: var(--ok); }
 .fw-500 { font-weight: 500; }
 .fw-600 { font-weight: 600; }
+
+/* ---------- tone helpers ---------- */
+/* Everything tinted by a status colour is built from these, never from a hand-written color-mix() (styleTokens.test.ts fails
+   on one). Pick a tone, then what to draw with it:
+     tone-ok | tone-warn | tone-err | tone-info | tone-idle | tone-accent    sets --tone
+     tint-bg      the fill                      edge / edge-top / edge-bottom   the 1px outline (all sides / one side)
+     tint         fill + outline                tone-text                       the tone as the text colour
+     tone-solid   a solid label (white text)    edge-strong / ring              a flagged card's border and inner ring
+   e.g. <div className="tone-err tint tone-text">. Strength is --tint / --edge in :root, so every tinted box matches.
+   Last in the file, like the one-property helpers: these must win over single-class rules above (`.card` borders, ...). */
+.tone-ok     { --tone: var(--ok); }
+.tone-warn   { --tone: var(--warn); }
+.tone-err    { --tone: var(--err); }
+.tone-info   { --tone: var(--info); }
+.tone-idle   { --tone: var(--idle); }
+.tone-accent { --tone: var(--accent); }
+.tint-bg     { background: color-mix(in oklch, var(--tone) var(--tint), transparent); }
+.edge        { border: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.edge-top    { border-top: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.edge-bottom { border-bottom: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.tint        { background: color-mix(in oklch, var(--tone) var(--tint), transparent); border: 1px solid color-mix(in oklch, var(--tone) var(--edge), transparent); }
+.tone-text   { color: var(--tone); }
+.tone-solid  { background: color-mix(in oklch, var(--tone) 85%, transparent); color: white; }   /* label laid over a thumbnail */
+.edge-strong { border-color: color-mix(in oklch, var(--tone) 60%, transparent); }               /* a card flagged by its tone */
+.ring        { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--tone) var(--tint), transparent); }

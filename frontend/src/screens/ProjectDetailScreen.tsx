@@ -207,10 +207,8 @@ export function ProjectDetailScreen() {
                 }}>
                   #{project.id}
                 </span>
-                <span style={{
+                <span className={`tint-bg tone-text ${project.stage === 'queued' ? 'tone-ok' : 'tone-warn'}`} style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: project.stage === 'queued' ? 'color-mix(in oklch, var(--ok) 15%, transparent)' : 'color-mix(in oklch, var(--warn) 15%, transparent)',
-                  color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
                 {project.order_type === 'customer' && (
@@ -221,18 +219,11 @@ export function ProjectDetailScreen() {
                   }}>Customer</span>
                 )}
                 {project.on_hold && (
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                    background: 'color-mix(in oklch, var(--warn) 15%, transparent)', color: 'var(--warn)',
-                    textTransform: 'uppercase', letterSpacing: '0.04em',
-                  }}>On hold</span>
+                  <span className="tone-warn tint-bg tone-text" style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>On hold</span>
                 )}
-                <span style={{
+                <span className={project.payment_status === 'paid' ? 'tone-ok tint-bg tone-text' : project.payment_status === 'partial' ? 'tone-warn tint-bg tone-text' : undefined} style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
-                  background: project.payment_status === 'paid' ? 'color-mix(in oklch, var(--ok) 15%, transparent)'
-                    : project.payment_status === 'partial' ? 'color-mix(in oklch, var(--warn) 15%, transparent)' : 'var(--bg-2)',
-                  color: project.payment_status === 'paid' ? 'var(--ok)'
-                    : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
+                  ...(project.payment_status === 'paid' || project.payment_status === 'partial' ? {} : { background: 'var(--bg-2)', color: 'var(--text-4)' }),
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>
                   {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
@@ -440,11 +431,7 @@ export function ProjectDetailScreen() {
             </div>
           )}
           {generateError && (
-            <div style={{
-              marginTop: 12, display: 'flex', alignItems: 'center', gap: 8,
-              background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)',
-              borderRadius: 6, padding: '10px 14px',
-            }}>
+            <div className="tone-err tint" style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, borderRadius: 6, padding: '10px 14px' }}>
               <span className="text-err">{Icons.alert}</span>
               <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
             </div>

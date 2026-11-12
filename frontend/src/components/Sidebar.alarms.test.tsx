@@ -30,9 +30,10 @@ describe('Sidebar alarms', () => {
 
   it('colours the badge by the worst severity', () => {
     const { unmount } = renderBar(1, 'warning');
-    expect(screen.getByTestId('badge-alarms').style.color).toBe('var(--warn)');
+    expect(screen.getByTestId('badge-alarms').className).toContain('tone-warn');
     unmount();
     renderBar(1, 'fatal');
-    expect(screen.getByTestId('badge-alarms').style.color).toBe('var(--err)');
+    expect(screen.getByTestId('badge-alarms').className).toContain('tone-err');
+    expect(screen.getByTestId('badge-alarms').className).not.toContain('tone-warn');
   });
 });

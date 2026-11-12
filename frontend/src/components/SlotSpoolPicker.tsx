@@ -82,18 +82,12 @@ export function SlotSpoolPicker({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {conflict && !isCustom && (
-        <div data-testid="slot-conflict" style={{
-          fontSize: 12, color: 'var(--err)', padding: '4px 8px',
-          background: 'color-mix(in oklch, var(--err) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', borderRadius: 6,
-        }}>
+        <div className="tone-err tint tone-text" data-testid="slot-conflict" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6 }}>
           The bound spool differs from what the printer reports for this slot, so jobs skip it. Rebind the right spool, or unbind this one.
         </div>
       )}
       {isDegraded && (
-        <div style={{
-          fontSize: 12, color: 'var(--warn)', padding: '4px 8px',
-          background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', borderRadius: 6,
-        }}>
+        <div className="tone-warn tint tone-text" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6 }}>
           {binding && binding.provider !== provider
             ? `Spool #${binding.ref} belongs to another inventory (${binding.provider}), which isn't the active one`
             : `Spool #${binding?.ref} not found in the inventory`}

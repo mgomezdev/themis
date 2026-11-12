@@ -222,10 +222,7 @@ export function PrintDefaultsPage() {
                   sub="Workshop-wide print behavior. Per-job overrides win when set during new-job intake." />
 
       {saveError && (
-        <div role="alert" className="small" style={{
-          padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-          background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', color: 'var(--err)',
-        }}>
+        <div role="alert" className="small tone-err tint tone-text" style={{ padding: '10px 14px', marginBottom: 14, borderRadius: 6 }}>
           {saveError}
         </div>
       )}

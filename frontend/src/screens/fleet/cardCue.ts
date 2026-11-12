@@ -12,7 +12,7 @@ export function cardCueStyle(p: Printer): React.CSSProperties {
     return { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' };
   }
   if (!p.queueOn) {
-    return { borderColor: 'var(--border-2)', boxShadow: '0 0 0 1px color-mix(in oklch, var(--idle) 35%, transparent)' };
+    return { borderColor: 'var(--border-2)', boxShadow: '0 0 0 1px var(--border-3)' };
   }
   return {};
 }

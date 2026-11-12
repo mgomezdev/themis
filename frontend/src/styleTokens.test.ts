@@ -59,20 +59,42 @@ const cssClasses = (stylesheet: string) =>
 const usedClasses = (text: string) => [
   ...[...text.matchAll(/className="([^"]*)"/g)].flatMap(m => m[1].split(/\s+/)),
   // the fixed words of a template literal; `${…}` parts are computed and not checked
-  ...[...text.matchAll(/className=\{`([^`]*)`\}/g)].flatMap(m => m[1].replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)),
+  // (a word touching a `${…}`, like `tone-${tone}`, is computed too: it is dropped whole)
+  ...[...text.matchAll(/className=\{`([^`]*)`\}/g)].flatMap(m => m[1].replace(/\S*\$\{[^}]*\}\S*/g, ' ').split(/\s+/)),
 ].filter(Boolean);
 const undefinedClasses = (files: readonly (readonly [string, string])[], stylesheet: string) => {
   const known = cssClasses(stylesheet);
   return [...new Set(files.flatMap(([path, text]) => usedClasses(text).filter(c => !known.has(c)).map(c => `${path}: ${c}`)))].sort();
 };
 
+// A status tint is a class (`tone-err tint`), never a hand-written color-mix(): the recipe and its two strengths (--tint,
+// --edge) live in app.css, so every tinted box matches and a restyle is one edit. rgba() is covered by LITERAL_BUDGET.
+const colorMixFiles = (files: readonly (readonly [string, string])[]) => files.filter(([, text]) => /color-mix\(/.test(text)).map(([path]) => path);
+
 describe('style tokens', () => {
+  it('component code has no color-mix(): tints come from the tone helper classes', () => {
+    expect(colorMixFiles(prod)).toEqual([]);
+  });
+
+  it('the tone helpers and tint strengths exist in app.css', () => {
+    const classes = cssClasses(css), vars = defined(css);
+    for (const c of ['tone-ok', 'tone-warn', 'tone-err', 'tone-info', 'tone-idle', 'tone-accent', 'tint', 'tint-bg', 'edge', 'tone-text']) {
+      expect(classes.has(c), c).toBe(true);
+    }
+    expect(vars.has('--tint') && vars.has('--edge')).toBe(true);
+  });
+
+  it('can fail: a planted color-mix() is caught', () => {
+    expect(colorMixFiles([['x.tsx', `<div style={{ background: 'color-mix(in oklch, var(--err) 12%, transparent)' }} />`]])).toEqual(['x.tsx']);
+    expect(colorMixFiles([['y.tsx', `<div className="tone-err tint" />`]])).toEqual([]);
+  });
+
   it('every class name used in the source is defined in app.css', () => {
     expect(undefinedClasses(prod, css)).toEqual([]);
   });
 
   it('can fail: an undefined class is caught, a defined one and a computed part are not', () => {
-    const planted = [['x.tsx', '<div className="row gap-9"><span className={`pill ${tone} nope`} /></div>']] as const;
+    const planted = [['x.tsx', '<div className="row gap-9"><span className={`pill ${tone} tone-${t} nope`} /></div>']] as const;
     expect(undefinedClasses(planted, '.row { display: flex; } .pill.ok { color: green; } /* .gap-9 { } */')).toEqual(['x.tsx: gap-9', 'x.tsx: nope']);
   });
 

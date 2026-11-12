@@ -63,21 +63,16 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-const CHIP = {
-  ok: { background: 'color-mix(in oklch, var(--ok) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--ok) 30%, transparent)', color: 'var(--ok)' },
-  warn: { background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)', color: 'var(--warn)' },
-} as const;
-
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
 function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; conflicts: number[]; testId?: string }) {
   const idx = firstMatchingSlot(ask, slots, conflicts);       // a slot in conflict with its bound spool is skipped, as the queue does
   const undefinedAsk = askIsUndefined(ask);
-  const tone = idx !== null || undefinedAsk ? CHIP.ok : CHIP.warn;
+  const tone = idx !== null || undefinedAsk ? 'tone-ok' : 'tone-warn';
   const text = idx !== null
     ? `✓ T${idx} · ${describeAsk({ ...NO_ASK, filament_type: slots[idx].type || null, filament_subtype: slots[idx].subtype ?? null, filament_color: slots[idx].color || null })}`
     : undefinedAsk ? '◉ Any loaded filament' : `⚠ nothing loaded matches ${describeAsk(ask)} — the job waits in the queue`;
   return (
-    <span data-testid={testId} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4, ...tone }}>
+    <span data-testid={testId} className={`tint tone-text ${tone}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4 }}>
       {text}
     </span>
   );

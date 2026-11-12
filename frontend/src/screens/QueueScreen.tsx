@@ -201,11 +201,7 @@ export function QueueScreen() {
         )}
 
         {actionError && (
-          <div role="alert" style={{
-            padding: '10px 14px', marginBottom: 14, borderRadius: 6,
-            background: 'color-mix(in oklch, var(--err) 12%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 30%, transparent)',
-            color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
-          }}>
+          <div className="tone-err tint tone-text" role="alert" style={{ padding: '10px 14px', marginBottom: 14, borderRadius: 6, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="grow">{actionError}</span>
             <button className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setActionError(null)}>{Icons.x}</button>
           </div>
@@ -215,16 +211,7 @@ export function QueueScreen() {
 
         {/* Laminus health banner */}
         {laminusDown && (
-          <div style={{
-            padding: '10px 14px',
-            marginBottom: 14,
-            borderRadius: 6,
-            background: 'color-mix(in oklch, var(--warn) 10%, transparent)',
-            border: '1px solid color-mix(in oklch, var(--warn) 35%, transparent)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
+          <div className="tone-warn tint" style={{ padding: '10px 14px', marginBottom: 14, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ color: 'var(--warn)', fontSize: 15 }}>⚠</span>
             <span className="small" style={{ color: 'var(--text-1)' }}>
               <strong>Laminus sidecar is unreachable.</strong> Slicing is paused — queued jobs will be blocked until the sidecar comes back online.

@@ -29,8 +29,8 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   return (
     <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
       {active > 0 && (
-        <span data-testid="badge-active" className="count num"
-              style={{ marginLeft: 0, background: 'color-mix(in oklch, var(--ok) 12%, transparent)', color: 'var(--ok)', borderColor: 'color-mix(in oklch, var(--ok) 25%, transparent)' }}>
+        <span data-testid="badge-active" className="count num tone-ok"
+              style={{ marginLeft: 0 }}>
           {active}
         </span>
       )}
@@ -40,8 +40,8 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
         </span>
       )}
       {blocked > 0 && (
-        <span data-testid="badge-blocked" className="count num"
-              style={{ marginLeft: 0, background: 'color-mix(in oklch, var(--err) 12%, transparent)', color: 'var(--err)', borderColor: 'color-mix(in oklch, var(--err) 30%, transparent)' }}>
+        <span data-testid="badge-blocked" className="count num tone-err"
+              style={{ marginLeft: 0 }}>
           {blocked}
         </span>
       )}
@@ -126,9 +126,9 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
               <span className="label">{it.label}</span>
               {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
               {it.to === '/alarms' && alarmCount > 0 && (
-                <span data-testid="badge-alarms" className="count num" aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
-                      style={{ marginLeft: 'auto', background: 'color-mix(in oklch, var(--err) 12%, transparent)', borderColor: 'color-mix(in oklch, var(--err) 30%, transparent)',
-                               color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
+                <span data-testid="badge-alarms" className={`count num ${alarmWorst === 'info' || alarmWorst === 'warning' ? 'tone-warn' : 'tone-err'}`}
+                      aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
+                      style={{ marginLeft: 'auto' }}>
                   {alarmCount}
                 </span>
               )}

@@ -101,9 +101,8 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
       </div>
 
       {chosen.length > 0 && (
-        <div className="row gap-2" role="toolbar" aria-label="Bulk edit" data-testid="bulk-bar"
-             style={{ flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderRadius: 6,
-                      border: '1px solid var(--accent)', background: 'color-mix(in oklch, var(--accent) 8%, transparent)' }}>
+        <div className="row gap-2 tone-accent tint-bg" role="toolbar" aria-label="Bulk edit" data-testid="bulk-bar"
+             style={{ flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--accent)' }}>
           <b className="small">{chosen.length} selected</b>
           <select className="select" aria-label="Move selected to group" value=""
                   onChange={e => { if (e.target.value) onBulk(ids, { kind: 'group', groupId: Number(e.target.value) }); }}>

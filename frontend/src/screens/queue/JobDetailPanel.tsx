@@ -107,12 +107,7 @@ export function JobDetailPanel({
           {Icons.x}
         </button>
         {isFailed && (
-          <div style={{
-            position: 'absolute', bottom: 8, left: 8,
-            padding: '3px 8px', borderRadius: 0,
-            background: 'color-mix(in oklch, var(--err) 85%, transparent)', color: 'white',
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
-          }}>
+          <div className="tone-err tone-solid" style={{ position: 'absolute', bottom: 8, left: 8, padding: '3px 8px', borderRadius: 0, fontSize: 11, fontWeight: 600, letterSpacing: '0.04em' }}>
             FAILED
           </div>
         )}
@@ -179,7 +174,7 @@ export function JobDetailPanel({
         {job.lowStockWarning && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--warn) 10%, transparent)', border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
+            <div className="tone-warn tint" style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0 }}>
               <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>
                 Low filament
               </div>
@@ -209,8 +204,8 @@ export function JobDetailPanel({
         {(isBlocked || isFailed) && job.blockReason && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: isFailed ? 'color-mix(in oklch, var(--err) 8%, transparent)' : 'color-mix(in oklch, var(--warn) 10%, transparent)', border: isFailed ? '1px solid color-mix(in oklch, var(--err) 25%, transparent)' : '1px solid color-mix(in oklch, var(--warn) 30%, transparent)' }}>
-              <div className="tiny" style={{ fontWeight: 600, color: isFailed ? 'var(--err)' : 'var(--warn)', marginBottom: 4 }}>
+            <div className={`tint ${isFailed ? 'tone-err' : 'tone-warn'}`} style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0 }}>
+              <div className="tiny tone-text" style={{ fontWeight: 600, marginBottom: 4 }}>
                 {isFailed ? 'Failure Reason' : 'Blocked'}
               </div>
               <div className="small" style={{ color: 'var(--text-1)', lineHeight: 1.5 }}>{job.blockReason}</div>
@@ -225,7 +220,7 @@ export function JobDetailPanel({
             <div className="tag-key" style={{ marginBottom: 8 }}>Slice errors</div>
             <div className="col gap-2" style={{ marginBottom: 14 }}>
               {sliceFailures.map((f, i) => (
-                <div key={i} style={{ padding: '10px 12px', borderRadius: 0, background: 'color-mix(in oklch, var(--err) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 25%, transparent)' }}>
+                <div className="tone-err tint" key={i} style={{ padding: '10px 12px', borderRadius: 0 }}>
                   <div className="tiny" style={{ fontWeight: 600, color: 'var(--err)', marginBottom: 4 }}>
                     Printer {f.printer_id} · {f.print_profile}
                   </div>
@@ -278,28 +273,15 @@ export function JobDetailPanel({
                   {verifyRunning ? ' Slicing…' : ' Run test slice'}
                 </button>
                 {verifyRunning && (
-                  <div style={{
-                    padding: '8px 12px', borderRadius: 0,
-                    background: 'color-mix(in oklch, var(--warn) 8%, transparent)',
-                    border: '1px solid color-mix(in oklch, var(--warn) 25%, transparent)',
-                    animation: 'pulse-soft 1.5s ease-in-out infinite',
-                  }}>
+                  <div className="tone-warn tint" style={{ padding: '8px 12px', borderRadius: 0, animation: 'pulse-soft 1.5s ease-in-out infinite' }}>
                     <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 500 }}>
                       Slicing in progress — this can take 30–90 seconds…
                     </div>
                   </div>
                 )}
                 {verifyResult && (
-                  <div style={{
-                    padding: '10px 12px', borderRadius: 0,
-                    background: verifyResult.ok ? 'color-mix(in oklch, var(--ok) 8%, transparent)' : 'color-mix(in oklch, var(--err) 8%, transparent)',
-                    border: `1px solid ${verifyResult.ok ? 'color-mix(in oklch, var(--ok) 30%, transparent)' : 'color-mix(in oklch, var(--err) 25%, transparent)'}`,
-                  }}>
-                    <div className="tiny" style={{
-                      fontWeight: 600,
-                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
-                      marginBottom: verifyResult.error ? 4 : 0,
-                    }}>
+                  <div className={`tint tone-${verifyResult.ok ? 'ok' : 'err'}`} style={{ padding: '10px 12px', borderRadius: 0 }}>
+                    <div className="tiny tone-text" style={{ fontWeight: 600, marginBottom: verifyResult.error ? 4 : 0 }}>
                       {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
                     </div>
                     {verifyResult.error && (

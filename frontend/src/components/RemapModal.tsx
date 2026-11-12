@@ -139,7 +139,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
           </p>
 
           {inventory_error && (
-            <div style={{ background: 'color-mix(in oklch, var(--err) 20%, transparent)', border: '1px solid color-mix(in oklch, var(--err) 35%, transparent)', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+            <div className="tone-err tint" style={{ padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
               Inventory references could not be fully checked: {inventory_error}
             </div>
           )}

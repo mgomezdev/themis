@@ -13,8 +13,8 @@ export function InventoryBanner() {
 
   const name = inventory.plugin.name;
   return (
-    <div role="alert" data-testid="inventory-banner"
-         style={{ padding: '8px 14px', background: 'color-mix(in oklch, var(--err) 10%, transparent)', borderBottom: '1px solid color-mix(in oklch, var(--err) 30%, transparent)', fontSize: 13, color: 'var(--text-1)' }}>
+    <div className="tone-err tint-bg edge-bottom" role="alert" data-testid="inventory-banner"
+         style={{ padding: '8px 14px', fontSize: 13, color: 'var(--text-1)' }}>
       <strong>{name} is unreachable.</strong>{' '}
       Spool data is the last-known copy{status.cache_as_of ? ` (as of ${new Date(status.cache_as_of).toLocaleString()})` : ''}
       {status.pending_count > 0 ? `; ${status.pending_count} weight update${status.pending_count === 1 ? ' is' : 's are'} queued and will apply when it is back` : ''}.{' '}
