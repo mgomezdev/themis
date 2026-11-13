@@ -78,6 +78,19 @@ async def _pool_jobs(session_factory, group_id):
         return (await s.execute(select(Job).where(Job.pool_group_id == group_id).order_by(Job.id))).scalars().all()
 
 
+async def test_pool_group_overrides_are_copied_into_claimed_jobs(client, upload_3mf, create_printer, session_factory, tmp_path):
+    printer = await create_printer(name="Pool", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, _ = await _pool_project(client, upload_3mf, [printer], tmp_path, packer, qty=2)
+    response = await client.patch(f"/api/v1/projects/{pid}/groups/{gid}", json={"overrides": {"wall_loops": 4}})
+    assert response.status_code == 200, response.text
+    engine = _engine(session_factory, [printer])
+    await _claim(session_factory, engine, printer, tmp_path, packer)
+    jobs = await _pool_jobs(session_factory, gid)
+    assert len(jobs) == 1
+    assert jobs[0].overrides == {"wall_loops": "4"}
+
+
 async def test_each_printer_gets_a_plate_sized_to_its_bed_and_nothing_is_reserved_twice(
         client, upload_3mf, create_printer, session_factory, tmp_path):
     small = await create_printer(name="Small", bed_x_mm=180.0, bed_y_mm=180.0)

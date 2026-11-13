@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from math import isfinite
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Project, ProjectGroup, ProjectGroupTarget, ProjectItem
 from ...services import project_groups as pg
+from ...services.providers.slicing import get_format_provider
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -33,6 +35,19 @@ class GroupPatch(BaseModel):
     targets: Optional[list[GroupTargetIn]] = None               # full replace, in order
     strategy: Optional[Literal["fixed", "pool"]] = None         # BIZ-362: pack now for one bed, or when a printer picks it up
     max_parts: Optional[int] = Field(default=None, ge=1, le=500)   # pool: parts per claimed plate cap (null = as many as fit)
+    overrides: Optional[dict] = Field(default=None, description="Curated process overrides copied to future jobs. Null/{} clears; omission preserves. Not for pre-sliced G-code.")
+
+    @field_validator("overrides")
+    @classmethod
+    def valid_overrides(cls, value):
+        if not value:
+            return None
+        allowed = {setting.key for setting in get_format_provider().curated_settings()}
+        if not set(value) <= allowed:
+            raise ValueError("Unknown process override key")
+        if any(not isinstance(v, (str, int, float, bool)) or (isinstance(v, float) and not isfinite(v)) for v in value.values()):
+            raise ValueError("Process overrides must be scalar finite values")
+        return {key: ("1" if v else "0") if isinstance(v, bool) else str(v) for key, v in value.items()}
 
 
 class GroupOrder(BaseModel):
@@ -45,6 +60,7 @@ def _dict(g: ProjectGroup, targets: list[ProjectGroupTarget]) -> dict:
         "strategy": g.strategy, "envelope_x": g.envelope_x, "envelope_y": g.envelope_y, "mix_colours": bool(g.mix_colours),
         "targets": [{"target_key": t.target_key, "process_profile": t.process_profile} for t in targets],
         "max_parts": g.max_parts,
+        "overrides": g.overrides,
     }
 
 
@@ -116,6 +132,8 @@ async def patch_group(project_id: int, group_id: int, body: GroupPatch, session:
         g.strategy = body.strategy
     if "max_parts" in sent:
         g.max_parts = body.max_parts
+    if "overrides" in sent:
+        g.overrides = body.overrides
     if body.targets is not None:
         keys = [t.target_key for t in body.targets]
         if len(set(keys)) != len(keys):

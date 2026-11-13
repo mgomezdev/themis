@@ -12820,6 +12820,19 @@
               }
             ],
             "title": "Max Parts"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides",
+            "description": "Curated process overrides copied to future jobs. Null/{} clears; omission preserves. Not for pre-sliced G-code."
           }
         },
         "type": "object",

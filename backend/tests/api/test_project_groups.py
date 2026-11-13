@@ -33,6 +33,58 @@ async def _generate(client, pid, tmp_path, **body):
         return await client.post(f"/api/v1/projects/{pid}/generate", json=body)
 
 
+async def test_group_overrides_round_trip_preserve_clear_and_reject_unknown(client):
+    pid = await _project(client)
+    (group,) = await _groups(client, pid)
+    path = f"/api/v1/projects/{pid}/groups/{group['id']}"
+    response = await client.patch(path, json={"overrides": {"wall_loops": 3, "enable_support": False}})
+    assert response.status_code == 200, response.text
+    assert response.json()["overrides"] == {"wall_loops": "3", "enable_support": "0"}
+    renamed = await client.patch(path, json={"name": "Renamed"})
+    assert renamed.json()["overrides"] == response.json()["overrides"]
+    assert (await _groups(client, pid))[0]["overrides"] == response.json()["overrides"]
+    for invalid in ({"unknown_key": 1}, {"wall_loops": []}):
+        refused = await client.patch(path, json={"overrides": invalid})
+        assert refused.status_code == 422, refused.text
+    cleared = await client.patch(path, json={"overrides": None})
+    assert cleared.status_code == 200 and cleared.json()["overrides"] is None
+
+
+async def test_group_overrides_copy_to_only_its_generated_jobs(client, upload_3mf, session_factory, tmp_path):
+    pid = await _project(client)
+    (default,) = await _groups(client, pid)
+    fine = (await client.post(f"/api/v1/projects/{pid}/groups", json={"name": "Fine"})).json()
+    await client.patch(f"/api/v1/projects/{pid}/groups/{default['id']}", json={"targets": [{"target_key": "any"}]})
+    response = await client.patch(f"/api/v1/projects/{pid}/groups/{fine['id']}", json={
+        "targets": [{"target_key": "any"}], "overrides": {"layer_height": 0.12}})
+    assert response.status_code == 200, response.text
+    await _item(client, upload_3mf, pid, "draft.stl")
+    await _item(client, upload_3mf, pid, "fine.stl", group_id=fine["id"])
+    generated = await _generate(client, pid, tmp_path)
+    assert generated.status_code == 200, generated.text
+    jobs = generated.json()["jobs"]
+    assert {j["group_id"] for j in jobs} == {default["id"], fine["id"]}
+    async with session_factory() as session:
+        for created in jobs:
+            row = await session.get(Job, created["id"])
+            assert row.overrides == ({"layer_height": "0.12"} if created["group_id"] == fine["id"] else None)
+    await client.patch(f"/api/v1/projects/{pid}/groups/{fine['id']}", json={"overrides": None})
+    async with session_factory() as session:
+        fine_id = next(j["id"] for j in jobs if j["group_id"] == fine["id"])
+        assert (await session.get(Job, fine_id)).overrides == {"layer_height": "0.12"}
+
+
+async def test_presliced_project_items_cannot_generate_with_group_overrides(client, upload_3mf, tmp_path):
+    pid = await _project(client)
+    (group,) = await _groups(client, pid)
+    await client.patch(f"/api/v1/projects/{pid}/groups/{group['id']}", json={
+        "targets": [{"target_key": "any"}], "overrides": {"wall_loops": 3}})
+    await _item(client, upload_3mf, pid, "plate.gcode")
+    result = await _generate(client, pid, tmp_path)
+    assert result.status_code == 422, result.text
+    assert "pre-sliced" in result.json()["detail"]
+
+
 async def test_a_new_project_has_a_default_group_and_new_items_land_in_it(client, upload_3mf):
     pid = await _project(client)
     (g,) = await _groups(client, pid)
