@@ -573,6 +573,8 @@ class ProjectGroup(Base):
     # generate; NULL = not queued).
     max_parts: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Process intent for future generated/claimed jobs, copied into each job at creation.
+    overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class ProjectGroupTarget(Base):

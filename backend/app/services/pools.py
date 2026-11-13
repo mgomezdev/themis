@@ -158,6 +158,7 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         base = target_of(printer)
         target = TargetPrinter(base.bed_mm, base.model_uuid, machine_profile=await machine_profile_for(session, printer))
         profile = await process_for(session, group, printer)
+        overrides = dict(group.overrides) if group.overrides else None
         project = await session.get(Project, group.project_id)
         position, max_parts, project_id, order_id = group.queue_position, group.max_parts, project.id, project.order_id
         slug = re.sub(r"[^a-z0-9]+", "-", project.name.lower()).strip("-") or "project"
@@ -184,7 +185,7 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         await session.flush()
         job = Job(uploaded_file_id=f.id, plate_number=1, project_id=project_id, order_id=order_id, queue_position=position,
                   status="queued", created_at=now, updated_at=now, project_item_quantities=json.dumps(quantities),
-                  pool_group_id=group_id)
+                  pool_group_id=group_id, overrides=overrides)
         session.add(job)
         await session.flush()
         session.add(JobPrinterConfig(job_id=job.id, printer_id=printer_id, print_profile=profile, **dict(zip(_ASK, ask))))

@@ -352,6 +352,8 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
             if f is None:
                 raise HTTPException(422, f"File {item.file_id} not found in library")
             kind, rule = getattr(item, "kind", None) or "stl", getattr(item, "pack_rule", None) or "split"
+            if kind == "gcode" and pgroup.overrides:
+                raise HTTPException(422, "Process overrides cannot apply to pre-sliced G-code; move it to a group without overrides")
             if not await _stored(library, f.relative_path):
                 raise HTTPException(422, f"{f.original_filename!r} is missing from disk")
             await _projects.refresh_content_hash(f, library)
@@ -359,7 +361,7 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
                 raise HTTPException(422, f"{f.original_filename!r} changed since its {kind.split('_')[1]} was picked: pick it again")
             if kind == "gcode" or (kind == "3mf_plate" and rule == "locked"):
                 own = await _gcode_targets(session, f, resolved) if kind == "gcode" else resolved
-                packs.append({"group_id": pgroup.id, "ask": ask, "items": [item], "wanted": [], "recipe": [], "target": target,
+                packs.append({"group_id": pgroup.id, "overrides": pgroup.overrides, "ask": ask, "items": [item], "wanted": [], "recipe": [], "target": target,
                               "resolved": own, "pack_mode": {},
                               "fixed": {"file": f, "plate": int(item.source_ref or 1), "copies": item.quantity}})
                 continue
@@ -377,7 +379,7 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
                 wanted[f"item-{item.id}"] = (f.relative_path, item.quantity, f"item-{item.id}", select)
                 recipe.append((content, item.quantity, kind, item.source_ref, rule))
         if packed:
-            packs.append({"group_id": pgroup.id, "ask": ask, "items": packed, "wanted": list(wanted.values()),
+            packs.append({"group_id": pgroup.id, "overrides": pgroup.overrides, "ask": ask, "items": packed, "wanted": list(wanted.values()),
                           "recipe": recipe, "target": target, "resolved": resolved,
                           "pack_mode": {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]}})
     return packs, out, [p for p, _ in resolved.printers]
@@ -483,6 +485,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
                 save_slice=save_slice,
                 allow_cached_slice=allow_cached,
+                overrides=dict(pack["overrides"]) if pack.get("overrides") else None,
             )
             session.add(job)
             new_jobs.append(job)
