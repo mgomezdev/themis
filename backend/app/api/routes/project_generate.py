@@ -387,7 +387,7 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
 
 
 async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
-                      save_slice: bool) -> tuple[list[dict], list[dict]]:
+                      save_slice: bool, artifact_cleanup: list[str] | None = None) -> tuple[list[dict], list[dict]]:
     """Build (or reuse) each planned pack, store it, and queue one job per plate with the pack's printer configs and model
     targets, in `packs` order. Returns (jobs, files) for the response."""
     library = _projects.get_library_store()
@@ -435,6 +435,8 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
                 tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
                 published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
+                if artifact_cleanup is not None:
+                    artifact_cleanup.append(tmp_key)
                 # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
                 # library's dedup/move detection relies on it too.
                 pack_hash = hashlib.sha256(packed_bytes).hexdigest()
@@ -503,6 +505,8 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
             final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
             moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+            if artifact_cleanup is not None:
+                artifact_cleanup[-1] = moved.key
             new_file.relative_path = moved.key
             new_file.mtime = moved.mtime
             new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
@@ -561,7 +565,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
         # Trigger estimates for each new job if enabled.
         queue_cfg = await session.get(QueueConfig, 1)
         est_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
-        if est_enabled:
+        if est_enabled and not session.info.get("slicer_transaction"):
             for j in new_jobs:
                 j.estimate_token = (j.estimate_token or 0) + 1
                 j.estimate_status = "pending"

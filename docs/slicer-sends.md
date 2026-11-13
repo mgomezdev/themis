@@ -50,8 +50,10 @@ The first request returns 201. Repeating its UUID and normalized payload returns
 concurrent requests and retries after a lost response. A different payload returns 409 unless `update: true`.
 An update preserves a queued/blocked job's ID, replaces file/plate/targets/overrides/footprint/preferences, clears
 stale slices/estimates, and requeues it. Slicing/printing/later work and physically started work cannot be updated.
-Items can be updated until they have been generated/reserved/completed; already-generated shared packs are never
-mutated indirectly through an item update. Update the queued job directly or send a new item instead (409).
+Items and their generated jobs can be updated while all affected jobs remain queued/blocked and contain only that
+send's items. The old jobs are cancelled and only the imported group is regenerated in the same transaction.
+Started work, active pools and packs shared with unrelated items are protected (409); choose a new send instead.
+If repacking fails, the old work and ledger remain unchanged and newly staged artifacts are removed.
 Old library files are not deleted by an update, since other jobs may reference them.
 
 `GET /api/v1/slicer-sends/{UUID}` returns the created IDs, current job status and `can_update`. An unknown UUID is 404.

@@ -166,6 +166,9 @@
     "quote_accepted_at"
   ],
   "project_item": [
+    "min_bed_mm",
+    "source_app",
+    "send_id",
     "id",
     "project_id",
     "file_id",

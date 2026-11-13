@@ -1,5 +1,7 @@
 """Atomic, duplicate-safe slicer imports and updates to unstarted work (BIZ-378)."""
 from datetime import datetime, timezone
+import asyncio
+import contextlib
 from hashlib import sha256
 import json
 from typing import Literal
@@ -17,10 +19,13 @@ from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Project,
 from ...services import project_groups
 from ...services.queue_engine import queue_engine
 from ...services.library_scanner import is_presliced_file
+from ...services.library_store import get_library_store
+from ...services.artifact_store import ArtifactError
 from .jobs import JobCreate, create_job
 from .projects import ProjectItemCreate
 from .project_children import add_item
 from .project_groups import GroupPatch, patch_group
+from . import projects as project_routes
 
 router = APIRouter(prefix="/api/v1/slicer-sends", tags=["slicer-sends"],
                    dependencies=[Depends(require_scope("jobs:read"))])
@@ -70,12 +75,20 @@ async def _can_update(session, result):
     items = list((await session.execute(select(ProjectItem).where(ProjectItem.id.in_(item_ids)))).scalars())
     if len(items) != len(item_ids) or any(i.quantity_completed or i.quantity_failed or i.quantity_held for i in items):
         return False
-    # An item already included in generated work is immutable through this endpoint;
-    # updating that queued job uses the job path instead of changing a shared pack.
-    for job in (await session.execute(select(Job).where(Job.project_id == result["project_id"],Job.status != "cancelled"))).scalars():
-        if item_ids & {int(k) for k in json.loads(job.project_item_quantities or "{}")}:
+    group = await session.get(ProjectGroup,result["group_id"])
+    if group is None or group.strategy == "pool" and group.queue_position is not None:
+        return False
+    for job in await _item_jobs(session,result):
+        quantities = {int(k) for k in json.loads(job.project_item_quantities or "{}")}
+        if job.status not in ("queued","blocked") or job.printed_on_printer_id is not None or not quantities <= item_ids:
             return False
     return True
+
+
+async def _item_jobs(session,result):
+    ids = set(result.get("item_ids",[]))
+    jobs = (await session.execute(select(Job).where(Job.project_id == result["project_id"],Job.status != "cancelled"))).scalars()
+    return [job for job in jobs if ids & {int(k) for k in json.loads(job.project_item_quantities or "{}")}]
 
 
 async def _reply(session, record):
@@ -126,6 +139,19 @@ async def _replace_job(session, old, fresh):
 @router.post("",status_code=201,summary="Create, retry or update an atomic slicer send",
              responses={409:{"description":"Different payload or work already generated/started"}})
 async def send(body: SlicerSendInput, request: Request, response: Response, session: AsyncSession = Depends(get_session)):
+    cleanup = []
+    try:
+        return await _send(body,request,response,session,cleanup)
+    except Exception:
+        await session.rollback()
+        store = get_library_store(prune_empty=True)
+        for key in reversed(cleanup):
+            with contextlib.suppress(ArtifactError,OSError):
+                await asyncio.to_thread(store.delete,key,missing_ok=True)
+        raise
+
+
+async def _send(body,request,response,session,cleanup):
     await require_scope("jobs:write" if body.kind == "job" else "projects:write")(request,session)
     normalized = body.model_dump(mode="json",exclude={"update"})
     fingerprint = sha256(json.dumps(normalized,sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest()
@@ -155,10 +181,15 @@ async def send(body: SlicerSendInput, request: Request, response: Response, sess
         job.source_app,job.send_id = body.source_app,sid
         result = {"job_id":jid,"file_id":body.job.uploaded_file_id,"item_ids":[]}
     else:
+        replaced_jobs = []
         if old_result:
             project_id,group_id = old_result["project_id"],old_result["group_id"]
             if body.project_id and body.project_id != project_id:
                 raise HTTPException(409,"An update cannot move work to another project")
+            replaced_jobs = await _item_jobs(session,old_result)
+            for job in replaced_jobs:
+                job.status = "cancelled"
+                job.updated_at = datetime.now(timezone.utc).isoformat()
             await session.execute(delete(ProjectItem).where(ProjectItem.id.in_(old_result["item_ids"])))
         else:
             project_id = body.project_id
@@ -189,18 +220,31 @@ async def send(body: SlicerSendInput, request: Request, response: Response, sess
             row.source_app,row.send_id = body.source_app,str(uuid5(body.send_id,str(index)))
             ids.append(row.id)
         result = {"project_id":project_id,"group_id":group_id,"item_ids":ids}
+        if replaced_jobs:
+            from .project_generate import _plan_group_packs, _queue_packs
+            group = await session.get(ProjectGroup,group_id)
+            project = await session.get(Project,project_id)
+            imported = list((await session.execute(select(ProjectItem).where(ProjectItem.id.in_(ids)))).scalars())
+            targets = [(t.target_key,t.process_profile) for t in await project_groups.targets_of(session,group_id)]
+            packs,_,_ = await _plan_group_packs(atomic,group,imported,targets,get_library_store())
+            constructor = project_routes.get_project_constructor()
+            if any(not pack.get("fixed") for pack in packs) and constructor is None:
+                raise HTTPException(422,"Configure the project builder before updating generated geometry")
+            jobs,_ = await _queue_packs(atomic,project,packs,constructor,allow_cached=False,save_slice=False,artifact_cleanup=cleanup)
+            result["job_ids"] = [j["id"] for j in jobs]
     record.request_hash,record.result = fingerprint,result
-    estimate = False
-    if body.kind == "job":
-        config = await session.get(QueueConfig,1)
-        file = await session.get(UploadedFile,job.uploaded_file_id)
+    estimate_ids = []
+    config = await session.get(QueueConfig,1)
+    candidates = [job] if body.kind == "job" else [await session.get(Job,jid) for jid in result.get("job_ids",[])]
+    for candidate in candidates:
+        file = await session.get(UploadedFile,candidate.uploaded_file_id)
         if config is not None and config.estimates_enabled and not is_presliced_file(file):
-            job.estimate_token = (job.estimate_token or 0)+1
-            job.estimate_status = "pending"
-            estimate = True
+            candidate.estimate_token = (candidate.estimate_token or 0)+1
+            candidate.estimate_status = "pending"
+            estimate_ids.append(candidate.id)
     await session.commit()
     session.info.pop("slicer_transaction",None)
     queue_engine.wake()
-    if estimate:
-        queue_engine.spawn_estimate(job.id)
+    for jid in estimate_ids:
+        queue_engine.spawn_estimate(jid)
     return await _reply(session,record)
