@@ -134,6 +134,9 @@ class LivenessMixin:
         """Why no printer in the fleet could take `job` (None when one could, or when a per-printer path already owns the block)."""
         configs = [c for c in configs if c.printer_id in printers]
         if not configs:
+            if job.min_bed_mm:
+                size = job.min_bed_mm
+                return f"{_qe.NO_MATCH_PREFIX}: plate requires {size['x']:g} x {size['y']:g} x {size.get('z') or 0:g} mm; no compatible printer has a large enough bed", {}
             return f"{_qe.NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job", {}
         candidates = [(c, counted[c.printer_id]) for c in configs if c.printer_id in counted]
         if not candidates:
@@ -142,6 +145,13 @@ class LivenessMixin:
         reasons: list[str] = []
         unmatched: dict[str, list[int]] = {}
         for config, printer in candidates:
+            if not _qe.preference.allowed(job.printer_preference,printer):
+                reasons.append(f"{printer.name}: outside the strict printer preference")
+                continue
+            bed_reason = await _qe.bed_requirement.reason(session, job.min_bed_mm, printer)
+            if bed_reason:
+                reasons.append(bed_reason)
+                continue
             if config.slice_failed:
                 return None, {}                                  # the slicing-failure path blocks and rescues this one
             if source_file is not None and is_presliced_file(source_file):

@@ -14,6 +14,8 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Order, Printer, PrinterModelRecord, Project, QueueConfig, SlicedVersion, UploadedFile
 from ...services import job_details, slice_cache
+from ...services.bed_requirement import MinBed
+from ...services.slicer_intent import OverrideFields, PrinterPreference, validate_preference
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file
 from ...services.library_store import get_library_store, with_local_path
@@ -67,9 +69,10 @@ class FilamentMapEntry(AskFields):
     """One model color: pinned to a tool slot (`tool_index`), or a tuple ask (`filament_*`) resolved against the printer's slots."""
     model_filament: int | None = Field(default=None, ge=1, le=filament_matching.MAX_MODEL_FILAMENTS)
     tool_index: int | None = Field(default=None, ge=0, le=255)
+    filament_profile: str | None = Field(default=None,max_length=255)
 
 
-class PrinterConfigInput(AskFields):
+class PrinterConfigInput(AskFields, OverrideFields):
     printer_id: int
     print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced (.gcode / .gcode.3mf) jobs
     filament_profile: str | None = None
@@ -83,10 +86,14 @@ class PrinterConfigInput(AskFields):
         at creation time instead of letting them poison the queue engine later."""
         if v is None:
             return None
-        return [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+        entries = [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+        for entry in entries:
+            if entry["filament_profile"] is None:
+                entry.pop("filament_profile")
+        return entries
 
 
-class ModelTargetInput(AskFields):
+class ModelTargetInput(AskFields, OverrideFields):
     """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
     model_uuid: str | None
@@ -109,6 +116,9 @@ class ModelTargetInput(AskFields):
         entries = [FilamentMapEntry.model_validate(e).model_dump() for e in v]
         if any(e.get("tool_index") is not None for e in entries):
             raise ValueError("tool_index is printer-specific and can't be used with a make/model target")
+        for entry in entries:
+            if entry["filament_profile"] is None:
+                entry.pop("filament_profile")
         return entries
 
 
@@ -251,6 +261,7 @@ def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetIn
             filament_profile=t.filament_profile or None,
             **ask_columns(t),
             filament_map=t.filament_map,
+            overrides=t.overrides,
         ))
 
 
@@ -272,6 +283,8 @@ def _normalise_not_before(v: str | None) -> str | None:
 
 
 class JobCreate(BaseModel):
+    printer_preference: PrinterPreference | None = None
+    min_bed_mm: MinBed | None = None
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
@@ -316,6 +329,10 @@ def _to_dict(j: Job) -> dict:
         "queue_position": j.queue_position,
         "status": j.status,
         "overrides": j.overrides,
+        "min_bed_mm": j.min_bed_mm,
+        "printer_preference": j.printer_preference,
+        "source_app": j.source_app,
+        "send_id": j.send_id,
         "outcome": j.outcome,
         "project_item_quantities": json.loads(j.project_item_quantities) if j.project_item_quantities else None,
         "created_at": j.created_at,
@@ -397,6 +414,9 @@ async def create_job(
         raise HTTPException(422, "printer_configs or model_targets must not be empty")
     _validate_targets(body.model_targets)
     await _require_known_models(session, body.model_targets)
+    await validate_preference(session, body.printer_preference)
+    if is_presliced_file(uploaded_file) and any(c.overrides for c in [*body.printer_configs,*body.model_targets]):
+        raise HTTPException(422,"Target overrides cannot apply to pre-sliced G-code")
 
     for cfg in body.printer_configs:
         printer = await session.get(Printer, cfg.printer_id)
@@ -428,6 +448,8 @@ async def create_job(
     pos = await _next_queue_position(session)
 
     job = Job(
+        min_bed_mm=body.min_bed_mm.model_dump(exclude_none=True) if body.min_bed_mm else None,
+        printer_preference=body.printer_preference.model_dump() if body.printer_preference else None,
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
         order_id=project.order_id if project is not None and project.order_id is not None else body.order_id,
@@ -465,6 +487,7 @@ async def create_job(
             **ask_columns(cfg),
             tool_index=cfg.tool_index,
             filament_map=cfg.filament_map,
+            overrides=cfg.overrides,
         )
         session.add(config)
 
@@ -475,7 +498,8 @@ async def create_job(
     await session.commit()
     await session.refresh(job)
 
-    queue_engine.wake()
+    if not session.info.get("slicer_transaction"):
+        queue_engine.wake()
 
     if is_presliced_file(uploaded_file):
         _apply_gcode_estimate(job, uploaded_file)
@@ -484,7 +508,7 @@ async def create_job(
 
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
-    if estimates_enabled:
+    if estimates_enabled and not session.info.get("slicer_transaction"):
         job.estimate_token = (job.estimate_token or 0) + 1
         job.estimate_status = "pending"
         await session.commit()
@@ -759,6 +783,7 @@ async def get_job_details(
             **ask_out(cfg),
             "tool_index": cfg.tool_index,
             "filament_map": cfg.filament_map,
+            **({"overrides":cfg.overrides} if cfg.overrides is not None else {}),
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
             # Does the printer's loaded filament satisfy the ask right now? `reasons` is one line per slot that does not.

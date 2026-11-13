@@ -31,7 +31,7 @@ from .providers.contract import CancelToken, NothingFits
 from .slicer_service import DEFAULT_BED_MM, SliceRequest, SlicerService, slice_side_mapping
 from . import gcode_eligibility, model_targets, slicer_profiles, part_waivers
 from . import completion_events
-from . import filament_matching, pools, scheduling
+from . import filament_matching, pools, scheduling, bed_requirement
 from .library_store import get_library_store
 from .notify import notify
 from . import webhook_service
@@ -43,6 +43,7 @@ from .queue.liveness import LivenessMixin
 from .queue.slicing import SlicingMixin
 from .queue.printing import PrintingMixin
 from .queue.events import EventsMixin
+from .queue import preference
 
 # Collaborators the mixins call as `_qe.<name>` rather than importing themselves: tests swap them out on THIS module
 # (`patch("app.services.queue_engine.notify")`), so this is the one place they are looked up.
@@ -125,6 +126,8 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "loaded": loaded,
         "print_profile": effective_process_profile(config, printer) if config else None,
         "filament_profile_override": config.filament_profile if config else None,
+        "filament_profile_map": {e["model_filament"]:e["filament_profile"] for e in (getattr(config,"filament_map",None) or [])
+                                 if e.get("model_filament") and e.get("filament_profile")},
         "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
         # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
@@ -134,7 +137,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
         "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
         "slot_plan": plan,
-        "overrides": (job.overrides or {}) if job else {},
+        "overrides": {**((job.overrides or {}) if job else {}), **(getattr(config,"overrides",None) or {})},
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
         "bed_mm": (float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2])
                   if printer else None,
@@ -164,22 +167,31 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
         if any(type(index) is not int or index < 1 for index in indices) or len(set(indices)) != len(indices):
             raise ValueError("Filament mapping requires a unique positive model filament number for every entry")
         override = p.get("filament_profile_override")
+        by_model = p.get("filament_profile_map") or {}
         for entry in filament_map:
             tool = entry["tool_index"]
-            if not override and not loaded[tool].get("filament_profile"):
+            if not by_model.get(entry["model_filament"]) and not override and not loaded[tool].get("filament_profile"):
                 raise ValueError(f"Filament {entry['model_filament']} matched T{tool}, but that tool has no filament profile")
         # Presets are indexed by physical tool after remapping. Never compact away an empty tool:
         # that would give T2 the profile of T3. Unused tools may borrow the first matched profile.
         fallback = p["filament_profile"]
         if slice_map:
             multi_presets = [override or s.get("filament_profile") or fallback for s in loaded]
+            by_tool = {}
+            for entry in filament_map:
+                profile = by_model.get(entry["model_filament"]) or override or loaded[entry["tool_index"]].get("filament_profile")
+                tool = entry["tool_index"]
+                if tool in by_tool and by_tool[tool] != profile:
+                    raise ValueError("One physical tool cannot use conflicting model filament presets")
+                by_tool[tool] = profile
+                multi_presets[tool] = profile
         else:
             # AMS printers do not rewrite the source: the slicer's profiles stay in model-filament
             # order. The physical slot mapping is realized later by start_print's AMS tray list.
             ordered = sorted(filament_map, key=lambda e: e["model_filament"])
             if [e["model_filament"] for e in ordered] != list(range(1, len(ordered) + 1)):
                 raise ValueError("Filament mapping must include every model filament in order")
-            multi_presets = [override or loaded[e["tool_index"]]["filament_profile"] for e in ordered]
+            multi_presets = [by_model.get(e["model_filament"]) or override or loaded[e["tool_index"]].get("filament_profile") for e in ordered]
     plate_config = {"curr_bed_type": p["build_plate_type"]} if p["build_plate_type"] else {}
     plate_config.update(p["overrides"])  # job-level overrides win over printer default
     filament_profile, filament_color = p["filament_profile"], p["filament_color"]
@@ -522,6 +534,10 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
                 break
             if only_job is not None and cand_job.id != only_job:
                 continue
+            if await bed_requirement.reason(session, cand_job.min_bed_mm, printer):
+                continue
+            if await preference.defer(self,session,cand_job,printer):
+                continue
             if waived and cand_job.id != only_job and await part_waivers.keys_of_job(session, cand_job) & waived:
                 continue
             # If this job can't run on this printer, block it and STOP — do not look
@@ -607,6 +623,8 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         """Start packing `printer`'s next plate from pool `group`, unless it is busy, backing off, has nothing this printer can
         take, or already found nothing fits this printer's bed for the same parts. True = started (the claim stops here)."""
         gid = group.id
+        if await preference.defer_pool(self,session,group,printer):
+            return False
         if gid in self._pool_busy or self._pool_backoff.get(gid, 0) > _monotonic():
             return False
         take = await pools.takeable(session, group, printer, conflicts)

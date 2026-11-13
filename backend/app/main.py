@@ -45,6 +45,7 @@ from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
 from .api.routes.session import router as session_router
+from .api.routes.slicer_sends import router as slicer_sends_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
@@ -230,6 +231,7 @@ app.include_router(cameras_router)
 app.include_router(customers_router)
 app.include_router(customer_portal_router)
 app.include_router(session_router)
+app.include_router(slicer_sends_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(printer_models_router)

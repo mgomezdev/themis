@@ -81,6 +81,7 @@ async def add_item(
     if kind in ("3mf_object", "3mf_plate"):
         await _projects.refresh_content_hash(f, _projects.get_library_store())       # what "the file changed since it was picked" compares to
     item = ProjectItem(
+        min_bed_mm=body.min_bed_mm.model_dump(exclude_none=True) if body.min_bed_mm else None,
         project_id=project_id,
         file_id=body.file_id,
         quantity=body.quantity,
@@ -153,6 +154,8 @@ async def update_item(
         raise HTTPException(404, f"Item {item_id} not found in project {project_id}")
     if body.quantity is not None:
         item.quantity = body.quantity
+    if "min_bed_mm" in body.model_fields_set:
+        item.min_bed_mm = body.min_bed_mm.model_dump(exclude_none=True) if body.min_bed_mm else None
     sent = body.model_fields_set & {"filament_manufacturer", "filament_type", "filament_subtype", "filament_color"}
     if sent:
         merged = {f: (getattr(body, f) if f in sent else getattr(item, c)) for f, c in zip(

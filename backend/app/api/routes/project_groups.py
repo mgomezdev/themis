@@ -14,13 +14,22 @@ from ...database import get_session
 from ...models import Project, ProjectGroup, ProjectGroupTarget, ProjectItem
 from ...services import project_groups as pg
 from ...services.providers.slicing import get_format_provider
+from ...services.slicer_intent import OverrideFields, PrinterPreference, validate_preference
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
 
-class GroupTargetIn(BaseModel):
+class GroupTargetIn(OverrideFields):
+    filament_profile: str | None = None
+    filament_map: list[dict] | None = None
     target_key: str = Field(min_length=1, max_length=64)    # "<printer id>" | "model:<model uuid>" | "any"
     process_profile: str = ""                               # "" = the printer's own default process profile
+
+    @field_validator("filament_map")
+    @classmethod
+    def valid_filaments(cls,value):
+        from .jobs import ModelTargetInput
+        return ModelTargetInput(model_uuid=None,filament_map=value).filament_map
 
 
 class GroupCreate(BaseModel):
@@ -28,6 +37,7 @@ class GroupCreate(BaseModel):
 
 
 class GroupPatch(BaseModel):
+    printer_preference: PrinterPreference | None = None
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     envelope_x: Optional[float] = Field(default=None, gt=0)     # explicit null (both) = auto
     envelope_y: Optional[float] = Field(default=None, gt=0)
@@ -58,9 +68,13 @@ def _dict(g: ProjectGroup, targets: list[ProjectGroupTarget]) -> dict:
     return {
         "id": g.id, "project_id": g.project_id, "name": g.name, "sort_order": g.sort_order, "is_default": bool(g.is_default),
         "strategy": g.strategy, "envelope_x": g.envelope_x, "envelope_y": g.envelope_y, "mix_colours": bool(g.mix_colours),
-        "targets": [{"target_key": t.target_key, "process_profile": t.process_profile} for t in targets],
+        "targets": [{"target_key": t.target_key, "process_profile": t.process_profile,
+                     **({"overrides":t.overrides} if t.overrides is not None else {}),
+                     **({"filament_profile":t.filament_profile} if t.filament_profile else {}),
+                     **({"filament_map":t.filament_map} if t.filament_map else {})} for t in targets],
         "max_parts": g.max_parts,
         "overrides": g.overrides,
+        **({"printer_preference":g.printer_preference} if g.printer_preference else {}),
     }
 
 
@@ -118,6 +132,9 @@ async def create_group(project_id: int, body: GroupCreate, session: AsyncSession
 async def patch_group(project_id: int, group_id: int, body: GroupPatch, session: AsyncSession = Depends(get_session)) -> dict:
     g = await _group(session, project_id, group_id)
     sent = body.model_fields_set
+    if "printer_preference" in sent:
+        await validate_preference(session,body.printer_preference)
+        g.printer_preference = body.printer_preference.model_dump() if body.printer_preference else None
     if body.name is not None:
         g.name = body.name
     if "envelope_x" in sent or "envelope_y" in sent:
@@ -146,7 +163,8 @@ async def patch_group(project_id: int, group_id: int, body: GroupPatch, session:
             await session.delete(old)
         await session.flush()
         for i, t in enumerate(body.targets):
-            session.add(ProjectGroupTarget(group_id=g.id, target_key=t.target_key, process_profile=t.process_profile, sort_order=i))
+            session.add(ProjectGroupTarget(group_id=g.id, target_key=t.target_key, process_profile=t.process_profile, sort_order=i,
+                overrides=t.overrides,filament_profile=t.filament_profile,filament_map=t.filament_map))
     await session.commit()
     return await _full(session, g)
 

@@ -24,7 +24,7 @@ from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, model_targets, print_results, project_events, project_groups, slice_cache
+from ...services import idempotency, model_targets, print_results, project_events, project_groups, slice_cache, bed_requirement
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_scanner import (
@@ -327,6 +327,7 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
     targets resolve to. `pg_items` are project items, or stand-ins carrying a smaller `quantity` (a requeue of failed parts)."""
     packs: list[dict] = []
     envelope = (float(pgroup.envelope_x), float(pgroup.envelope_y)) if pgroup.envelope_x and pgroup.envelope_y else None
+    target_intents = await project_groups.targets_of(session,pgroup.id)
     resolved = await project_groups.resolve(session, targets, envelope)
     pack_bed_x, pack_bed_y = envelope or project_groups.auto_envelope(resolved.covered)
     bed_models = {p.model_uuid for p in resolved.covered}
@@ -352,7 +353,7 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
             if f is None:
                 raise HTTPException(422, f"File {item.file_id} not found in library")
             kind, rule = getattr(item, "kind", None) or "stl", getattr(item, "pack_rule", None) or "split"
-            if kind == "gcode" and pgroup.overrides:
+            if kind == "gcode" and (pgroup.overrides or any(t.overrides for t in target_intents)):
                 raise HTTPException(422, "Process overrides cannot apply to pre-sliced G-code; move it to a group without overrides")
             if not await _stored(library, f.relative_path):
                 raise HTTPException(422, f"{f.original_filename!r} is missing from disk")
@@ -486,6 +487,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 save_slice=save_slice,
                 allow_cached_slice=allow_cached,
                 overrides=dict(pack["overrides"]) if pack.get("overrides") else None,
+                min_bed_mm=bed_requirement.largest(group_items) if fixed is not None else None,
             )
             session.add(job)
             new_jobs.append(job)
@@ -526,20 +528,30 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
         # ("" = the printer's own default, BIZ-358). The machine preset is deliberately NOT set here — queue_engine reads it
         # fresh from the printer at dispatch time.
         resolved = pack["resolved"]
+        intent = {t.target_key:t for t in await project_groups.targets_of(session,pack["group_id"])}
+        pgroup = await session.get(ProjectGroup,pack["group_id"])
         for j in new_jobs:
+            j.printer_preference = pgroup.printer_preference
             for p, profile in resolved.printers:
+                chosen = intent.get(str(p.id))
                 session.add(JobPrinterConfig(
                     job_id=j.id,
                     printer_id=p.id,
                     print_profile=profile,
+                    overrides=chosen.overrides if chosen else None,
+                    filament_profile=chosen.filament_profile if chosen else None,
+                    filament_map=chosen.filament_map if chosen else None,
                     **tuple_columns(ask),
                 ))
             for model_uuid, profile in resolved.models:
+                chosen = intent.get("model:"+model_uuid if model_uuid else "any")
                 session.add(JobModelTarget(
                     job_id=j.id,
                     model_uuid=model_uuid,
                     print_profile=profile,
-                    filament_profile=None,   # the loaded slot supplies the preset on each matching printer
+                    overrides=chosen.overrides if chosen else None,
+                    filament_profile=chosen.filament_profile if chosen else None,
+                    filament_map=chosen.filament_map if chosen else None,
                     **tuple_columns(ask),
                 ))
             await session.flush()

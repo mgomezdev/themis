@@ -4,6 +4,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
 
+class SlicerSend(Base):
+    __tablename__ = "slicer_sends"
+    send_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_app: Mapped[str] = mapped_column(String(32))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40))
+
+
 class Printer(Base):
     __tablename__ = "printers"
 
@@ -216,6 +225,10 @@ class Order(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    min_bed_mm: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    printer_preference: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_app: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    send_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # Never reuse an id: events, webhooks and logs name a job by it (v054).
     __table_args__ = {"sqlite_autoincrement": True}
 
@@ -280,6 +293,7 @@ class Job(Base):
 
 
 class JobPrinterConfig(Base):
+    overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     __tablename__ = "job_printer_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -321,6 +335,7 @@ class JobPrinterConfig(Base):
 
 
 class JobModelTarget(Base):
+    overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     """A job eligible on *any* printer of the model `model_uuid` (BIZ-294; was keyed by the printers' machine profile). The queue
     engine materializes it into per-printer `JobPrinterConfig` rows (services/model_targets.py), so everything
     downstream keeps looking configs up by (job, printer). Slot-specific asks (tool_index) don't apply here."""
@@ -483,6 +498,9 @@ class Project(Base):
 
 class ProjectItem(Base):
     __tablename__ = "project_items"
+    min_bed_mm: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_app: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    send_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
@@ -553,6 +571,7 @@ class PartWaiver(Base):
 
 
 class ProjectGroup(Base):
+    printer_preference: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     """An ordered print group of a project (BIZ-360): which printers take its jobs (`targets`), the bed envelope it packs for, and
     the colour rule. Exactly one per project is the Default Group (renamable, never deleted; new items land in it)."""
     __tablename__ = "project_groups"
@@ -578,6 +597,9 @@ class ProjectGroup(Base):
 
 
 class ProjectGroupTarget(Base):
+    overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    filament_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     """One eligibility entry of a group: `target_key` is the shared selection key (`<printer id>`, `model:<uuid>`, `any`) and
     `process_profile` the process preset its jobs slice with ("" = the printer's own default, BIZ-358)."""
     __tablename__ = "project_group_targets"

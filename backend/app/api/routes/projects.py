@@ -18,6 +18,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Customer, Job, PROJECT_STAGES, Project, ProjectGroup, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 from ...services import idempotency, job_costs, project_events, project_groups
+from ...services.bed_requirement import MinBed
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.queue_engine import queue_engine
 
@@ -121,6 +122,7 @@ _RULES: dict[str, tuple[str, ...]] = {"stl": ("split", "solo"), "3mf_object": ("
 
 
 class ProjectItemCreate(AskFields):
+    min_bed_mm: MinBed | None = None
     file_id: int
     quantity: int = 1
     sort_order: int = 0
@@ -142,6 +144,7 @@ class ProjectItemCreate(AskFields):
 class ProjectItemUpdate(BaseModel):
     """A PATCH: only the fields sent change. The resulting ask must still be valid (a type needs a subtype)."""
     quantity: Optional[int] = None
+    min_bed_mm: MinBed | None = None
     filament_manufacturer: Optional[str] = None
     filament_type: Optional[str] = None
     filament_subtype: Optional[str] = None
@@ -241,6 +244,9 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "kind": item.kind or "stl",
         "source_ref": item.source_ref,
         "pack_rule": item.pack_rule or "split",
+        "min_bed_mm": item.min_bed_mm,
+        "source_app": item.source_app,
+        "send_id": item.send_id,
     }
 
 

@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
-from . import gcode_eligibility
+from . import gcode_eligibility, bed_requirement
 from .library_scanner import file_kind
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
@@ -56,6 +56,7 @@ def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterCo
         ask_color=target.ask_color,
         filament_map=target.filament_map,
         model_target_id=target.id,
+        overrides=target.overrides,
     )
 
 
@@ -77,11 +78,18 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
     if stale_ids:
         await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.id.in_(stale_ids)))
 
+    existing = (await session.execute(select(JobPrinterConfig, Job).join(Job, Job.id == JobPrinterConfig.job_id)
+        .where(JobPrinterConfig.printer_id == printer.id, JobPrinterConfig.model_target_id.is_not(None), Job.status.in_(_SYNCABLE)))).all()
+    for config, job in existing:
+        if await bed_requirement.reason(session, job.min_bed_mm, printer):
+            await session.delete(config)
+    await session.flush()
+
     have = set((await session.execute(
         select(JobPrinterConfig.job_id).where(JobPrinterConfig.printer_id == printer.id)
     )).scalars().all())
     rows = (await session.execute(
-        select(JobModelTarget, UploadedFile, Job.eligibility_confirmed)
+        select(JobModelTarget, UploadedFile, Job.eligibility_confirmed, Job.min_bed_mm)
         .join(Job, Job.id == JobModelTarget.job_id)
         .join(UploadedFile, UploadedFile.id == Job.uploaded_file_id)
         .where(JobModelTarget.model_uuid.is_(None) if profile is None
@@ -89,10 +97,12 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
                Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
     )).all()
-    for target, file, confirmed in rows:
+    for target, file, confirmed, requirement in rows:
         if target.job_id in have:  # an explicit pick (or an earlier target) already covers this printer
             continue
         if not accepts_file(printer.printer_type, file.original_filename):
+            continue
+        if await bed_requirement.reason(session, requirement, printer):
             continue
         if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=bool(confirmed))).allowed:
             continue   # a pre-sliced file's machine eligibility excludes this printer (BIZ-263)
@@ -119,6 +129,7 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     )).scalar_one_or_none()
     filename = file.original_filename if file else None
     confirmed = bool((await session.execute(select(Job.eligibility_confirmed).where(Job.id == job_id))).scalar())
+    job = await session.get(Job, job_id)
     have = set((await session.execute(
         select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job_id)
     )).scalars().all())
@@ -128,6 +139,8 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
             if printer.id in have or not targets_printer(target.model_uuid, printer):
                 continue
             if not accepts_file(printer.printer_type, filename):
+                continue
+            if await bed_requirement.reason(session, job.min_bed_mm, printer):
                 continue
             if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=confirmed)).allowed:
                 continue   # BIZ-263: the file's machine eligibility excludes this printer
@@ -147,6 +160,7 @@ def _target_dict(t: JobModelTarget, labels: dict[str, str]) -> dict:
         "filament_subtype": t.ask_subtype,
         "filament_color": t.ask_color,
         "filament_map": t.filament_map,
+        **({"overrides": t.overrides} if t.overrides is not None else {}),
     }
 
 

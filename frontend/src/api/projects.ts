@@ -17,6 +17,9 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export interface ProjectItem {
+  min_bed_mm?: { x: number; y: number; z?: number } | null;
+  source_app?: string | null;
+  send_id?: string | null;
   id: number;
   project_id: number;
   file_id: number;
