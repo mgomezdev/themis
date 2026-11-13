@@ -121,6 +121,11 @@ class PrintingMixin:
         )
         config = config_result.scalar_one_or_none()
         printer = await session.get(Printer, printer_id)
+        if printer is not None:
+            bed_reason = await _qe.bed_requirement.reason(session, job.min_bed_mm, printer)
+            if bed_reason:
+                await self._block_job(session, job, bed_reason)
+                return False
         loaded = (printer.loaded_filaments if printer else None) or []
         try:
             ams_tray_id = _qe._ams_mapping(filament_matching.plan_for(config, loaded), loaded)

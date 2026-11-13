@@ -153,6 +153,8 @@ async def update_job_configs(
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
     edited_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if is_presliced_file(edited_file) and any(c.overrides for c in [*body.printer_configs,*body.model_targets]):
+        raise HTTPException(422,"Target overrides cannot apply to pre-sliced G-code")
     await _check_gcode_printers(session, edited_file, body.printer_configs, body.model_targets)
     confirmed = job.eligibility_confirmed if body.confirm_unknown_eligibility is None else body.confirm_unknown_eligibility
     await _check_machine_eligibility(session, edited_file, body.printer_configs, body.model_targets, confirmed)
@@ -181,6 +183,7 @@ async def update_job_configs(
             **ask_columns(cfg),
             tool_index=cfg.tool_index,
             filament_map=cfg.filament_map,
+            overrides=cfg.overrides,
             slice_failed=False,
             slice_error=None,
         ))

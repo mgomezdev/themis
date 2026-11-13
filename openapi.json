@@ -933,17 +933,38 @@
           "auth"
         ],
         "summary": "Current session",
-        "description": "`role`: \"admin\" (local network or admin session), \"staff\" (API key), \"customer\", or null\nwhen the request carries no valid credential.",
         "operationId": "me_api_v1_auth_me_get",
+        "parameters": [
+          {
+            "name": "include_identity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Identity"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Me Api V1 Auth Me Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1003,6 +1024,89 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/slicer-sends/{send_id}": {
+      "get": {
+        "tags": [
+          "slicer-sends"
+        ],
+        "summary": "Look up a slicer send and whether it can still be updated",
+        "operationId": "get_send_api_v1_slicer_sends__send_id__get",
+        "parameters": [
+          {
+            "name": "send_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Send Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/slicer-sends": {
+      "post": {
+        "tags": [
+          "slicer-sends"
+        ],
+        "summary": "Create, retry or update an atomic slicer send",
+        "operationId": "send_api_v1_slicer_sends_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlicerSendInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "Different payload or work already generated/started"
           },
           "422": {
             "description": "Validation Error",
@@ -12731,6 +12835,16 @@
       },
       "GroupPatch": {
         "properties": {
+          "printer_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrinterPreference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "anyOf": [
               {
@@ -12840,6 +12954,44 @@
       },
       "GroupTargetIn": {
         "properties": {
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          },
+          "filament_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Profile"
+          },
+          "filament_map": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Map"
+          },
           "target_key": {
             "type": "string",
             "maxLength": 64,
@@ -12998,6 +13150,26 @@
       },
       "JobCreate": {
         "properties": {
+          "printer_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrinterPreference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "min_bed_mm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MinBed"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "uploaded_file_id": {
             "type": "integer",
             "title": "Uploaded File Id"
@@ -13743,6 +13915,39 @@
         "title": "MaterialPatch",
         "description": "Partial update: only the fields sent change; `null` clears an optional one."
       },
+      "MinBed": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Y"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "MinBed"
+      },
       "ModelPatch": {
         "properties": {
           "enabled": {
@@ -13758,6 +13963,18 @@
       },
       "ModelTargetInput": {
         "properties": {
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          },
           "filament_manufacturer": {
             "anyOf": [
               {
@@ -14474,6 +14691,18 @@
       },
       "PrinterConfigInput": {
         "properties": {
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          },
           "filament_manufacturer": {
             "anyOf": [
               {
@@ -14772,6 +15001,37 @@
           "connection_config"
         ],
         "title": "PrinterCreate"
+      },
+      "PrinterPreference": {
+        "properties": {
+          "entries": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Entries"
+          },
+          "strict": {
+            "type": "boolean",
+            "title": "Strict",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "title": "PrinterPreference"
       },
       "PrinterUpdate": {
         "properties": {
@@ -15236,6 +15496,16 @@
             ],
             "title": "Filament Color"
           },
+          "min_bed_mm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MinBed"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "file_id": {
             "type": "integer",
             "title": "File Id"
@@ -15326,6 +15596,16 @@
               }
             ],
             "title": "Quantity"
+          },
+          "min_bed_mm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MinBed"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "filament_manufacturer": {
             "anyOf": [
@@ -16166,6 +16446,93 @@
         },
         "type": "object",
         "title": "SettingsIn"
+      },
+      "SlicerSendInput": {
+        "properties": {
+          "send_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Send Id"
+          },
+          "source_app": {
+            "type": "string",
+            "const": "orcaslicer",
+            "title": "Source App",
+            "default": "orcaslicer"
+          },
+          "update": {
+            "type": "boolean",
+            "title": "Update",
+            "default": false
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "job",
+              "project"
+            ],
+            "title": "Kind"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroupPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectItemCreate"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "send_id",
+          "kind"
+        ],
+        "title": "SlicerSendInput"
       },
       "SpoolIn": {
         "properties": {

@@ -9,6 +9,38 @@ from app.services import slice_cache
 from app.services.queue_engine import QueueEngine, _slice_params
 
 
+def test_model_filament_presets_reach_the_physical_tools_and_cache_key():
+    loaded = [{"slot":0,"type":"PLA","filament_profile":"Slot PLA"},
+              {"slot":1,"type":"PETG","filament_profile":"Slot PETG"}]
+    config = JobPrinterConfig(print_profile="Process",filament_map=[
+        {"model_filament":1,"tool_index":0,"filament_profile":"Orca PLA"},
+        {"model_filament":2,"tool_index":1,"filament_profile":"Orca PETG"}])
+    engine = QueueEngine.__new__(QueueEngine)
+    engine._mgr = MagicMock()
+    engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
+    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    request,resolved = engine._slice_request(1,1,1,params,"laminus")
+    assert request.filament_presets == ["Orca PLA","Orca PETG"]
+    before = slice_cache.cache_key(slice_cache.key_inputs(request,"hash",None,resolved))
+    config.filament_map[1]["filament_profile"] = "Different PETG"
+    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    request,resolved = engine._slice_request(1,1,1,params,"laminus")
+    assert slice_cache.cache_key(slice_cache.key_inputs(request,"hash",None,resolved)) != before
+
+
+def test_conflicting_model_presets_cannot_share_one_physical_tool():
+    loaded = [{"slot":0,"type":"PLA","filament_profile":"Slot PLA"}]
+    config = JobPrinterConfig(print_profile="Process",filament_map=[
+        {"model_filament":1,"tool_index":0,"filament_profile":"Orca PLA"},
+        {"model_filament":2,"tool_index":0,"filament_profile":"Different PLA"}])
+    engine = QueueEngine.__new__(QueueEngine)
+    engine._mgr = MagicMock()
+    engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
+    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    with pytest.raises(ValueError,match="conflicting"):
+        engine._slice_request(1,1,1,params,"laminus")
+
+
 @pytest.mark.parametrize("mapped", [False, True])
 def test_single_ask_tracks_current_tool_and_cache_key(mapped, monkeypatch):
     config = JobPrinterConfig(print_profile="Process", ask_type="PLA", ask_subtype="any", ask_color="#519F61")

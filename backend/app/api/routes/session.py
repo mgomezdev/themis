@@ -93,7 +93,16 @@ async def _login(body: LoginBody, session: AsyncSession) -> dict:
 
 
 @router.get("/me", summary="Current session")
-async def me(request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+async def me(request: Request, session: AsyncSession = Depends(get_session), include_identity: bool = False) -> dict:
+    result = await _me(request,session)
+    if include_identity:
+        key = await _resolve_key(request,session)
+        # Staff keys have a label, not a human owner relation. Never invent an owner.
+        result["key_name"] = key.name if key else None
+    return result
+
+
+async def _me(request: Request, session: AsyncSession) -> dict:
     """`role`: "admin" (local network or admin session), "staff" (API key), "customer", or null
     when the request carries no valid credential."""
     key = await _resolve_key(request, session)

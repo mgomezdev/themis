@@ -72,7 +72,8 @@ def _ask(item):
 
 async def eligible_on(session: AsyncSession, group: ProjectGroup, printer: Printer) -> bool:
     """Is `printer` one of the group's targets?"""
-    return any(project_groups.covers(t.target_key, printer) for t in await project_groups.targets_of(session, group.id))
+    from .queue.preference import allowed
+    return allowed(group.printer_preference,printer) and any(project_groups.covers(t.target_key, printer) for t in await project_groups.targets_of(session, group.id))
 
 
 async def process_for(session: AsyncSession, group: ProjectGroup, printer: Printer) -> str:
@@ -159,6 +160,12 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         target = TargetPrinter(base.bed_mm, base.model_uuid, machine_profile=await machine_profile_for(session, printer))
         profile = await process_for(session, group, printer)
         overrides = dict(group.overrides) if group.overrides else None
+        preference = group.printer_preference
+        choices = {t.target_key:t for t in await project_groups.targets_of(session,group.id)}
+        chosen = next((choices[key] for key in (str(printer.id), f"model:{printer.model_uuid}", "any") if key in choices),None)
+        target_overrides = chosen.overrides if chosen else None
+        filament_profile = chosen.filament_profile if chosen else None
+        filament_map = chosen.filament_map if chosen else None
         project = await session.get(Project, group.project_id)
         position, max_parts, project_id, order_id = group.queue_position, group.max_parts, project.id, project.order_id
         slug = re.sub(r"[^a-z0-9]+", "-", project.name.lower()).strip("-") or "project"
@@ -185,10 +192,11 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         await session.flush()
         job = Job(uploaded_file_id=f.id, plate_number=1, project_id=project_id, order_id=order_id, queue_position=position,
                   status="queued", created_at=now, updated_at=now, project_item_quantities=json.dumps(quantities),
-                  pool_group_id=group_id, overrides=overrides)
+                  pool_group_id=group_id, overrides=overrides, printer_preference=preference)
         session.add(job)
         await session.flush()
-        session.add(JobPrinterConfig(job_id=job.id, printer_id=printer_id, print_profile=profile, **dict(zip(_ASK, ask))))
+        session.add(JobPrinterConfig(job_id=job.id, printer_id=printer_id, print_profile=profile, overrides=target_overrides,
+            filament_profile=filament_profile, filament_map=filament_map, **dict(zip(_ASK, ask))))
         await session.commit()
         return job.id
 

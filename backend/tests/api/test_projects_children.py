@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from app.models import Job, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 
 _ITEM_KEYS = {"id", "project_id", "file_id", "file_name", "quantity", "quantity_completed", "quantity_failed",
-              "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order", "group_id", "quantity_held", "kind", "source_ref", "pack_rule"}  # src/api/projects.ts ProjectItem
+              "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order", "group_id", "quantity_held", "kind", "source_ref", "pack_rule", "min_bed_mm", "source_app", "send_id"}  # src/api/projects.ts ProjectItem
 _LINK_KEYS = {"id", "project_id", "url", "label", "sort_order", "created_at"}
 
 
@@ -86,6 +86,7 @@ async def test_item_lifecycle_add_list_update_delete(client, project, upload_3mf
         "group_id": (await client.get(f"/api/v1/projects/{project}/groups")).json()[0]["id"],   # the Default Group
         "quantity_held": 0,
         "kind": "3mf_plate", "source_ref": "1", "pack_rule": "split",
+        "min_bed_mm": None, "source_app": None, "send_id": None,
     }
     assert (await client.get(f"/api/v1/projects/{project}/items")).json() == [created]
 
