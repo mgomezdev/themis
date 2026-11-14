@@ -4,9 +4,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text, update
 
 from app.api.routes import plugin_install
-from app.database import get_session
 from app.main import app
-from app.models import ApiKey, AuditLog, CapabilitySelection, InstalledPlugin, Job, PluginConfig
+from app.models import ApiKey, AuditLog, InstalledPlugin, Job, PluginConfig
 from app.auth import SCOPES
 from app.plugins import _REGISTRY, installer
 from app.services.api_key_service import generate_key, hash_key

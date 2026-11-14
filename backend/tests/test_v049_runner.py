@@ -6,7 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.migrations import v049_thumbnail_keys as mig
-from app.migrations.runner import rollback_last, run_migrations
+from app.migrations.runner import run_migrations
+from tests.migration_helpers import rollback_to
 from app.models import UploadedFile
 
 OLD_PLATES = [
@@ -47,14 +48,7 @@ async def test_runner_applies_v049_to_an_existing_install_and_rollback_keeps_the
             assert (await conn.execute(text(applied))).scalar() == 1
             assert [p["thumbnail_path"] for p in await _stored(conn, file_id)] == [
                 f"{file_id}/thumbnails/plate_1.png", f"{file_id}/thumbnails/plate_2.png"]
-            await rollback_last(conn)                                  # v056 (newer than the migration under test)
-            await rollback_last(conn)                                  # v055
-            await rollback_last(conn)                                  # v054
-            await rollback_last(conn)                                  # v053 (newer than the migration under test)
-            await rollback_last(conn)                                  # v052
-            await rollback_last(conn)                                  # v051
-            await rollback_last(conn)                                  # v050
-            await rollback_last(conn)                                  # v049
+            await rollback_to(conn, 48)
             assert (await conn.execute(text(applied))).scalar() == 0
             assert (await _stored(conn, file_id))[0]["thumbnail_path"] == f"{file_id}/thumbnails/plate_1.png"
     finally:

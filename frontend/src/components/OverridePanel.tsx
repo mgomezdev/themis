@@ -24,7 +24,7 @@ export function OverridePanel({ settings, value, onChange }: OverridePanelProps)
       border: '1px solid var(--border-1)',
       borderRadius: 10,
       padding: '14px 16px',
-      background: 'var(--bg-1)',
+      background: 'var(--bg-0)',
     }}>
       <div className="label" style={{ marginBottom: 6 }}>3MF Embedded Settings</div>
       <div className="tiny muted" style={{ marginBottom: 10, lineHeight: 1.5 }}>
@@ -45,8 +45,8 @@ export function OverridePanel({ settings, value, onChange }: OverridePanelProps)
                 onChange={() => toggle(s.key, s.value)}
                 style={{ width: 15, height: 15, accentColor: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}
               />
-              <span className="small" style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
-              <span className="tiny muted mono" style={{ flexShrink: 0 }}>{s.value}</span>
+              <span className="small grow min-0">{s.label}</span>
+              <span className="tiny muted mono shrink-0">{s.value}</span>
             </label>
           );
         })}

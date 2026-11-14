@@ -54,8 +54,8 @@ export function JobProjectControl({ jobId, projectId, projectName, onChanged }: 
   return (
     <div className="col gap-2">
       {projectId != null ? (
-        <div className="row between" style={{ alignItems: 'center' }}>
-          <button className="btn ghost sm" style={{ minWidth: 0 }} onClick={() => navigate(`/projects/${projectId}`)}>
+        <div className="row between">
+          <button className="btn ghost sm min-0" onClick={() => navigate(`/projects/${projectId}`)}>
             {projectName ?? `Project #${projectId}`}
           </button>
           <button className="btn ghost sm" disabled={busy} onClick={() => run(() => setJobProject(jobId, null))}>
@@ -63,7 +63,7 @@ export function JobProjectControl({ jobId, projectId, projectName, onChanged }: 
           </button>
         </div>
       ) : !picking ? (
-        <button className="btn sm" style={{ width: '100%' }} onClick={openPicker}>Link to project…</button>
+        <button className="btn sm w-full" onClick={openPicker}>Link to project…</button>
       ) : (
         <div className="col gap-2">
           <select aria-label="Existing project" value={choice} onChange={e => setChoice(e.target.value)}>

@@ -17,6 +17,7 @@ vi.mock('../api/queue', () => ({
   verifySlice: vi.fn(),
   setJobProject: vi.fn(),
   plateThumbnailUrl: vi.fn(() => null),
+  getQueuePools: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock('../api/projects', () => ({
@@ -38,6 +39,7 @@ const nullEstimate = {
   materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>, model_targets: [] as ApiJob['model_targets'],
   low_stock_warning: null, filament_cost: null, not_before: null,
   save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
+  pool_group_id: null,
 };
 
 const mockJobs: ApiJob[] = [
@@ -87,6 +89,25 @@ describe('QueueScreen', () => {
     await vi.waitFor(() => expect(refetch).toHaveBeenCalled());
     expect(refetchProjects).toHaveBeenCalled();
     expect(queueApi.setJobProject).toHaveBeenCalledWith(2, null);
+  });
+
+  it('lists the print pools and labels a claimed plate with its pool (BIZ-362)', async () => {
+    vi.mocked(projectsApi.useProjects).mockReturnValue({ projects: [{ id: 4, name: 'Bracket run' }], refetch: vi.fn() } as never);
+    vi.mocked(queueApi.getQueuePools).mockResolvedValue([{ group_id: 9, name: 'Brackets', project_id: 4, project_name: 'Bracket run',
+      queue_position: 3, done: 2, printing: 3, left: 5, warning: 'Brackets: no eligible printer can take the remaining parts' }]);
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4, pool_group_id: 9 }], refetch: vi.fn() });
+    render(<QueueScreen />, { wrapper });
+    const row = await screen.findByTestId('queue-pool-9');
+    expect(row.textContent).toContain('2 done · 3 printing · 5 left');
+    expect(row.textContent).toContain('no eligible printer');
+    expect(await screen.findByText(/Bracket run · pool Brackets/)).toBeTruthy();
+  });
+
+  it('shows no pools card when there are no pools', async () => {
+    vi.mocked(queueApi.getQueuePools).mockResolvedValue([]);
+    render(<QueueScreen />, { wrapper });
+    await vi.waitFor(() => expect(queueApi.getQueuePools).toHaveBeenCalled());
+    expect(screen.queryByTestId('queue-pools')).toBeNull();
   });
 
   it('renders summary stats', () => {

@@ -40,11 +40,11 @@ export function PrinterModelsPanel() {
       <div className="col gap-3">
         {[...groups].map(([maker, list]) => (
           <fieldset key={maker} style={{ border: 'none', padding: 0, margin: 0 }}>
-            <legend className="small" style={{ fontWeight: 500 }}>{maker}</legend>
+            <legend className="small fw-500">{maker}</legend>
             {list.map(m => (
               <div key={m.id} className="col gap-2" style={{ marginBottom: 6 }}>
-                <div className="row gap-2" style={{ alignItems: 'center' }}>
-                  <label className="row gap-2" style={{ alignItems: 'center' }}>
+                <div className="row gap-2">
+                  <label className="row gap-2">
                     <input type="checkbox" checked={m.enabled} onChange={() => toggle(m)} aria-label={`${m.manufacturer_name} ${m.display_name}`} />
                     <span className="small">{m.display_name}</span>
                   </label>

@@ -1,16 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { ApiPrinter } from '../api/printers';
-import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelGroups, modelKey, modelLabelOf, modelUuidOf } from './ModelTargets';
+import { ANY_KEY, buildEligibility, isModelKey, modelConfigSource, modelGroups, modelKey, modelLabelOf, modelUuidOf, printersOfKey } from './ModelTargets';
 import { defaultPerPrinterCfg } from './PerPrinterConfig';
 
 const printer = (id: number, model_uuid: string | null, model_label: string | null, over: Partial<ApiPrinter> = {}): ApiPrinter => ({
   id, name: `P${id}`, printer_type: 'bambu', plugin_id: 'bambu', manufacturer_id: 'bambu', model_id: 'p1s', model_uuid, connection_config: {},
   awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null, nozzle_variant: null, machine_profile: null,
-  machine_profile_reason: null, model_label, enabled: true, queue_on: true, connected: true, loaded_filaments: [{ slot: 0, filament_id: null, name: 'x', type: 'PLA', color: '#fff' }],
+  machine_profile_reason: null, model_label, enabled: true, queue_on: true, configured: true, config_error: null, connected: true, loaded_filaments: [{ slot: 0, filament_id: null, name: 'x', type: 'PLA', color: '#fff' }],
   build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256, machine_rate_per_hour: null,
-  preferred_slicer_plugin_id: null, quiet_start: null, quiet_end: null, ...over,
+  preferred_slicer_plugin_id: null, default_process_profile: null, single_colour_only: false, bed_z_mm: null, waiver_flag_at: 0, waiver_stop_at: 0, test_print_job_id: null, quiet_start: null, quiet_end: null, ...over,
 });
 const FLEET = [printer(1, 'm-p1s', 'Bambu Lab P1S'), printer(2, 'm-x1c', 'Bambu Lab X1 Carbon'), printer(3, 'm-p1s', 'Bambu Lab P1S'), printer(4, null, null)];
 
@@ -46,20 +44,14 @@ describe('model targets are keyed by registry model, not by machine profile', ()
     expect(modelConfigSource(modelKey('gone'), FLEET)).toBeNull();
   });
 
-  it('the picker shows one tile per model with its printer count and toggles the model key', async () => {
-    const toggled: string[] = [];
-    render(<ModelPicker printers={FLEET} selected={[modelKey('m-x1c')]} onToggle={k => toggled.push(k)} />);
-
-    expect(screen.getByText('Any Bambu Lab P1S')).toBeTruthy();
-    expect(screen.getByText('2 printers now')).toBeTruthy();
-    expect(screen.getByText('1 printer now')).toBeTruthy();
-    await userEvent.click(screen.getByTestId('model-target-m-p1s'));
-    expect(toggled).toEqual([modelKey('m-p1s')]);
-  });
-
-  it('the picker is empty when no printer has a model', () => {
-    const { container } = render(<ModelPicker printers={[printer(4, null, null)]} selected={[]} onToggle={() => {}} />);
-    expect(container.textContent).toBe('');
+  it('"Any printer" is its own group key with a null model, covering every printer (BIZ-357)', () => {
+    expect(modelKey(null)).toBe(ANY_KEY);
+    expect(isModelKey(ANY_KEY)).toBe(true);
+    expect(modelUuidOf(ANY_KEY)).toBeNull();
+    expect(printersOfKey(ANY_KEY, FLEET).map(p => p.id)).toEqual(FLEET.map(p => p.id));
+    expect(printersOfKey(modelKey('m-p1s'), FLEET).every(p => p.model_uuid === 'm-p1s')).toBe(true);
+    expect(modelConfigSource(ANY_KEY, FLEET)?.printers[0].name).toBe('Any printer');
+    expect(modelConfigSource(ANY_KEY, [])).toBeNull();
   });
 
   it('builds model_targets with model_uuid and printer_configs with printer ids from one mixed selection', () => {

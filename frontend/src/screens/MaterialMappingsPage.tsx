@@ -3,6 +3,7 @@ import { fetchPrinters, type ApiPrinter } from '../api/printers';
 import { getPrinterProfiles } from '../api/queue';
 import { CAP, fetchMaterials, materialDisplayName, profileLinks, setProfileLinks, useInventory, type InvMaterial } from '../api/inventory';
 import { FilamentProfileMultiSelect } from '../components/FilamentProfileMultiSelect';
+import { UNKNOWN_DOT_COLOR } from '../data/helpers';
 
 // Map from machine preset name → one printer ID that uses it (for profile lookup)
 function buildPresetPrinterMap(printers: ApiPrinter[]): Map<string, number> {
@@ -56,26 +57,26 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
     }
   }
 
-  const color = filament.color_hex || '#888';
+  const color = filament.color_hex || UNKNOWN_DOT_COLOR;
   const presets = Array.from(presetPrinterMap.keys());
 
   // Orphaned: presets in saved mapping not covered by any registered printer
   const orphanedPresets = Object.keys(saved).filter(p => !presetPrinterMap.has(p));
 
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div
         className="row gap-3"
         style={{ padding: '12px 16px', cursor: 'pointer', alignItems: 'center' }}
         onClick={() => setExpanded(e => !e)}
       >
         <div style={{ width: 12, height: 12, borderRadius: 3, flexShrink: 0, background: color, border: '1px solid var(--border-2)' }} />
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{materialDisplayName(filament)}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{materialDisplayName(filament)}</div>
           <div className="tiny muted">{filament.material}</div>
         </div>
         {Object.keys(saved).length > 0 && (
-          <span className="tiny" style={{ color: 'var(--ok)' }}>
+          <span className="tiny text-ok">
             {Object.keys(saved).length} preset{Object.keys(saved).length > 1 ? 's' : ''} mapped
           </span>
         )}
@@ -102,7 +103,7 @@ function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, in
 
             {orphanedPresets.map(preset => (
               <div key={preset} className="col gap-1">
-                <label className="tiny" style={{ color: 'var(--warn)' }}>
+                <label className="tiny text-warn">
                   {preset} <span className="muted">(no matching printer registered)</span>
                 </label>
                 <div className="tiny muted">
@@ -228,7 +229,7 @@ export function MaterialMappingsPage() {
   }
   if (error) {
     return (
-      <div style={{ padding: '12px 16px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+      <div style={{ padding: '12px 16px', background: 'var(--bg-0)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
         {error}
       </div>
     );
@@ -266,7 +267,7 @@ export function MaterialMappingsPage() {
           {searchOpen && searchResults.length > 0 && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-              background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+              background: 'var(--bg-1)', border: '1px solid var(--border-2)',
               borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
               marginTop: 2,
             }}>
@@ -275,10 +276,10 @@ export function MaterialMappingsPage() {
                   key={f.ref}
                   onMouseDown={() => addFilament(f)}
                   style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border-1)' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <span style={{ fontWeight: 500 }}>{materialDisplayName(f)}</span>
+                  <span className="fw-500">{materialDisplayName(f)}</span>
                   <span className="tiny muted" style={{ marginLeft: 8 }}>{f.material}</span>
                 </div>
               ))}

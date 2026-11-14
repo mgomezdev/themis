@@ -4,7 +4,7 @@ Each test drives today's code against the mock Spoolman and pins `{status, body}
 `tests/golden/spoolman/`. Phase 1c+ replays the same calls through the plugin's alias routes and compares against
 these files. Regenerate deliberately with `UPDATE_GOLDEN=1`. Timestamps are masked; everything else is exact."""
 import copy
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 

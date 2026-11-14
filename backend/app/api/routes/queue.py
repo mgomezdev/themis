@@ -51,6 +51,7 @@ def _base_dict(j: Job) -> dict:
         "allow_cached_slice": bool(j.allow_cached_slice),
         "sliced_version_id": j.sliced_version_id,
         "slice_cache_info": j.slice_cache_info,
+        "pool_group_id": j.pool_group_id,          # BIZ-362: the pool this plate was packed from at claim time
     }
 
 
@@ -141,6 +142,21 @@ async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs in an active status (queued, slicing, uploading, printing, paused, blocked, failed)
     ordered by queue position ascending."""
     return await _active_jobs_enriched(session)
+
+
+@router.get("/pools", summary="Active print pools", dependencies=[Depends(require_scope("queue:read"))])
+async def get_queue_pools(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Pooled print groups of queued projects (BIZ-362), in queue order: each is one queue entry that idle printers pack their
+    next plate from. `warning` says why one is stuck (no eligible printer can take its remaining parts)."""
+    from ...models import Project
+    from ...services import pools
+    out = []
+    for g in await pools.active_pools(session):
+        project = await session.get(Project, g.project_id)
+        out.append({"group_id": g.id, "name": g.name, "project_id": g.project_id, "project_name": project.name if project else None,
+                    "queue_position": g.queue_position, **await pools.stats(session, g),
+                    "warning": await pools.warning(session, g)})
+    return out
 
 
 @router.patch(

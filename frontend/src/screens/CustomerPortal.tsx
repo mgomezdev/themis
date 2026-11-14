@@ -33,7 +33,7 @@ function DraftEditor({ project, onSaved }: { project: PortalProject; onSaved: (p
       <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Project name" />
       <textarea className="input" rows={4} value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Describe what you need" />
-      <div className="row gap-2" style={{ alignItems: 'center' }}>
+      <div className="row gap-2">
         <button className="btn primary sm" disabled={busy || !name.trim()}
                 onClick={() => run(() => updateDraft(project.id, { name, notes }))}>Save</button>
         <label className="btn sm" style={{ cursor: busy ? 'default' : 'pointer' }}>
@@ -45,7 +45,7 @@ function DraftEditor({ project, onSaved }: { project: PortalProject; onSaved: (p
                    if (f) run(() => uploadToDraft(project.id, f));
                  }} />
         </label>
-        {error && <span className="small" style={{ color: 'var(--err)' }}>{error}</span>}
+        {error && <span className="small text-err">{error}</span>}
       </div>
     </div>
   );
@@ -92,13 +92,13 @@ function QuoteCard({ project, onChanged }: { project: PortalProject; onChanged: 
 
       <div className="row gap-2" style={{ marginTop: 10, alignItems: 'center' }}>
         {q.accepted_at ? (
-          <span className="small" style={{ color: 'var(--ok)' }}>
+          <span className="small text-ok">
             You accepted this quote on {new Date(q.accepted_at).toLocaleDateString()}.
           </span>
         ) : (
           <button className="btn primary sm" disabled={busy} onClick={accept}>Accept quote</button>
         )}
-        {error && <span className="small" style={{ color: 'var(--err)' }}>{error}</span>}
+        {error && <span className="small text-err">{error}</span>}
       </div>
     </div>
   );
@@ -107,7 +107,7 @@ function QuoteCard({ project, onChanged }: { project: PortalProject; onChanged: 
 function ProjectDetail({ project, onChanged }: { project: PortalProject; onChanged: (p: PortalProject) => void }) {
   return (
     <div className="card" style={{ padding: 20 }}>
-      <div className="row between" style={{ alignItems: 'center' }}>
+      <div className="row between">
         <h2 style={{ margin: 0, fontSize: 18 }}>{project.name}</h2>
         <span className="pill">{STAGE_LABEL[project.stage] ?? project.stage}</span>
       </div>
@@ -214,7 +214,7 @@ export function CustomerPortal() {
               <button key={p.id} className="card" onClick={() => setSelectedId(p.id)}
                       style={{ padding: 12, textAlign: 'left', cursor: 'pointer',
                                borderColor: p.id === selectedId ? 'var(--accent)' : undefined }}>
-                <div style={{ fontWeight: 500 }}>{p.name}</div>
+                <div className="fw-500">{p.name}</div>
                 <div className="tiny muted">
                   {STAGE_LABEL[p.stage] ?? p.stage} · {p.jobs_complete}/{p.jobs_total} jobs
                   {p.quote && p.quote.balance > 0 ? ` · ${fmtMoney(p.quote.balance)} due` : ''}
@@ -222,7 +222,7 @@ export function CustomerPortal() {
               </button>
             ))}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="grow min-0">
           {selected ? <ProjectDetail project={selected} onChanged={replace} />
             : <div className="small muted">Select a project</div>}
         </div>

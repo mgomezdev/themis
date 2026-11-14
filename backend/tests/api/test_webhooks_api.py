@@ -1,7 +1,6 @@
 """`/api/v1/webhooks` destinations (BIZ-172) and the legacy `/settings/webhook` view of the `default` one."""
 import pytest
 
-from app.services import webhook_service
 from tests.webhook_helpers import install_wire, verify_signature
 
 URL = "https://hooks.example.test/a"

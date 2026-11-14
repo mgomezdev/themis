@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import hashlib
-import io
 import json
 import logging
 import re
 import secrets
-import uuid as _uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
@@ -19,21 +13,22 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ._filament_ask import AskFields, ask_columns, ask_out, normalize as _normalize_ask, row_tuple, tuple_columns
-from ...services.filament_tuple import FilamentTuple
+from ._filament_ask import AskFields, ask_out
 from ...auth import require_scope
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
+from ...models import Customer, Job, PROJECT_STAGES, Project, ProjectGroup, ProjectItem, ProjectLink, ProjectPart, UploadedFile
+from ...services import idempotency, job_costs, project_events, project_groups
+from ...services.bed_requirement import MinBed
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
-from ...services.three_mf_parser import plate_numbers, plate_object_names
-from ...services.artifact_store import ArtifactError, ArtifactStore
-from ...services.library_store import get_library_store
-from ...services.library_scanner import (
-    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
-)
-from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 from ...services.queue_engine import queue_engine
+
+from ...services.providers.construction import get_project_constructor
+from ...services.library_store import get_library_store
+from ...services.library_scanner import is_presliced_name, refresh_content_hash
+
+# Collaborators project_children.py / project_generate.py call as `_projects.<name>` rather than importing themselves:
+# tests swap them out on THIS module (`patch("app.api.routes.projects.get_project_constructor")`).
+_PATCH_POINTS = (get_project_constructor, queue_engine, get_library_store, refresh_content_hash, secrets)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -119,10 +114,24 @@ class ProjectShareOut(BaseModel):
     created_at: Optional[str] = None
 
 
+ItemKind = Literal["stl", "3mf_object", "3mf_plate", "gcode"]
+PackRule = Literal["split", "together", "solo", "locked"]
+# Which packing rules each kind can use (BIZ-356); the first is the default. gcode prints as sliced.
+_RULES: dict[str, tuple[str, ...]] = {"stl": ("split", "solo"), "3mf_object": ("split", "solo"),
+                                     "3mf_plate": ("split", "together", "solo", "locked"), "gcode": ("locked",)}
+
+
 class ProjectItemCreate(AskFields):
+    min_bed_mm: MinBed | None = None
     file_id: int
     quantity: int = 1
     sort_order: int = 0
+    # BIZ-356: what of the file this item is. Omitted = inferred from the file: an STL; a .gcode / .gcode.3mf (plate
+    # `source_ref`, default 1); a .3mf's plate `source_ref` (default 1). `source_ref` = object id for "3mf_object".
+    kind: Optional[ItemKind] = None
+    source_ref: Optional[str] = Field(default=None, max_length=64)
+    pack_rule: Optional[PackRule] = None
+    group_id: Optional[int] = None          # BIZ-363: a print group of this project (default: the Default Group)
 
     @field_validator("quantity")
     @classmethod
@@ -135,11 +144,14 @@ class ProjectItemCreate(AskFields):
 class ProjectItemUpdate(BaseModel):
     """A PATCH: only the fields sent change. The resulting ask must still be valid (a type needs a subtype)."""
     quantity: Optional[int] = None
+    min_bed_mm: MinBed | None = None
     filament_manufacturer: Optional[str] = None
     filament_type: Optional[str] = None
     filament_subtype: Optional[str] = None
     filament_color: Optional[str] = None
     sort_order: Optional[int] = None
+    group_id: Optional[int] = None          # move the item to another print group of the same project (BIZ-360)
+    pack_rule: Optional[PackRule] = None    # BIZ-356: must be one its kind allows
 
     @field_validator("quantity")
     @classmethod
@@ -199,22 +211,17 @@ class ProjectPartUpdate(BaseModel):
 class GenerateRequest(BaseModel):
     eligible_printer_ids: list[int] = []
     # OrcaSlicer process/print preset name, resolved against each eligible
-    # printer's process catalog. No default is invented when omitted — an
-    # unset print_profile fails cleanly at slice time with an actionable error
-    # (see slicer_service._resolve_uuids) rather than silently misresolving.
+    # printer's process catalog. Omitted = each printer's own default process profile (BIZ-358).
     process_preset: Optional[str] = None
     # Printer models ("any printer of model X", registry UUIDs, BIZ-294) eligible alongside the specific printers above.
     eligible_model_uuids: list[str] = []
+    # Any printer at all, including ones added later (BIZ-357): an "Any printer" model target on every job.
+    eligible_any_printer: bool = False
     # Slicing cache (BIZ-192): keep each generated job's production slice in the library as a cached version.
     save_slice: bool = False
     # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
     # instead of slicing when a printer claims it.
     allow_cached: bool = True
-    # What to queue. "all" (default): the full quantity of every item, whatever exists already (another run of the project).
-    # "remaining": each item's quantity minus what is already printed (reviewed good parts) or still on its way (queued /
-    # printing / printed-but-unreviewed plates) — reprints failed or cancelled plates and parts reviewed as failed without
-    # duplicating the rest.
-    quantities: Literal["remaining", "all"] = "all"
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +239,14 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "quantity_failed": item.quantity_failed,
         **ask_out(item),
         "sort_order": item.sort_order,
+        "group_id": item.group_id,
+        "quantity_held": item.quantity_held or 0,
+        "kind": item.kind or "stl",
+        "source_ref": item.source_ref,
+        "pack_rule": item.pack_rule or "split",
+        "min_bed_mm": item.min_bed_mm,
+        "source_app": item.source_app,
+        "send_id": item.send_id,
     }
 
 
@@ -484,6 +499,7 @@ async def _create_project(body: ProjectCreate, session: AsyncSession, progress: 
         if existing is None:
             raise
         return await _project_dict(existing, session), False
+    await project_groups.ensure_default_group(session, proj.id)      # every project has its Default Group (BIZ-360)
     if proj.amount_paid and proj.amount_paid > 0:
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
@@ -773,917 +789,81 @@ async def list_project_jobs(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Project Item CRUD
-# ---------------------------------------------------------------------------
+# Shared by the item routes (project_children.py) and generation (project_generate.py).
+async def _item_group(session: AsyncSession, project_id: int, group_id: int | None) -> int:
+    """The group a new item joins: `group_id` when it is a print group of this project (422 otherwise), else the Default Group."""
+    if group_id is None:
+        return (await project_groups.ensure_default_group(session, project_id)).id
+    group = await session.get(ProjectGroup, group_id)
+    if group is None or group.project_id != project_id:
+        raise HTTPException(422, f"Group {group_id} is not a print group of project {project_id}")
+    return group.id
 
-@router.get(
-    "/{project_id}/items",
-    summary="List project items",
-    responses={
-        404: {"description": "Project not found"},
-    },
-    dependencies=[Depends(require_scope("projects:read"))],
+
+def _item_kind(f: UploadedFile, kind: str | None, ref: str | None, rule: str | None) -> tuple[str, str | None, str]:
+    """Validate (and infer) what of `f` an item is (BIZ-356): (kind, source_ref, pack_rule), else 422."""
+    name = f.original_filename.lower()
+    natural = "gcode" if is_presliced_name(f.original_filename) else "stl" if name.endswith(".stl") else "3mf_plate"
+    kind = kind or natural
+    if kind == "gcode" and natural != "gcode" or kind == "stl" and natural != "stl" or \
+            kind in ("3mf_object", "3mf_plate") and natural != "3mf_plate":
+        raise HTTPException(422, f"{f.original_filename} can't be a {kind} item")
+    if kind == "3mf_object" and not ref:
+        raise HTTPException(422, "A 3MF object item needs source_ref: the object id")
+    if kind in ("3mf_plate", "gcode"):
+        ref = "1" if name.endswith(".gcode") else (ref or "1")          # a raw .gcode is one plate
+        plates = {p.get("plate_number") for p in (f.plates or []) if p.get("plate_number") is not None}
+        if not (ref.isascii() and ref.isdigit() and int(ref) >= 1) or (plates and int(ref) not in plates):
+            raise HTTPException(422, f"{f.original_filename} has no plate {ref}" + (f" (plates {sorted(plates)})" if plates else ""))
+    if kind == "stl":
+        ref = None
+    allowed = _RULES[kind]
+    rule = rule or allowed[0]
+    if rule not in allowed:
+        raise HTTPException(422, f"A {kind} item can't use the {rule!r} rule (allowed: {', '.join(allowed)})")
+    return kind, ref, rule
+
+
+# ---- the rest of the projects routes ---------------------------------------------------------------
+# Imported last: each module below registers its routes on `router` (so they match after the ones above, in this order)
+# and uses the names defined above. Their names are re-exported here for existing importers.
+from .project_children import (  # noqa: E402,F401,I001
+    add_item,  # noqa: F401
+    add_link,  # noqa: F401
+    add_part,  # noqa: F401
+    delete_item,  # noqa: F401
+    delete_link,  # noqa: F401
+    delete_part,  # noqa: F401
+    list_items,  # noqa: F401
+    list_links,  # noqa: F401
+    list_parts,  # noqa: F401
+    reorder_items,  # noqa: F401
+    update_item,  # noqa: F401
+    update_link,  # noqa: F401
+    update_part,  # noqa: F401
 )
-async def list_items(
-    project_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    await _get_project_or_404(project_id, session)
-    return await _load_items(session, project_id)
-
-
-@router.post(
-    "/{project_id}/items",
-    status_code=201,
-    summary="Add item to project",
-    responses={
-        404: {"description": "Project or file not found"},
-        422: {"description": "The file is pre-sliced (.gcode / .gcode.3mf) — only models can be packed"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
+from .project_generate import (  # noqa: E402,F401,I001
+    HeldAction,  # noqa: F401
+    PACK_FOLDER,  # noqa: F401
+    _construct_http_error,  # noqa: F401
+    _construct_in_thread,  # noqa: F401
+    _construct_stored_models,  # noqa: F401
+    _filament_label,  # noqa: F401
+    _gcode_targets,  # noqa: F401
+    _generate_project,  # noqa: F401
+    _max_queue_position,  # noqa: F401
+    _parse_plate_nums,  # noqa: F401
+    _plan_group_packs,  # noqa: F401
+    _plate_item_quantities,  # noqa: F401
+    _queue_packs,  # noqa: F401
+    _require_ready,  # noqa: F401
+    _reusable_pack,  # noqa: F401
+    _round_robin_quantities,  # noqa: F401
+    _stored,  # noqa: F401
+    _stored_manifest,  # noqa: F401
+    _stored_plate_nums,  # noqa: F401
+    generate_project,  # noqa: F401
+    project_failures,  # noqa: F401
+    project_review,  # noqa: F401
+    resolve_held_parts,  # noqa: F401
 )
-async def add_item(
-    project_id: int,
-    body: ProjectItemCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    proj = await _get_project_or_404(project_id, session)
-    f = await session.get(UploadedFile, body.file_id)
-    if f is None:
-        raise HTTPException(404, f"File {body.file_id} not found")
-    if is_presliced_name(f.original_filename):   # project items get packed and sliced: gcode can't be
-        raise HTTPException(422, f"{f.original_filename} is already sliced — add the model it was sliced from")
-    item = ProjectItem(
-        project_id=project_id,
-        file_id=body.file_id,
-        quantity=body.quantity,
-        **ask_columns(body),
-        sort_order=body.sort_order,
-    )
-    session.add(item)
-    proj.updated_at = _now_iso()
-    await session.commit()
-    await session.refresh(item)
-    return _item_dict(item, f.original_filename)
-
-
-# NOTE: declared before PUT /{project_id}/items/{item_id} on purpose — Starlette matches routes in
-# declaration order, so "/items/reorder" would otherwise be captured by {item_id} and always 422.
-@router.put(
-    "/{project_id}/items/reorder",
-    summary="Reorder project items",
-    responses={
-        404: {"description": "Project not found"},
-        422: {"description": "One or more item IDs do not belong to this project"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def reorder_items(
-    project_id: int,
-    body: list[ReorderEntry],
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    """Set explicit sort_order values for project items. Returns the full updated item list."""
-    await _get_project_or_404(project_id, session)
-    item_ids = [e.id for e in body]
-    rows = (
-        await session.execute(
-            select(ProjectItem).where(
-                ProjectItem.id.in_(item_ids),
-                ProjectItem.project_id == project_id,
-            )
-        )
-    ).scalars().all()
-    if len(rows) != len(body):
-        raise HTTPException(422, "One or more item IDs do not belong to this project")
-    order_map = {e.id: e.sort_order for e in body}
-    for item in rows:
-        item.sort_order = order_map[item.id]
-    await session.commit()
-    return await _load_items(session, project_id)
-
-
-@router.put(
-    "/{project_id}/items/{item_id}",
-    summary="Update project item",
-    responses={
-        404: {"description": "Project or item not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def update_item(
-    project_id: int,
-    item_id: int,
-    body: ProjectItemUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    item = await session.get(ProjectItem, item_id)
-    if item is None or item.project_id != project_id:
-        raise HTTPException(404, f"Item {item_id} not found in project {project_id}")
-    if body.quantity is not None:
-        item.quantity = body.quantity
-    sent = body.model_fields_set & {"filament_manufacturer", "filament_type", "filament_subtype", "filament_color"}
-    if sent:
-        merged = {f: (getattr(body, f) if f in sent else getattr(item, c)) for f, c in zip(
-            ("filament_manufacturer", "filament_type", "filament_subtype", "filament_color"),
-            ("ask_manufacturer", "ask_type", "ask_subtype", "ask_color"))}
-        if "filament_subtype" not in sent and not _normalize_ask(None, merged["filament_type"], "any", None).type:
-            merged["filament_subtype"] = None                      # no type left (cleared, or the legacy "any"): its subtype goes too
-        try:
-            ask = _normalize_ask(merged["filament_manufacturer"], merged["filament_type"], merged["filament_subtype"],
-                                 merged["filament_color"])
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-        item.ask_manufacturer, item.ask_type, item.ask_subtype, item.ask_color = ask.manufacturer, ask.type, ask.subtype, ask.color
-    if body.sort_order is not None:
-        item.sort_order = body.sort_order
-    await session.commit()
-    await session.refresh(item)
-    f = await session.get(UploadedFile, item.file_id)
-    fname = f.original_filename if f else f"[file {item.file_id}]"
-    return _item_dict(item, fname)
-
-
-@router.delete(
-    "/{project_id}/items/{item_id}",
-    summary="Remove item from project",
-    responses={
-        404: {"description": "Project or item not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def delete_item(
-    project_id: int,
-    item_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    item = await session.get(ProjectItem, item_id)
-    if item is None or item.project_id != project_id:
-        raise HTTPException(404, f"Item {item_id} not found in project {project_id}")
-    await session.delete(item)
-    await session.commit()
-    return {"deleted": item_id}
-
-
-# ---------------------------------------------------------------------------
-# Project Link CRUD
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/{project_id}/links",
-    summary="List project links",
-    responses={
-        404: {"description": "Project not found"},
-    },
-    dependencies=[Depends(require_scope("projects:read"))],
-)
-async def list_links(
-    project_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    await _get_project_or_404(project_id, session)
-    return await _load_links(session, project_id)
-
-
-@router.post(
-    "/{project_id}/links",
-    status_code=201,
-    summary="Add project link",
-    responses={
-        404: {"description": "Project not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def add_link(
-    project_id: int,
-    body: ProjectLinkCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    link = ProjectLink(
-        project_id=project_id,
-        url=body.url,
-        label=body.label,
-        sort_order=body.sort_order,
-        created_at=_now_iso(),
-    )
-    session.add(link)
-    await session.commit()
-    await session.refresh(link)
-    return _link_dict(link)
-
-
-@router.put(
-    "/{project_id}/links/{link_id}",
-    summary="Update project link",
-    responses={
-        404: {"description": "Project or link not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def update_link(
-    project_id: int,
-    link_id: int,
-    body: ProjectLinkUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    link = await session.get(ProjectLink, link_id)
-    if link is None or link.project_id != project_id:
-        raise HTTPException(404, f"Link {link_id} not found in project {project_id}")
-    if body.url is not None:
-        link.url = body.url
-    if body.label is not None:
-        link.label = body.label
-    if body.sort_order is not None:
-        link.sort_order = body.sort_order
-    await session.commit()
-    await session.refresh(link)
-    return _link_dict(link)
-
-
-@router.delete(
-    "/{project_id}/links/{link_id}",
-    summary="Delete project link",
-    responses={
-        404: {"description": "Project or link not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def delete_link(
-    project_id: int,
-    link_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    link = await session.get(ProjectLink, link_id)
-    if link is None or link.project_id != project_id:
-        raise HTTPException(404, f"Link {link_id} not found in project {project_id}")
-    await session.delete(link)
-    await session.commit()
-    return {"deleted": link_id}
-
-
-# ---------------------------------------------------------------------------
-# Project Part CRUD (non-3D-printed parts — hardware needed for the assembly)
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/{project_id}/parts",
-    summary="List project parts",
-    responses={
-        404: {"description": "Project not found"},
-    },
-    dependencies=[Depends(require_scope("projects:read"))],
-)
-async def list_parts(
-    project_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    await _get_project_or_404(project_id, session)
-    return await _load_parts(session, project_id)
-
-
-@router.post(
-    "/{project_id}/parts",
-    status_code=201,
-    summary="Add non-printed part to project",
-    responses={
-        404: {"description": "Project not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def add_part(
-    project_id: int,
-    body: ProjectPartCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    part = ProjectPart(
-        project_id=project_id,
-        name=body.name,
-        quantity=body.quantity,
-        allocated=body.allocated,
-        sort_order=body.sort_order,
-        unit_cost=body.unit_cost,
-        created_at=_now_iso(),
-    )
-    session.add(part)
-    await session.commit()
-    await session.refresh(part)
-    return _part_dict(part)
-
-
-@router.put(
-    "/{project_id}/parts/{part_id}",
-    summary="Update project part",
-    responses={
-        404: {"description": "Project or part not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def update_part(
-    project_id: int,
-    part_id: int,
-    body: ProjectPartUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    part = await session.get(ProjectPart, part_id)
-    if part is None or part.project_id != project_id:
-        raise HTTPException(404, f"Part {part_id} not found in project {project_id}")
-    if body.name is not None:
-        part.name = body.name
-    if body.quantity is not None:
-        part.quantity = body.quantity
-    if body.allocated is not None:
-        part.allocated = body.allocated
-    if body.sort_order is not None:
-        part.sort_order = body.sort_order
-    if "unit_cost" in body.model_fields_set:
-        part.unit_cost = body.unit_cost
-    await session.commit()
-    await session.refresh(part)
-    return _part_dict(part)
-
-
-@router.delete(
-    "/{project_id}/parts/{part_id}",
-    summary="Remove part from project",
-    responses={
-        404: {"description": "Project or part not found"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def delete_part(
-    project_id: int,
-    part_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    await _get_project_or_404(project_id, session)
-    part = await session.get(ProjectPart, part_id)
-    if part is None or part.project_id != project_id:
-        raise HTTPException(404, f"Part {part_id} not found in project {project_id}")
-    await session.delete(part)
-    await session.commit()
-    return {"deleted": part_id}
-
-
-# ---------------------------------------------------------------------------
-# Generate — packs STLs one 3MF per filament group via Orca, saves to library,
-# and queues one job per plate.
-# ---------------------------------------------------------------------------
-
-async def _max_queue_position(session: AsyncSession) -> float:
-    result = await session.execute(select(func.max(Job.queue_position)))
-    return result.scalar_one_or_none() or 0.0
-
-
-def _parse_plate_nums(path: Path) -> list[int]:
-    try:
-        import zipfile
-        with zipfile.ZipFile(path) as zf:
-            return plate_numbers(zf)
-    except Exception:
-        return []
-
-
-PACK_FOLDER = "Job Pack 3MFs"
-_generate_locks: dict[int, asyncio.Lock] = {}
-
-
-async def _stored(store: ArtifactStore, key: str) -> bool:
-    """Whether the library holds `key`; a key the store refuses (e.g. a legacy row with an empty `relative_path`) is absent."""
-    try:
-        return await asyncio.to_thread(store.exists, key)
-    except ArtifactError:
-        return False
-
-
-def _layout_plate_nums(packed: bytes) -> list[int]:
-    try:
-        import zipfile
-        with zipfile.ZipFile(io.BytesIO(packed)) as zf:
-            return plate_numbers(zf)
-    except Exception:
-        return []
-
-
-def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
-    """Plate numbers of a stored pack: the zip reader needs a path, so the artifact is materialized."""
-    with store.materialize(key) as local:
-        return _parse_plate_nums(local)
-
-
-def _pack_stored_models(store: ArtifactStore, slicing, keys: list[str], **options) -> bytes:
-    """Pack the STLs stored under `keys` (quantities travel in `options["counts"]`). The packer takes paths, so each distinct
-    artifact is materialized once for the duration of the call. Blocking: call from a worker thread."""
-    with contextlib.ExitStack() as stack:
-        local = {k: stack.enter_context(store.materialize(k)) for k in dict.fromkeys(keys)}
-        return slicing.pack_models([local[k] for k in keys], **options)
-
-
-async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFile | None:
-    """The newest earlier pack made from the same recipe whose file is still on disk, or None."""
-    rows = (await session.execute(
-        select(UploadedFile).where(UploadedFile.pack_recipe_hash == recipe_hash, UploadedFile.missing.is_(False))
-        .order_by(UploadedFile.id.desc())
-    )).scalars().all()
-    for f in rows:
-        if not f.content_hash:
-            continue
-        fresh = await asyncio.to_thread(
-            fresh_content_hash, get_library_store(), f.relative_path, f.content_hash, f.size_bytes, f.mtime)
-        if fresh is not None and fresh[0] == f.content_hash:   # present and not edited since it was packed
-            return f
-    return None
-
-
-_PACK_LABEL_RE = re.compile(r"__m(\d+)(?!\d)")
-
-
-def _pack_label(filename: str, index: int) -> str:
-    """The name every copy of a group's `index`-th model carries inside the pack: readable, and it leads back to the model.
-    It depends only on the model's position in the group, so an identical recipe from another project reuses the pack."""
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).stem).strip("._") or "model"
-    return f"{stem[:40]}__m{index}"
-
-
-def _label_index(name: str | None) -> int:
-    """The model index a packed object's name carries (-1 if none). The label is the tail: a file stem may itself contain
-    "__m3", so the LAST match counts."""
-    found = _PACK_LABEL_RE.findall(name or "")
-    return int(found[-1]) if found else -1
-
-
-def _layout_of(packed: bytes | Path) -> dict[int, list[str]] | None:
-    try:
-        import zipfile
-        with zipfile.ZipFile(io.BytesIO(packed) if isinstance(packed, bytes) else packed) as zf:
-            return plate_object_names(zf)
-    except Exception:
-        return None
-
-
-def _stored_layout(store: ArtifactStore, key: str) -> dict[int, list[str]] | None:
-    with store.materialize(key) as local:
-        return _layout_of(local)
-
-
-def _plate_quantities(
-    layout: dict[int, list[str]] | None, plate_nums: list[int], wanted: list[tuple[int, int]],
-) -> tuple[list[int], list[dict[str, int]], bool, dict[int, int]]:
-    """What each plate of a pack holds, per project item: (plate numbers, {item id: count} per plate, exact?, unplaced).
-
-    `wanted` is the group's [(item id, quantity)] in pack order. With a readable `layout` (the pack's objects carry
-    `_pack_label` names) the counts are what the packer actually put on each plate, plates holding nothing are dropped, and
-    `unplaced` is {item id: copies missing from every plate}. Without one (an older packer, a foreign file) the quantities are
-    spread evenly over the plates — an estimate, flagged as such."""
-    if layout is not None:
-        per_plate: dict[int, dict[str, int]] = {}
-        placed = [0] * len(wanted)
-        readable = True
-        for plate, names in layout.items():
-            for name in names:
-                idx = _label_index(name)
-                if not 0 <= idx < len(wanted):
-                    readable = False
-                    break
-                placed[idx] += 1
-                key = str(wanted[idx][0])
-                per_plate.setdefault(plate, {})[key] = per_plate.setdefault(plate, {}).get(key, 0) + 1
-            if not readable:
-                break
-        if readable and all(placed[i] <= qty for i, (_, qty) in enumerate(wanted)):
-            plates = sorted(per_plate)
-            unplaced = {item_id: qty - placed[i] for i, (item_id, qty) in enumerate(wanted) if placed[i] < qty}
-            return plates, [per_plate[p] for p in plates], True, unplaced
-    plates = list(plate_nums) or [1]
-    n = len(plates)
-    split = [{str(item_id): qty // n + (1 if i < qty % n else 0) for item_id, qty in wanted} for i in range(n)]
-    return plates, split, False, {}
-
-
-async def _pending_item_quantities(session: AsyncSession, project_id: int) -> dict[int, int]:
-    """Parts of each project item that are on their way: on the plates of this project's jobs that are still to print, printing,
-    or printed but not yet reviewed (presumed good until someone says otherwise). Failed and cancelled plates count for nothing
-    (their parts are to be made again); reviewed plates are already in the item's own `quantity_completed`."""
-    reviewed = set((await session.execute(
-        select(JobItemFailure.job_id).join(Job, Job.id == JobItemFailure.job_id).where(Job.project_id == project_id)
-    )).scalars().all())
-    pending: dict[int, int] = {}
-    rows = (await session.execute(
-        select(Job).where(Job.project_id == project_id, Job.project_item_quantities.is_not(None),
-                          Job.status.not_in(("failed", "cancelled")))
-    )).scalars().all()
-    for job in rows:
-        if job.id in reviewed:
-            continue
-        try:
-            on_plate = json.loads(job.project_item_quantities)
-        except ValueError:
-            continue
-        for item_id, qty in (on_plate.items() if isinstance(on_plate, dict) else ()):
-            try:
-                pending[int(item_id)] = pending.get(int(item_id), 0) + max(0, int(qty))
-            except (TypeError, ValueError):
-                continue
-    return pending
-
-
-def _filament_label(ask: FilamentTuple) -> str:
-    """Short string for use in generated 3MF filenames."""
-    parts = [p.lower() for p in (ask.manufacturer, ask.type) if p]
-    if ask.subtype and ask.subtype.casefold() not in ("any", "standard"):
-        parts.append(ask.subtype.lower())
-    if ask.color:
-        parts.append(ask.color.lstrip("#"))
-    return "-".join(parts) if parts else "any"
-
-
-@router.post(
-    "/{project_id}/generate",
-    summary="Pack STLs and queue jobs",
-    responses={
-        404: {"description": "Project not found or a referenced file is missing"},
-        422: {"description": "Project has no items, nothing is left to generate, an eligible printer is unknown, "
-                             "a file is missing, or a part does not fit the bed"},
-        502: {"description": "Orca sidecar error during generation"},
-        504: {"description": "Generation timed out"},
-        409: {"description": "Project is a draft, or another request with this Idempotency-Key is still running"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def generate_project(
-    project_id: int,
-    body: GenerateRequest,
-    response: Response,
-    session: AsyncSession = Depends(get_session),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", description="Repeat-safe generation: a retry returns the first result"),
-) -> dict:
-    """Pack project STL items into 3MF files (one per filament group), save them to the library,
-    and queue one job per plate. Returns created job and file IDs plus the bed dimensions used
-    for packing.
-    `quantities: "remaining"` queues only what is still missing: each item's quantity minus the parts already printed or on
-    a plate that is queued, printing or awaiting review (so failed plates and failed parts are made again, nothing else).
-    Each job records the parts its plate really holds
-    (`files[].plate_contents` is `exact`; `estimated` when the pack does not say), and generation fails with 422 — queuing
-    nothing for that group — when the packer could not place every part (too large for the smallest eligible bed).
-    Send an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result
-    (`Idempotent-Replay: true`) and creates no further files or jobs."""
-    factory = async_sessionmaker(session.bind, expire_on_commit=False)
-    scope = f"POST /api/v1/projects/{project_id}/generate"
-    if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()))
-        if replay is not None:
-            response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
-            return replay.response
-    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
-    try:
-        # One generate per project at a time: two concurrent "remaining" calls would both see the same parts as missing.
-        async with _generate_locks.setdefault(project_id, asyncio.Lock()):
-            result = await _generate_project(project_id, body, session)
-    except BaseException:
-        if idempotency_key:
-            created = await _job_count(factory, project_id) - jobs_before
-            if created > 0:       # some groups were committed: a retry under this key would generate them again
-                await idempotency.partial(factory, scope, idempotency_key, f"This request created {created} job(s) for project {project_id} "
-                                          "before it failed: check the project's jobs, then retry with a new Idempotency-Key")
-            else:
-                await idempotency.release(factory, scope, idempotency_key)
-        raise
-    if idempotency_key:
-        await _remember(factory, scope, idempotency_key, 200, result)
-    return result
-
-
-async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession) -> dict:
-    proj = await _get_project_or_404(project_id, session)
-    if proj.stage == "draft":
-        raise HTTPException(409, "Promote the project to planning before creating jobs")
-
-    slicing = get_slicing_provider()
-    if slicing is None:
-        raise HTTPException(422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
-    if not slicing.PACK_MODELS:
-        raise HTTPException(422, "The slicing provider cannot pack models — project generation is unavailable")
-
-    # Resolve eligible printers and compute the smallest bed dimensions.
-    eligible_printers: list[Printer] = []
-    if body.eligible_printer_ids:
-        rows = (await session.execute(
-            select(Printer).where(Printer.id.in_(body.eligible_printer_ids))
-        )).scalars().all()
-        eligible_printers = list(rows)
-        unknown = sorted(set(body.eligible_printer_ids) - {p.id for p in eligible_printers})
-        if unknown:   # packing for a default bed and queueing jobs nothing can take would only surface much later
-            raise HTTPException(422, f"Unknown eligible printer(s): {', '.join(map(str, unknown))}")
-    model_printers: list[Printer] = []
-    if body.eligible_model_uuids:
-        model_printers = list((await session.execute(
-            select(Printer).where(Printer.model_uuid.in_(body.eligible_model_uuids))
-        )).scalars().all())
-
-    # Pack for the smallest bed among everything that could take the job (explicit picks + matching models).
-    # A model's registry entry counts too: a printer of that model added later takes the same jobs.
-    bed_printers = eligible_printers + [p for p in model_printers if p.id not in {e.id for e in eligible_printers}]
-    beds = [(p.bed_x_mm, p.bed_y_mm) for p in bed_printers]
-    if body.eligible_model_uuids:
-        beds += [(m.bed_x_mm, m.bed_y_mm) for m in (await session.execute(
-            select(PrinterModelRecord).where(PrinterModelRecord.id.in_(body.eligible_model_uuids)))).scalars().all()]
-    beds = [(x, y) for x, y in beds if x and y and x > 0 and y > 0]
-    if beds:
-        pack_bed_x = min(x for x, _ in beds)
-        pack_bed_y = min(y for _, y in beds)
-    else:
-        pack_bed_x, pack_bed_y = 256.0, 256.0
-
-    item_rows = (
-        await session.execute(
-            select(ProjectItem)
-            .where(ProjectItem.project_id == project_id)
-            .order_by(ProjectItem.sort_order, ProjectItem.id)
-        )
-    ).scalars().all()
-
-    if not item_rows:
-        raise HTTPException(422, "Project has no items — add STL files before generating")
-
-    # How many of each item to queue now.
-    pending = await _pending_item_quantities(session, project_id) if body.quantities == "remaining" else {}
-    item_qty = {
-        item.id: (item.quantity if body.quantities == "all"
-                  else max(0, item.quantity - (item.quantity_completed or 0) - pending.get(item.id, 0)))
-        for item in item_rows
-    }
-    if not any(item_qty.values()):
-        raise HTTPException(422, "Nothing left to generate — every part is already printed or queued")
-
-    # Group items by filament requirement (the ask tuple)
-    groups: dict[FilamentTuple, list[ProjectItem]] = {}
-    for item in item_rows:
-        if item_qty[item.id] > 0:
-            groups.setdefault(row_tuple(item), []).append(item)
-
-    library = get_library_store()
-
-    # Resolve STL keys per group (+ what each group packs from, for pack reuse)
-    group_keys: dict[FilamentTuple, list[str]] = {}
-    group_labels: dict[FilamentTuple, list[str]] = {}
-    group_names: dict[FilamentTuple, list[str]] = {}
-    group_recipe: dict[FilamentTuple, list[tuple[str, int]]] = {}
-    for key, group_items in groups.items():
-        keys: list[str] = []
-        group_recipe[key] = []
-        group_labels[key] = []
-        group_names[key] = []
-        for item in group_items:
-            f = await session.get(UploadedFile, item.file_id)
-            if f is None:
-                raise HTTPException(422, f"File {item.file_id} not found in library")
-            if not f.original_filename.lower().endswith(".stl"):
-                raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-            if not await _stored(library, f.relative_path):
-                raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            keys.append(f.relative_path)
-            group_labels[key].append(_pack_label(f.original_filename, len(group_labels[key])))
-            group_names[key].append(f.original_filename)
-            # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
-            await refresh_content_hash(f, library)
-            group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item_qty[item.id]))
-        group_keys[key] = keys
-    pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
-                 if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
-
-    # Clean up legacy single-result file unless an active job holds it
-    if proj.result_file_id is not None:
-        active = (
-            await session.execute(
-                select(Job.id)
-                .where(
-                    Job.uploaded_file_id == proj.result_file_id,
-                    Job.status.in_(ACTIVE_JOB_STATUSES),
-                )
-                .limit(1)
-            )
-        ).first()
-        if active is None:
-            old_file = await session.get(UploadedFile, proj.result_file_id)
-            # Never delete a file the slicing cache still relies on (a reusable pack, or one with cached slices).
-            if old_file and (old_file.pack_recipe_hash or (await session.execute(
-                    select(SlicedVersion.id).where(SlicedVersion.source_file_id == old_file.id).limit(1))).first()):
-                old_file = None
-            if old_file:
-                await asyncio.to_thread(library.delete, old_file.relative_path, missing_ok=True)
-                await session.delete(old_file)
-        proj.result_file_id = None
-        await session.commit()
-
-    # Pack output is staged under a throwaway folder and moved to its job-ID folder once the IDs are known; this store
-    # prunes the emptied staging folder (the library store keeps folders, which are user-visible objects).
-    pack_store = get_library_store(prune_empty=True)
-
-    jobs_out: list[dict] = []
-    files_out: list[dict] = []
-
-    for ask, stl_keys in group_keys.items():
-        group_items = groups[ask]
-        wanted = [(item.id, item_qty[item.id]) for item in group_items]
-        counts = [qty for _, qty in wanted]
-        # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
-        # slices keyed on that file still apply (BIZ-193).
-        recipe_hash = slice_cache.sha256_of({"items": group_recipe[ask], "pack": pack_mode})
-        reused = await _reusable_pack(session, recipe_hash) if body.allow_cached else None
-        now = _now_iso()
-
-        if reused is not None:
-            new_file = reused
-            plate_nums = [p.get("plate_number") for p in (reused.plates or []) if p.get("plate_number") is not None]
-            try:
-                layout = await asyncio.to_thread(_stored_layout, library, reused.relative_path)
-            except ArtifactError:
-                layout = None
-            job_plates, plate_item_qtys, exact, short = _plate_quantities(layout, plate_nums, wanted)
-            if short:      # a stored pack that reads as short was not made from these labels: don't trust its layout
-                job_plates, plate_item_qtys, exact, _ = _plate_quantities(None, plate_nums, wanted)
-            slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
-                                  pack_content_hash=reused.content_hash)
-        else:
-            try:
-                if proj.machine_uuid and proj.process_uuid:
-                    # Legacy path: project has OrcaSlicer profiles embedded
-                    packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_keys,
-                        machine_ref=proj.machine_uuid, process_ref=proj.process_uuid, filament_refs=[],
-                        counts=counts, labels=group_labels[ask],
-                    )
-                else:
-                    # Geometry-only pack; slicing profiles applied at dispatch time
-                    packed_bytes = await asyncio.to_thread(
-                        _pack_stored_models, library, slicing, stl_keys, bed=(pack_bed_x, pack_bed_y, 250.0),
-                        counts=counts, labels=group_labels[ask],
-                    )
-            except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
-                raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
-            except SlicingProviderError as exc:
-                if "timed out" in str(exc).lower():
-                    raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
-                raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
-
-            # Read back what the packer did BEFORE anything is stored or queued: a part it could not place (too large for the
-            # bed) must stop here, not surface as a short project after hours of printing.
-            layout = await asyncio.to_thread(_layout_of, packed_bytes)
-            pre_plates = await asyncio.to_thread(_layout_plate_nums, packed_bytes)
-            job_plates, plate_item_qtys, exact, unplaced = _plate_quantities(layout, pre_plates, wanted)
-            if unplaced:
-                names = {item.id: group_names[ask][i] for i, item in enumerate(group_items)}
-                detail = ", ".join(f"{n} x {names[item_id]}" for item_id, n in unplaced.items())
-                raise HTTPException(422, f"The packer could not place every part on a {pack_bed_x:g} x {pack_bed_y:g} mm bed "
-                                         f"({detail}): the part may be too large for the smallest eligible printer")
-            if not exact:
-                logger.warning("Project %s: the pack does not say which parts are on which plate; per-plate quantities are "
-                               "estimated (update the slicing provider for exact ones)", proj.id)
-
-            label = _filament_label(ask)
-            out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
-            # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-            tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
-            published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
-            # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
-            # library's dedup/move detection relies on it too.
-            pack_hash = hashlib.sha256(packed_bytes).hexdigest()
-
-            plate_nums = await asyncio.to_thread(_stored_plate_nums, pack_store, tmp_key)
-
-            new_file = UploadedFile(
-                original_filename=out_filename,
-                plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
-                uploaded_at=now,
-                relative_path=tmp_key,
-                folder=f"/{PACK_FOLDER}",
-                size_bytes=published.size,
-                content_hash=pack_hash,
-                mtime=published.mtime,
-                missing=False,
-                pack_recipe_hash=recipe_hash,
-            )
-            session.add(new_file)
-            await session.commit()
-            await session.refresh(new_file)
-            slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
-                                  pack_content_hash=pack_hash)
-
-        effective_plates = job_plates
-
-        next_pos = await _max_queue_position(session) + 1.0
-        new_jobs: list[Job] = []
-        for plate_idx, plate_num in enumerate(effective_plates):
-            job = Job(
-                uploaded_file_id=new_file.id,
-                plate_number=plate_num,
-                project_id=proj.id,
-                order_id=proj.order_id,
-                queue_position=next_pos,
-                status="queued",
-                created_at=now,
-                updated_at=now,
-                project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
-                save_slice=body.save_slice,
-                allow_cached_slice=body.allow_cached,
-            )
-            session.add(job)
-            new_jobs.append(job)
-            next_pos += 1.0
-        # Commit jobs so the DB assigns their autoincrement IDs.
-        await session.commit()
-        # Refresh each job so j.id is populated.
-        for j in new_jobs:
-            await session.refresh(j)
-
-        if reused is None:
-            # Rename temp dir to the job-ID subfolder now that IDs are known.
-            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
-            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
-            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
-            new_file.relative_path = moved.key
-            new_file.mtime = moved.mtime
-            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
-            await session.commit()
-
-        cached_plates = (await session.execute(
-            select(func.count(func.distinct(SlicedVersion.plate_number)))
-            .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
-            .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
-        )).scalar() or 0
-        files_out.append({
-            "id": new_file.id,
-            "original_filename": new_file.original_filename,
-            "folder": new_file.folder,
-            "plate_count": len(plate_nums),
-            # Whether each job's part counts were read from the pack ("exact") or spread evenly over its plates ("estimated").
-            "plate_contents": "exact" if exact else "estimated",
-            # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
-            "pack_reused": reused is not None,
-            "cached_plates": cached_plates,
-        })
-
-        # Create printer configs for each eligible printer × job. The machine preset
-        # is deliberately NOT set here — queue_engine reads it fresh from the printer
-        # at dispatch time. print_profile is the *process* preset and must come from
-        # the user (body.process_preset); machine_profile_override is a machine
-        # preset name and can never resolve against the process catalog.
-        for j in new_jobs:
-            for p in eligible_printers:
-                session.add(JobPrinterConfig(
-                    job_id=j.id,
-                    printer_id=p.id,
-                    print_profile=body.process_preset or "",
-                    **tuple_columns(ask),
-                ))
-            for model_uuid in dict.fromkeys(body.eligible_model_uuids):
-                session.add(JobModelTarget(
-                    job_id=j.id,
-                    model_uuid=model_uuid,
-                    print_profile=body.process_preset or "",
-                    filament_profile=None,   # the loaded slot supplies the preset on each matching printer
-                    **tuple_columns(ask),
-                ))
-            await session.flush()
-            await model_targets.materialize_job(session, j.id)
-        await session.commit()
-
-        # Trigger estimates for each new job if enabled.
-        queue_cfg = await session.get(QueueConfig, 1)
-        est_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
-        if est_enabled:
-            for j in new_jobs:
-                j.estimate_token = (j.estimate_token or 0) + 1
-                j.estimate_status = "pending"
-            await session.commit()
-            for j in new_jobs:
-                queue_engine.spawn_estimate(j.id)
-
-        jobs_out.extend({
-            "id": j.id,
-            "uploaded_file_id": j.uploaded_file_id,
-            "plate_number": j.plate_number,
-            "queue_position": j.queue_position,
-            "status": j.status,
-        } for j in new_jobs)
-
-    proj.updated_at = _now_iso()
-    await session.commit()
-    if jobs_out:
-        await project_events.publish("project.generated", proj, job_ids=[j["id"] for j in jobs_out])
-
-    return {
-        "project_id": proj.id,
-        "jobs": jobs_out,
-        "files": files_out,
-        "eligible_printer_ids": [p.id for p in eligible_printers],
-        "pack_bed_x": pack_bed_x,
-        "pack_bed_y": pack_bed_y,
-    }

@@ -200,3 +200,28 @@ async def test_the_plugin_host_starts_before_the_queue_engine(boot, session_fact
     async with main.lifespan(main.app):
         pass
     assert order.index("plugins") < order.index("queue")
+
+
+async def test_a_warmup_still_polling_at_shutdown_is_cancelled_and_the_services_still_stop(boot, monkeypatch):
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", "http://sidecar.invalid:5000")
+    monkeypatch.setattr("app.services.providers.laminus.sidecar_client.LaminusSidecarClient.health", MagicMock())
+    started, outcome = asyncio.Event(), []
+
+    async def warm():                                    # the real one polls a building sidecar for up to five minutes
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            outcome.append("cancelled")
+            raise
+
+    monkeypatch.setattr("app.services.catalog_service.warm", warm)
+    async with main.lifespan(main.app):
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        (task,) = [t for t in asyncio.all_tasks() if t.get_name() == "catalog-warm"]
+        assert not task.done()
+
+    assert outcome == ["cancelled"] and task.cancelled()         # not left running against a closing app
+    boot.inventory_stop.assert_awaited_once()                    # and shutdown carried on past it
+    boot.engine_stop.assert_awaited_once()
+    boot.plugin_stop.assert_awaited_once()

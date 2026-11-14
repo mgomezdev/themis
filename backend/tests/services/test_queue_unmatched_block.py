@@ -49,7 +49,7 @@ async def env(session_factory, listen):
 
 async def add_printer(env, factory, pid, loaded, *, connected=True, queue_on=True, enabled=True) -> MagicMock:
     async with factory() as s:
-        s.add(Printer(id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=loaded, machine_profile_override="Test Machine Preset",
+        s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=loaded, machine_profile_override="Test Machine Preset",
                       queue_on=queue_on, enabled=enabled))
         await s.commit()
     c = client(connected=connected)
@@ -140,7 +140,7 @@ async def test_a_queue_off_or_disabled_printer_still_counts_because_the_operator
 
 async def test_a_printer_with_no_client_yet_counts_so_a_restart_blocks_nothing(env, session_factory):
     async with session_factory() as s:                                                          # a row, but its client is not registered (just booted)
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF))
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF))
         await s.commit()
     job_id = await add_job(env, session_factory, [1])
 
@@ -188,7 +188,7 @@ async def test_a_printer_skipped_by_the_claim_loop_still_has_its_model_targets_m
     from app.models import JobModelTarget, PrinterModelRecord
     async with session_factory() as s:
         s.add(PrinterModelRecord(id="m1", plugin_id="bambu", manufacturer_id="bambu", model_id="m1", display_name="M1"))
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF,
+        s.add(Printer(configured=True, id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF,
                       model_uuid="m1", quiet_start="00:00", quiet_end="23:59"))             # quiet hours: the claim loop skips it
         await s.commit()
     env.mgr.register_client(1, client())
@@ -283,3 +283,60 @@ async def test_every_other_block_publishes_job_blocked_too(env, session_factory)
     await hub.drain()
     assert [e.payload for e in env.blocked] == [{"reason": "slicing provider is down", "phase": "queue"}]
     assert env.engine._fire_webhooks.await_count == 0
+
+
+async def test_all_candidate_failures_are_stored_and_another_printer_can_claim(env, session_factory):
+    await add_printer(env, session_factory, 1, PLA)
+    await add_printer(env, session_factory, 2, PLA)
+    job_id = await add_job(env, session_factory, [1, 2])
+    fmap = [{"model_filament": i, "tool_index": None, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#519F61"} for i in range(1, 5)]
+    async with session_factory() as s:
+        for config in (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars():
+            config.filament_map = fmap
+        await s.commit()
+    await env.engine._sweep_unmatched_jobs()
+    blocked = await job(session_factory, job_id)
+    assert blocked.status == "blocked"
+    assert blocked.unmatched_filaments == {"1": [1, 2, 3, 4], "2": [1, 2, 3, 4]}
+    for printer in ("P1", "P2"):
+        assert f"{printer}: Filament 1 (PETG any #519F61): no loaded match" in blocked.block_reason
+    assert blocked.block_reason.count("Filament 4") == 2
+    async with session_factory() as s:
+        (await s.get(Printer, 2)).loaded_filaments = [{"slot": 0, "type": "PETG", "color": "#519F61"}]
+        await s.commit()
+    await env.engine._process_queue()
+    claimed = await job(session_factory, job_id)
+    assert (claimed.status, claimed.assigned_printer_id, claimed.block_reason, claimed.unmatched_filaments) == ("slicing", 2, None, None)
+    async with session_factory() as s:
+        config = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == 2))).scalar_one()
+        assert [{k: v for k, v in e.items() if k != "identity"} for e in config.slot_plan] == [
+            {"model_filament": i, "slot": 0} for i in range(1, 5)]
+        assert all(e["tool_index"] is None for e in config.filament_map)
+
+
+async def test_hardware_filament_sync_wakes_engine_after_persisting_slots(env, session_factory):
+    await add_printer(env, session_factory, 1, PLA)
+    env.mgr._session_factory = session_factory
+    env.mgr.set_connectivity_callback(env.engine.on_connectivity)
+    await env.mgr.on_ams_change(1, [{"slot": 0, "type": "PETG", "color": "#519F61"}])
+    env.engine.wake.assert_called_once()
+    async with session_factory() as s:
+        assert (await s.get(Printer, 1)).loaded_filaments[0]["type"] == "PETG"
+
+
+async def test_the_fleet_check_combines_a_missing_process_profile_with_the_structured_filament_rows(env, session_factory):
+    """Merge of BIZ-358 into BIZ-235: a printer with the filament but no process profile reports that (and no unmatched row);
+    a printer without the filament reports its unmatched filament rows; the job blocks with both."""
+    await add_printer(env, session_factory, 1, PA_CF)                    # has the filament, no default process profile
+    await add_printer(env, session_factory, 2, PLA)                      # wrong filament
+    job_id = await add_job(env, session_factory, [1, 2])
+    async with session_factory() as s:
+        for cfg in (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars():
+            cfg.print_profile = ""                                       # "Printer default"
+        await s.commit()
+    await env.engine._sweep_unmatched_jobs()
+    blocked = await job(session_factory, job_id)
+    assert blocked.status == "blocked"
+    assert blocked.unmatched_filaments == {"2": [1]}
+    assert "P1 has no default process profile" in blocked.block_reason
+    assert "P2: Filament 1" in blocked.block_reason

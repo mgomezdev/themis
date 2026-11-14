@@ -1,5 +1,6 @@
 """The Moonraker protocol-family plugin through the API (BIZ-148): several manufacturers on one plugin, registry UUID selection, the
 generic custom Klipper model with user-owned dimensions, and a hardware model offered by two providers only by explicit choice."""
+from tests.printer_ips import ip_config
 import pytest
 
 from app import plugins
@@ -86,7 +87,7 @@ async def test_the_stored_toolhead_count_reaches_the_client_the_factory_builds(c
 
 
 async def test_the_legacy_printer_type_key_does_not_silently_pick_the_moonraker_provider(client):
-    r = await client.post("/api/v1/printers", json={"name": "K", "printer_type": "moonraker", "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": "K", "printer_type": "moonraker", "connection_config": ip_config()})
     assert r.status_code == 422
 
 
@@ -107,7 +108,7 @@ async def test_the_same_hardware_model_under_two_providers_is_two_registry_ident
     via_moonraker = await add(client, a[("voron", "v2_4_300")]["id"])
     via_alt = await add(client, b[("voron", "v2_4_300")]["id"])
     by_triple = await client.post("/api/v1/printers", json={"name": "T", "plugin_id": "klipper_alt", "manufacturer_id": "voron",
-                                                            "model_id": "v2_4_300", "connection_config": {}})
+                                                            "model_id": "v2_4_300", "connection_config": ip_config()})
 
     assert via_moonraker.json()["plugin_id"] == "moonraker" and via_alt.json()["plugin_id"] == "klipper_alt"
     assert by_triple.json()["model_uuid"] == b[("voron", "v2_4_300")]["id"]

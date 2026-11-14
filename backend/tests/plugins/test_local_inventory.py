@@ -2,7 +2,7 @@
 ACTIVE provider through the neutral API, preflight, alerts and the deduction model — with core knowing nothing about it."""
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.plugins import get_plugin
@@ -15,7 +15,7 @@ from app.plugins.local_inventory.migrations import v001_tables, v002_subtype
 from app.plugins.local_inventory.provider import LocalInventoryProvider
 from app.plugins.local_inventory.settings import LocalInventorySettings
 from app.plugins.migrations import run_plugin_migrations
-from app.services.inventory import deduction, outbox, read, snapshots, tasks
+from app.services.inventory import deduction, read, snapshots, tasks
 
 BASE = "/api/v1/inventory"
 PLUGIN = "/api/v1/plugins/local_inventory"
@@ -106,7 +106,7 @@ async def test_a_failed_weight_change_changes_nothing(session_factory, local):
     async with session_factory() as db:                                       # the audit write fails -> the weight update rolls back too
         await db.execute(text("DROP TABLE local_inv_weight_log"))
         await db.commit()
-    with pytest.raises(Exception):
+    with pytest.raises(OperationalError, match="local_inv_weight_log"):
         await local.set_remaining(s.ref, 100.0)
     assert (await local.get_spool(s.ref)).remaining_g == 500.0
 

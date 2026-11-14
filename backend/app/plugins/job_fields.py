@@ -15,6 +15,8 @@ PRINTER_JOB_FIELDS: tuple[JobFieldDef, ...] = (
     JobFieldDef("result", "How the print ended: `success` or `failure`.", "success|failure"),
     JobFieldDef("print_seconds", "Actual print duration.", "seconds"),
     JobFieldDef("filament_usage", "Filament used: `{grams, breakdown}`. Core derives it from the sliced job until a printer reports actuals.", "grams"),
+    JobFieldDef("filament_usage_report", "Cumulative grams per loaded slot for the current print attempt, sent with "
+                "`ctx.job_reporter.report_usage` (contract v2, docs/printer-interface.md).", "usage-report-v2"),
 )
 
 

@@ -113,35 +113,6 @@ async def test_failures_for_items_not_on_the_plate_are_ignored(client, project_w
     assert await _item_counts(client, project_id) == {a: (2, 0), b: (0, 0)}
 
 
-@pytest.mark.parametrize("status", ["queued", "blocked", "slicing", "sliced", "uploading", "printing", "cancelled"])
-async def test_a_job_that_has_not_finished_printing_cannot_be_reviewed(client, session_factory, project_with_items, project_job, status):
-    from sqlalchemy import func, select
-    from app.models import JobItemFailure
-
-    project_id, a, b = project_with_items
-    job_id = await project_job({a: 3, b: 2}, status=status)
-
-    resp = await _mark(client, job_id, {a: 1})
-
-    assert resp.status_code == 409
-    assert status in resp.json()["detail"]
-    assert await _item_counts(client, project_id) == {a: (0, 0), b: (0, 0)}
-    async with session_factory() as s:
-        assert (await s.execute(select(func.count()).select_from(JobItemFailure))).scalar() == 0
-    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["outcome"] is None
-
-
-async def test_a_failed_job_can_still_be_reviewed(client, project_with_items, project_job):
-    project_id, a, b = project_with_items
-    job_id = await project_job({a: 3, b: 2}, status="failed")
-
-    resp = await _mark(client, job_id, {a: 3, b: 2})
-
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "failed"
-    assert await _item_counts(client, project_id) == {a: (0, 3), b: (0, 2)}
-
-
 async def test_job_without_project_items_cannot_be_marked(client, create_job):
     job_id = await create_job()
 

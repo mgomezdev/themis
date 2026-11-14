@@ -506,3 +506,56 @@ with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
     response = client.post("/api/v1/printers/1/chamber-light?on=true")
     assert response.status_code == 200
 ```
+
+
+## Filament usage reports (BIZ-366, contract v2)
+
+**The printer plugin owns usage reporting.** For each physical print attempt it tells Themis how many grams each of its loaded slots
+fed. Themis owns which spool was in each slot, so it never infers rollover: an AMS rollover onto a backup spool is simply a second
+slot in the report. Call `await ctx.job_reporter.report_usage(job_id, report, printer_id=printer_id)` while the job is printing.
+The report is a **cumulative** snapshot for the attempt, never an incremental debit:
+
+```json
+{
+  "version": 2,
+  "attempt_id": "the job's filament_usage_context.attempt_id",
+  "revision": 3,
+  "final": true,
+  "source": "reported",
+  "slots": [{"slot": 9, "grams": 5.0}, {"slot": 4, "grams": 15.0}]
+}
+```
+
+- **`attempt_id`:** read it from `ctx.job_details.get(job_id, ["filament_usage_context"])`. A new attempt id starts every time the
+  job starts printing, including a reprint after a failure.
+- **`slot`:** your published slot id, the `slot` of an entry in the printer's `loaded_filaments` (a Bambu global tray id). It is
+  never a list position or a spool ref.
+- **Slot entries:** at most 64, each slot id once, grams finite and ≥ 0.
+- **`source`:** `reported` (the printer's own figure) or `measured` (verified device data only).
+- **`revision`:** increases within an attempt. A duplicate or older revision returns `False`. Errors (`JobReportError`):
+  - a report for another attempt;
+  - a malformed report;
+  - a report sent after the attempt ended.
+
+  Send your last report **before** reporting `complete` or `failed`. A **cancelled** print (job cancel, or a stop from Themis) is
+  settled 120 s after the cancel (`completion_events.CANCEL_SETTLE_GRACE_S`): until then its attempt still takes your final report,
+  sent once the printer has actually stopped.
+
+**Every attempt is settled when it ends:**
+- **How an attempt ends:** completed (`job.complete`), failed, cancelled while printing, or requeued after the printer died (all
+  three via the durable `job.attempt_ended`).
+- **Spool binding:** each reported slot is charged to the spool bound to that slot when the attempt started. A slot that was empty
+  then, such as a spool loaded mid-print, uses its binding when the attempt ended.
+- **No report:** a completed attempt falls back to the slicer estimate routed through the claim-time slot plan, labelled
+  `estimated`. A failed, cancelled or requeued attempt deducts nothing and the job notes "no usage reported".
+- **Reprints add up:** each attempt deducts on its own (start snapshots and inventory writes are per attempt). The job's
+  `filament_accounting` lists every attempt and `total_grams` is their sum (`jobs.actual_filament_grams` stays the sliced estimate).
+- **Frozen once settled:** an attempt's allocation is frozen when it is first settled. A redelivered event, or a revision sent
+  after the attempt ended, never deducts again or differently.
+
+Never invent sensor data or infer grams from print progress: report what the printer exposes, or nothing (the estimate then applies to
+completed prints). Which printers report what is per plugin; Bambu's per-tray reporting, rollover included, is BIZ-367.
+
+AMS mapping (`StartPrintOptions.ams_mapping`): entry N-1 is the tray id for model filament N, and `-1` marks a filament number the
+plate does not use. Slot plans record each planned slot's identity (tray id, type, colour) at claim, and dispatch refuses a slot whose
+identity changed. A vendor that lists only occupied trays renumbers them when one is emptied.

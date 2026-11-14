@@ -4,13 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from app.services.catalog_service import CatalogUnavailable
 from tests.catalog_helpers import patch_cached_catalog
-from fastapi import HTTPException
 
 from app.services.printer_manager import printer_manager
 
 _PRINTER_KEYS = {"id", "name", "printer_type", "plugin_id", "manufacturer_id", "model_id", "model_uuid", "connection_config", "awaiting_plate_clear", "orca_printer_profiles",
-                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "model_label", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
-                 "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "machine_rate_per_hour", "preferred_slicer_plugin_id", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
+                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "model_label", "enabled", "queue_on", "configured", "config_error", "loaded_filaments", "build_plate_type",
+                 "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "bed_z_mm", "machine_rate_per_hour", "preferred_slicer_plugin_id", "default_process_profile", "single_colour_only", "waiver_flag_at", "waiver_stop_at", "test_print_job_id", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
 
 
 @pytest.fixture
@@ -44,7 +43,9 @@ async def _get(client, printer_id: int) -> dict:
     ("no_snapshots_while_idle", True),
     ("bed_x_mm", 350.0),
     ("bed_y_mm", 300.0),
+    ("bed_z_mm", 320.0),
     ("machine_rate_per_hour", 1.25),
+    ("single_colour_only", True),
 ])
 async def test_patch_changes_only_the_field_it_was_given(client, printer, field, value):
     before = await _get(client, printer["id"])
@@ -74,21 +75,24 @@ async def test_patch_explicit_null_clears_the_active_preset_and_plate_type_but_o
     assert cleared.json()["name"] == "Renamed"
 
 
-async def test_patch_replaces_connection_config_wholesale_without_touching_the_live_client(client, printer):
-    """Pins current behavior: a new IP is saved but the running client keeps its old connection until the
-    operator hits Reconnect (there is no automatic reconnect on edit)."""
+async def test_patch_replaces_connection_config_wholesale_and_reconnects_through_a_test(client, printer, scheduled_tests):
+    """A new IP replaces the stored config wholesale; since BIZ-369 the old connection is dropped (it must not keep claiming on
+    the stale address) and a connection test re-establishes it with the new settings."""
     await client.patch(f"/api/v1/printers/{printer['id']}",
                        json={"connection_config": {"ip_address": "10.0.0.5", "stale_key": "old"}})
     live = MagicMock()
     live.connected = True
+    live.is_printing = False
     printer_manager._clients[printer["id"]] = live
+    scheduled_tests.clear()
 
     resp = await client.patch(f"/api/v1/printers/{printer['id']}", json={"connection_config": {"ip_address": "10.0.0.99"}})
 
     assert resp.json()["connection_config"] == {"ip_address": "10.0.0.99"}  # replaced, not merged
-    assert resp.json()["connected"] is True
-    assert printer_manager._clients[printer["id"]] is live
-    live.disconnect.assert_not_called()
+    assert (resp.json()["connected"], resp.json()["configured"]) == (False, False)
+    assert printer["id"] not in printer_manager._clients
+    live.disconnect.assert_called_once()
+    assert scheduled_tests == [printer["id"]]
 
 
 @pytest.mark.parametrize("body", [{"bed_x_mm": "wide"}, {"enabled": "maybe"}, {"loaded_filaments": "PLA"},

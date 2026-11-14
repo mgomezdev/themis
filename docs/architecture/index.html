@@ -522,7 +522,7 @@ behind the <code>SlicingProvider</code> interface.</p>
 flowchart LR
   A["machine + process +\nfilament preset names"] --> B["catalog_service\nresolve names → preset IDs"]
   SRC[/"source 3MF"/] --> C
-  B --> C["SlicerService.slice()\njob-scoped copy + prepare_hook"]
+  B --> C["SlicerService.slice()\njob-scoped copy + tool mapping (produce)"]
   C --> D["SlicingProvider.slice()\nLaminus adapter:\nslice_start → poll_status → download"]
   D -->|ok| E["artifact:\nraw .gcode  or  .gcode.3mf"]
   D -->|fail| F["sidecar retries\ngeometry-only"]
@@ -534,7 +534,7 @@ flowchart LR
   <li><b>Catalog</b> — the sidecar's preset catalog is cached in-process; preset names are resolved to IDs against it.
     <span class="src">catalog_service.py</span></li>
   <li><b>Job-scoped copy</b> — the source 3MF is copied into the job's output directory so the optional
-    <code>prepare_hook</code> (filament/tool mapping) never mutates the shared library file.
+    Slice-side tool mapping (<code>tool_index</code>/<code>filament_map</code>, applied by the producer) never mutates the shared library file.
     <span class="src">slicer_service.py</span></li>
   <li><b>Laminus adapter</b> — starts the slice, polls status, downloads the artifact (raw gcode or <code>.gcode.3mf</code>).
     <span class="src">providers/laminus/adapter.py</span></li>

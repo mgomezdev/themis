@@ -6,12 +6,12 @@ know about targets. A printer's make/model is its registry model (`Printer.model
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
-from . import gcode_eligibility
+from . import gcode_eligibility, bed_requirement
 from .library_scanner import file_kind
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
@@ -31,6 +31,19 @@ def accepts_file(printer_type: str, filename: str | None) -> bool:
     return False if cls is None else bool(getattr(cls, "sliced_archive_supported", False))
 
 
+ANY_PRINTER_LABEL = "Any printer"
+
+
+def targets_printer(model_uuid: str | None, printer: Printer) -> bool:
+    """Does a target on `model_uuid` cover `printer`? None ("Any printer", BIZ-357) covers every printer."""
+    return model_uuid is None or printer.model_uuid == model_uuid
+
+
+async def printers_of_target(session: AsyncSession, model_uuid: str | None) -> list[Printer]:
+    stmt = select(Printer) if model_uuid is None else select(Printer).where(Printer.model_uuid == model_uuid)
+    return list((await session.execute(stmt.order_by(Printer.id))).scalars().all())
+
+
 def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterConfig:
     return JobPrinterConfig(
         job_id=target.job_id,
@@ -43,6 +56,7 @@ def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterCo
         ask_color=target.ask_color,
         filament_map=target.filament_map,
         model_target_id=target.id,
+        overrides=target.overrides,
     )
 
 
@@ -51,7 +65,8 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
     profile = printer.model_uuid or None
 
     # Drop rows left over from a model change, and rows whose target was deleted (e.g. the job was re-edited).
-    mismatch = JobModelTarget.id.is_(None) if profile is None else or_(
+    # (an "Any printer" target, model_uuid NULL, never mismatches: NULL != x is not true)
+    mismatch = or_(JobModelTarget.id.is_(None), JobModelTarget.model_uuid.is_not(None)) if profile is None else or_(
         JobModelTarget.id.is_(None), JobModelTarget.model_uuid != profile)
     stale_ids = (await session.execute(
         select(JobPrinterConfig.id)
@@ -63,22 +78,31 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
     if stale_ids:
         await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.id.in_(stale_ids)))
 
-    if profile is None:
-        return
+    existing = (await session.execute(select(JobPrinterConfig, Job).join(Job, Job.id == JobPrinterConfig.job_id)
+        .where(JobPrinterConfig.printer_id == printer.id, JobPrinterConfig.model_target_id.is_not(None), Job.status.in_(_SYNCABLE)))).all()
+    for config, job in existing:
+        if await bed_requirement.reason(session, job.min_bed_mm, printer):
+            await session.delete(config)
+    await session.flush()
+
     have = set((await session.execute(
         select(JobPrinterConfig.job_id).where(JobPrinterConfig.printer_id == printer.id)
     )).scalars().all())
     rows = (await session.execute(
-        select(JobModelTarget, UploadedFile, Job.eligibility_confirmed)
+        select(JobModelTarget, UploadedFile, Job.eligibility_confirmed, Job.min_bed_mm)
         .join(Job, Job.id == JobModelTarget.job_id)
         .join(UploadedFile, UploadedFile.id == Job.uploaded_file_id)
-        .where(JobModelTarget.model_uuid == profile, Job.status.in_(_SYNCABLE))
+        .where(JobModelTarget.model_uuid.is_(None) if profile is None
+               else or_(JobModelTarget.model_uuid == profile, JobModelTarget.model_uuid.is_(None)),
+               Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
     )).all()
-    for target, file, confirmed in rows:
+    for target, file, confirmed, requirement in rows:
         if target.job_id in have:  # an explicit pick (or an earlier target) already covers this printer
             continue
         if not accepts_file(printer.printer_type, file.original_filename):
+            continue
+        if await bed_requirement.reason(session, requirement, printer):
             continue
         if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=bool(confirmed))).allowed:
             continue   # a pre-sliced file's machine eligibility excludes this printer (BIZ-263)
@@ -105,15 +129,18 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     )).scalar_one_or_none()
     filename = file.original_filename if file else None
     confirmed = bool((await session.execute(select(Job.eligibility_confirmed).where(Job.id == job_id))).scalar())
+    job = await session.get(Job, job_id)
     have = set((await session.execute(
         select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job_id)
     )).scalars().all())
     printers = (await session.execute(select(Printer).order_by(Printer.id))).scalars().all()
     for target in targets:
         for printer in printers:
-            if printer.id in have or printer.model_uuid != target.model_uuid:
+            if printer.id in have or not targets_printer(target.model_uuid, printer):
                 continue
             if not accepts_file(printer.printer_type, filename):
+                continue
+            if await bed_requirement.reason(session, job.min_bed_mm, printer):
                 continue
             if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=confirmed)).allowed:
                 continue   # BIZ-263: the file's machine eligibility excludes this printer
@@ -125,7 +152,7 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
 def _target_dict(t: JobModelTarget, labels: dict[str, str]) -> dict:
     return {
         "model_uuid": t.model_uuid,
-        "model_label": labels.get(t.model_uuid),
+        "model_label": ANY_PRINTER_LABEL if t.model_uuid is None else labels.get(t.model_uuid),
         "print_profile": t.print_profile,
         "filament_profile": t.filament_profile,
         "filament_manufacturer": t.ask_manufacturer,
@@ -133,6 +160,7 @@ def _target_dict(t: JobModelTarget, labels: dict[str, str]) -> dict:
         "filament_subtype": t.ask_subtype,
         "filament_color": t.ask_color,
         "filament_map": t.filament_map,
+        **({"overrides": t.overrides} if t.overrides is not None else {}),
     }
 
 

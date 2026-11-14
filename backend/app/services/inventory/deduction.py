@@ -44,6 +44,7 @@ class Plan:
     printer_id: int | None = None
     grams: float = 0.0
     source: str = "queue"
+    attempt_id: str | None = None
 
 
 async def is_suspended(session: AsyncSession, provider_id: str, spool_ref: str) -> bool:
@@ -58,7 +59,7 @@ def _skip(job: Job, note: str) -> Plan:
 
 
 async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | None, spool_ref: str, grams: float,
-                          source: str) -> Plan:
+                          source: str, attempt_id: str | None = None) -> Plan:
     """Inside the completion transaction (DB only — no provider call). Enqueues the absolute write when a start snapshot
     exists; otherwise defers (job was already printing at upgrade / manual completion) to `after_commit`."""
     pid = provider.provider_id()
@@ -66,22 +67,25 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
         return Plan("skipped")
     if await is_suspended(session, pid, spool_ref):
         return _skip(job, NOTE_SUSPENDED)
-    if await outbox.exists_for_job(session, pid, spool_ref, job.id):     # a redelivered completion event: already planned
+    if await outbox.exists_for_job(session, pid, spool_ref, job.id, attempt_id):     # a redelivered event: already planned
         return Plan("skipped")
-    snap = await snapshots.get(session, job.id, pid, spool_ref)
+    snap = await snapshots.get(session, job.id, pid, spool_ref, attempt_id or "")
+    if snap is None and attempt_id:                                    # a print that started before v066 snapshotted per job ('')
+        snap = await snapshots.get(session, job.id, pid, spool_ref, "")
     job.deduction_skipped = False
     job.deduction_note = None
     if snap is None:
-        return Plan("deferred", pid, spool_ref, job.id, printer_id, grams, source)
+        return Plan("deferred", pid, spool_ref, job.id, printer_id, grams, source, attempt_id)
     if snap.pre_weight_g is None:
         await suspend(session, pid, spool_ref, NOTE_NO_WEIGHT, job)
         return Plan("skipped")
     outbox.enqueue(session, pid, spool_ref, snap.pre_weight_g - grams, job_id=job.id, printer_id=printer_id, source=source,
-                   pre_weight_g=snap.pre_weight_g)
-    return Plan("enqueued", pid, spool_ref, job.id, printer_id, grams, source)
+                   pre_weight_g=snap.pre_weight_g, attempt_id=attempt_id)
+    return Plan("enqueued", pid, spool_ref, job.id, printer_id, grams, source, attempt_id)
 
 
-def completion_uses(config, loaded: list | None, grams: float, breakdown: list | None) -> tuple[list[dict], list[str]]:
+def completion_uses(config, loaded: list | None, grams: float, breakdown: list | None, *,
+                    usage_by_slot: dict[int, float] | None = None) -> tuple[list[dict], list[str]]:
     """The spool deductions of one finished print and the notes for what could not be tracked: `([{"spool_ref", "grams"}], [note])`.
 
     The spool is the one bound to the slot that PRINTED (the claim-time plan), per used slot for a multi-material job; the job's own
@@ -89,7 +93,7 @@ def completion_uses(config, loaded: list | None, grams: float, breakdown: list |
     the per-extruder breakdown (extruder index = tool index). A slot with no bound spool is skipped and named in a note, so the
     operator can bind a spool and correct the weight."""
     plan = filament_matching.plan_for(config, loaded)
-    slots = list(dict.fromkeys(u.slot for u in plan))
+    slots = list(usage_by_slot) if usage_by_slot is not None else list(dict.fromkeys(u.slot for u in plan))
     if not slots:
         return [], ["No filament slot was recorded for this print, so no spool was tracked"]
     loaded = list(loaded or [])
@@ -100,7 +104,9 @@ def completion_uses(config, loaded: list | None, grams: float, breakdown: list |
     unbound: list[str] = []
     for slot in slots:
         ref = refs.slot_spool_ref(loaded[slot]) if 0 <= slot < len(loaded) else None
-        if len(slots) == 1:
+        if usage_by_slot is not None:
+            share = usage_by_slot[slot]
+        elif len(slots) == 1:
             share = float(grams)
         elif by_extruder:
             share = by_extruder.get(slot, 0.0)
@@ -159,14 +165,14 @@ async def complete_deferred(factory: async_sessionmaker[AsyncSession], plan: Pla
     pre, _ = await snapshots.read_pre_weight(factory, plan.provider, plan.spool_ref)     # no session during provider I/O
     async with factory() as session:
         job = await session.get(Job, plan.job_id)
-        if await outbox.exists_for_job(session, plan.provider, plan.spool_ref, plan.job_id):
+        if await outbox.exists_for_job(session, plan.provider, plan.spool_ref, plan.job_id, plan.attempt_id):
             return                                                       # another delivery of the same completion got here first
         if pre is None:
             await suspend(session, plan.provider, plan.spool_ref, NOTE_NO_WEIGHT, job)
             await session.commit()
             return
         outbox.enqueue(session, plan.provider, plan.spool_ref, pre - plan.grams, job_id=plan.job_id,
-                       printer_id=plan.printer_id, source=plan.source, pre_weight_g=pre)
+                       printer_id=plan.printer_id, source=plan.source, pre_weight_g=pre, attempt_id=plan.attempt_id)
         await session.commit()
     await outbox.flush(factory)
 

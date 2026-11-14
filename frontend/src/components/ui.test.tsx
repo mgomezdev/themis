@@ -4,6 +4,12 @@ import { StatusPill, Progress, Card, Empty, Kv, VideoTile } from './ui';
 import { Icons } from './icons';
 
 describe('StatusPill', () => {
+  it.each(['claiming', 'slicing', 'uploading'] as const)('shows %s in the info tone, not the warn-identical accent tone', (status) => {
+    const { container } = render(<StatusPill status={status} />);
+    const pill = container.querySelector('.pill')!;
+    expect(pill.classList.contains('info')).toBe(true);
+    expect(pill.classList.contains('accent')).toBe(false);
+  });
   it('renders printing status', () => {
     render(<StatusPill status="printing" />);
     expect(screen.getByText('Printing')).toBeTruthy();
