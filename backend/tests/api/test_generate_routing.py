@@ -374,3 +374,19 @@ async def test_generating_for_a_draft_project_is_a_409(client, tmp_path, session
     assert resp.status_code == 409
     provider.pack_models.assert_not_called()
     assert await _jobs(session_factory, project_id) == []
+
+
+async def test_a_reused_pack_whose_layout_reads_short_falls_back_to_estimated_quantities(client, tmp_path, session_factory):
+    """A stored pack is never re-checked for unplaced parts (it was checked when made); one whose names only LOOK like labels
+    must not queue fewer parts than asked."""
+    project_id, (a,) = await _make_project(client, tmp_path, [("a.stl", 4, {})])
+    provider = _packer(packed_3mf([["a__m0"] * 2, ["a__m0"] * 2]))
+    assert (await _generate(client, tmp_path, provider, project_id)).status_code == 200
+
+    with patch("app.api.routes.projects._stored_layout", return_value={1: ["a__m0"], 2: ["a__m0"]}):   # 2 of the 4
+        second = await _generate(client, tmp_path, provider, project_id)
+
+    assert second.status_code == 200, second.text
+    (file_out,) = second.json()["files"]
+    assert file_out["pack_reused"] is True and file_out["plate_contents"] == "estimated"
+    assert [q for _, _, q, _ in await _jobs(session_factory, project_id)][2:] == [{a: 2}, {a: 2}]

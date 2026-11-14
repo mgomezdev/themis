@@ -1152,6 +1152,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
 
 
 PACK_FOLDER = "Job Pack 3MFs"
+_generate_locks: dict[int, asyncio.Lock] = {}
 
 
 async def _stored(store: ArtifactStore, key: str) -> bool:
@@ -1342,7 +1343,9 @@ async def generate_project(
             return replay.response
     jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
     try:
-        result = await _generate_project(project_id, body, session)
+        # One generate per project at a time: two concurrent "remaining" calls would both see the same parts as missing.
+        async with _generate_locks.setdefault(project_id, asyncio.Lock()):
+            result = await _generate_project(project_id, body, session)
     except BaseException:
         if idempotency_key:
             created = await _job_count(factory, project_id) - jobs_before
@@ -1503,7 +1506,9 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 layout = await asyncio.to_thread(_stored_layout, library, reused.relative_path)
             except ArtifactError:
                 layout = None
-            job_plates, plate_item_qtys, exact, _ = _plate_quantities(layout, plate_nums, wanted)
+            job_plates, plate_item_qtys, exact, short = _plate_quantities(layout, plate_nums, wanted)
+            if short:      # a stored pack that reads as short was not made from these labels: don't trust its layout
+                job_plates, plate_item_qtys, exact, _ = _plate_quantities(None, plate_nums, wanted)
             slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
                                   pack_content_hash=reused.content_hash)
         else:

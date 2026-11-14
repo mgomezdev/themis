@@ -29,7 +29,8 @@ is idle with a clear plate. `PUT /jobs/{id}/outcome` records per-item pass/fail 
 - Themis `SlicingProvider.pack_models(paths, counts=, labels=)`; the Laminus client sends counts when the sidecar
   advertises them and otherwise one upload per copy (max 50, explicit error beyond).
 - Generate reads the pack's plate layout (`plate_object_names`) and stores real per-plate quantities; `estimated` fallback
-  for a pack that does not record it; 422 on unplaced parts before anything is stored.
+  for a pack that does not record it; 422 on unplaced parts before that filament group is stored or queued (groups commit
+  one by one: an earlier group's jobs stay queued; retry with `quantities: "remaining"`). Generates are serialised per project.
 - `quantities: "remaining"`; outcome 409 guard; printer-id validation; model registry beds; conditional slice-failure block.
 
 ## Proposed next steps (not built: product decisions)
