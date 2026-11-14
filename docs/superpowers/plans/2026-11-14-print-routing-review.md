@@ -24,12 +24,20 @@ caught (print results on plate clear BIZ-364, printer part waivers BIZ-365). Rev
 ## Defects found and fixed
 1. A pool plate whose print FAILED and was cleared without results (QR / home-automation clear, or nobody reported) kept
    its parts reserved forever: the project came out short with the pool showing nothing left.
-   Fix: an unreported failed pool plate reserves nothing (`pools._reserved`).
+   Fix: clearing the plate without results releases the plate's parts back to the pool (`jobs.outcome = "unreported"`);
+   until that clear they stay reserved, so another printer never repacks parts someone may still report as good. A
+   released plate can no longer be reported, reviewed or requeued (409).
 2. A pool plate cancelled before printing (slice failure, block, upload/start error) returned its parts and the same
    printer packed them again on the next cycle, indefinitely: one library file, one cancelled job and one notification per
    cycle. Fix: `_pool_plate_dropped` keeps those items from that printer for 15 minutes.
 
+3. A lower-ranked printer deferred to a preferred printer that its waivers had taken out of the queue (or that a dropped
+   plate keeps the parts from): the pool stalled. Fix: `defer_pool` skips both.
+
 ## Open (not changed)
+- A printer's own threshold of 0 now means "use the fleet's": one printer cannot be exempted from a fleet stop except by
+  giving it a higher limit of its own.
+- `pools.warning` and the unmatched sweep still count a waiver-stopped printer as able to take work.
 - New groups default to `fixed`; pooling is opt-in per group.
 - A `fixed`-group plate whose print failed and was cleared without results is not requeued (it stays a failed job in the
   project); only reported results requeue.

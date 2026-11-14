@@ -183,6 +183,9 @@ async def plate_cleared(
         else:
             recorded = await print_results.record_and_restore(
                 session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
+    if job is None:                        # a plain clear: a failed pool plate nobody reported gives its parts back to the pool
+        from ...services import pools
+        await pools.release_unreported(session, printer_id)
     if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
         test_job = await session.get(Job, printer.test_print_job_id)
         if test_job is not None and test_job.status in ("complete", "failed"):

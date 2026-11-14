@@ -32,6 +32,9 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
     clear are never lost to a packing error). Returns {"held": [...], "requeue": {project_item_id: quantity}}."""
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to report")
+    from . import pools
+    if pools.released(job):
+        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
     if (await session.execute(select(JobItemFailure.id).where(JobItemFailure.job_id == job.id,
                                                               JobItemFailure.resolution.is_not(None)).limit(1))).first():
         raise HTTPException(409, "This job's print results were already reported")
