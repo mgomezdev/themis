@@ -51,7 +51,7 @@ async def defer(engine, session, job, printer):
         if candidate.test_print_job_id not in (None,job.id):
             continue
         waived = await qe.part_waivers.waived_keys(session,candidate.id)
-        if qe.part_waivers.stopped(candidate,len(waived)) or await qe.part_waivers.keys_of_job(session,job) & waived:
+        if qe.part_waivers.stopped(candidate,len(waived),await qe.part_waivers.fleet_limits(session)) or await qe.part_waivers.keys_of_job(session,job) & waived:
             continue
         if not is_presliced_file(source):
             resolution = await qe.slicer_profiles.resolve_for_printer(session,candidate)

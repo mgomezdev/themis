@@ -387,6 +387,10 @@ class QueueConfig(Base):
     part_retry_limit: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     # A printer is waived for a part after this many failures of it there (BIZ-365).
     waive_after: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # Fleet-wide waiver thresholds (0 = off): a printer with this many waived parts is flagged / takes no more queue work.
+    # A printer's own `waiver_flag_at` / `waiver_stop_at`, when set, wins.
+    waiver_flag_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    waiver_stop_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

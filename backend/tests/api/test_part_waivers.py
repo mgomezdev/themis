@@ -247,3 +247,60 @@ async def test_a_cancelled_test_print_does_not_strand_the_printer(client, upload
     await _claim(session_factory, a)
     async with session_factory() as s:
         assert (await s.get(Printer, a)).test_print_job_id is None
+
+
+# ---- fleet-wide thresholds: one setting pulls any failing printer out of the queue ----
+
+async def _other_job_for(client, upload_3mf, tmp_path, printer_id):
+    other_pid = (await client.post("/api/v1/projects", json={"name": "Other"})).json()["id"]
+    other_file = await upload_3mf(filename="other.stl", data=b"solid other\nendsolid\n")
+    await client.post(f"/api/v1/projects/{other_pid}/items", json={"file_id": other_file, "quantity": 1})
+    x, y = _patches(tmp_path)
+    with x, y:
+        return (await client.post(f"/api/v1/projects/{other_pid}/generate",
+                                  json={"eligible_printer_ids": [printer_id], "process_preset": "0.2"})).json()["jobs"][0]["id"]
+
+
+async def test_the_fleet_thresholds_are_settings_and_off_by_default(client):
+    cfg = (await client.get("/api/v1/settings/queue")).json()
+    assert (cfg["waiver_flag_at"], cfg["waiver_stop_at"]) == (0, 0)
+    r = await client.put("/api/v1/settings/queue", json={"waiver_flag_at": 2, "waiver_stop_at": 3})
+    assert r.status_code == 200
+    cfg = (await client.get("/api/v1/settings/queue")).json()
+    assert (cfg["waiver_flag_at"], cfg["waiver_stop_at"], cfg["waive_after"]) == (2, 3, 2)      # nothing else moved
+    assert (await client.put("/api/v1/settings/queue", json={"waiver_stop_at": -1})).status_code == 422
+
+
+async def test_the_fleet_stop_threshold_pulls_a_failing_printer_out_of_the_queue(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, _ = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)       # A: one waived part, no own limits
+    other_job = await _other_job_for(client, upload_3mf, tmp_path, a)
+    fleet = {p["id"]: p for p in (await client.get("/api/v1/fleet")).json()}
+    assert (fleet[a]["waiver_flag"], fleet[a]["waiver_stopped"]) == (False, False)
+
+    await client.put("/api/v1/settings/queue", json={"waiver_flag_at": 1, "waiver_stop_at": 1})
+
+    fleet = {p["id"]: p for p in (await client.get("/api/v1/fleet")).json()}
+    assert (fleet[a]["waiver_flag"], fleet[a]["waiver_stopped"]) == (True, True)
+    assert (fleet[b]["waiver_flag"], fleet[b]["waiver_stopped"]) == (False, False)              # B has no waivers
+    await _claim(session_factory, a)
+    async with session_factory() as s:
+        assert (await s.get(Job, other_job)).assigned_printer_id is None                        # stopped: claims nothing
+
+    await client.put("/api/v1/settings/queue", json={"waiver_stop_at": 0})                      # off again: back in the queue
+    await _claim(session_factory, a)
+    async with session_factory() as s:
+        assert (await s.get(Job, other_job)).assigned_printer_id == a
+
+
+async def test_a_printers_own_threshold_wins_over_the_fleets(client, upload_3mf, create_printer, session_factory, tmp_path):
+    a, b, _ = await _waive(client, upload_3mf, create_printer, session_factory, tmp_path)
+    other_job = await _other_job_for(client, upload_3mf, tmp_path, a)
+    await client.put("/api/v1/settings/queue", json={"waiver_flag_at": 1, "waiver_stop_at": 1})
+    await client.patch(f"/api/v1/printers/{a}", json={"waiver_flag_at": 5, "waiver_stop_at": 5})   # this printer tolerates more
+
+    fleet = {p["id"]: p for p in (await client.get("/api/v1/fleet")).json()}
+    assert (fleet[a]["waiver_flag"], fleet[a]["waiver_stopped"]) == (False, False)
+    await _claim(session_factory, a)
+    async with session_factory() as s:
+        assert (await s.get(Job, other_job)).assigned_printer_id == a

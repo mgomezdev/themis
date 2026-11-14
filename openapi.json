@@ -16129,6 +16129,32 @@
             ],
             "title": "Waive After"
           },
+          "waiver_flag_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Stop At"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16195,6 +16221,14 @@
             "type": "integer",
             "title": "Waive After"
           },
+          "waiver_flag_at": {
+            "type": "integer",
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "type": "integer",
+            "title": "Waiver Stop At"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16225,6 +16259,8 @@
           "printer_dead_after_minutes",
           "part_retry_limit",
           "waive_after",
+          "waiver_flag_at",
+          "waiver_stop_at",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

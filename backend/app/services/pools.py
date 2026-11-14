@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, UploadedFile
@@ -40,6 +40,12 @@ async def _reserved(session: AsyncSession, group_id: int, live_only: bool) -> di
     stmt = select(Job).where(Job.pool_group_id == group_id, Job.status != "cancelled")
     if live_only:
         stmt = stmt.where(Job.status.not_in(["complete", "failed"]))
+    else:
+        # A plate whose print FAILED holds its parts only once someone reported what came off it (the good ones are then in
+        # `quantity_completed`, the bad ones requeued or held). Unreported — a plain plate clear, or nobody looked yet — it
+        # made nothing we know of: its parts are still to print, never silently missing from the project.
+        reported = select(JobItemFailure.job_id).where(JobItemFailure.resolution.is_not(None))
+        stmt = stmt.where(or_(Job.status != "failed", Job.id.in_(reported)))
     out: dict[int, int] = {}
     for j in (await session.execute(stmt)).scalars():
         for k, n in json.loads(j.project_item_quantities or "{}").items():
@@ -128,7 +134,7 @@ def _next_plate(store, constructor, wanted, target, max_parts):
         return artifact.path.read_bytes(), copies
 
 
-async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> int | None:
+async def pack_plate(factory, group_id: int, printer_id: int, constructor, skip_items: frozenset = frozenset()) -> int | None:
     """Pack `printer`'s next plate from the pool and queue it as a job for that printer alone; the job id, or None when the
     pool has nothing this printer can take any more. Raises `NothingFits` / `ProviderError` from the constructor. The pack call
     runs in a worker thread with no session open; the caller serialises packs per pool, so nothing is reserved twice."""
@@ -140,7 +146,7 @@ async def pack_plate(factory, group_id: int, printer_id: int, constructor) -> in
         if group is None or printer is None:
             return None
         take = await takeable(session, group, printer, await filament_matching.conflicts_for(list(printer.loaded_filaments or [])))
-        items = [i for i in await items_of(session, group) if i.id in take]
+        items = [i for i in await items_of(session, group) if i.id in take and i.id not in skip_items]
         if not items:
             return None
         by_ask: dict[tuple, list] = {}                         # one filament ask per plate, tried in item order

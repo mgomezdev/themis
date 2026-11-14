@@ -458,6 +458,7 @@ class SlicingMixin:
                 job.updated_at = _qe._now()
             await session.commit()
 
+        await self._pool_plate_dropped(job_id, printer_id)     # a pool plate: don't re-pack the same parts for this printer at once
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.blocked")
         await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=error)
@@ -489,6 +490,7 @@ class SlicingMixin:
                     pass
                 await session.delete(gcode)
             await session.commit()
+        await self._pool_plate_dropped(job_id, printer_id)
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.failed")
         await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason)

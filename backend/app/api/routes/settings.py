@@ -37,6 +37,10 @@ class QueueConfigOut(BaseModel):
     part_retry_limit: int
     # A printer is waived for a part after failing it this many times (BIZ-365).
     waive_after: int
+    # Fleet-wide waiver thresholds (0 = off): a printer waived for this many parts is flagged / pulled out of the queue. A
+    # printer's own threshold, when set, wins.
+    waiver_flag_at: int
+    waiver_stop_at: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -49,6 +53,8 @@ class QueueConfigIn(BaseModel):
     printer_dead_after_minutes: int | None = Field(default=None, ge=0, le=MAX_DEAD_AFTER_MINUTES)
     part_retry_limit: int | None = Field(default=None, ge=1, le=20)
     waive_after: int | None = Field(default=None, ge=1, le=20)
+    waiver_flag_at: int | None = Field(default=None, ge=0, le=1000)
+    waiver_stop_at: int | None = Field(default=None, ge=0, le=1000)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -87,6 +93,7 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
         row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2, waive_after=2,
+                          waiver_flag_at=0, waiver_stop_at=0,
                           snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
@@ -118,6 +125,10 @@ async def update_queue_config(
         row.part_retry_limit = body.part_retry_limit
     if body.waive_after is not None:
         row.waive_after = body.waive_after
+    if body.waiver_flag_at is not None:
+        row.waiver_flag_at = body.waiver_flag_at
+    if body.waiver_stop_at is not None:
+        row.waiver_stop_at = body.waiver_stop_at
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:
