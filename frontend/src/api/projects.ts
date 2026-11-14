@@ -120,6 +120,8 @@ export interface GenerateOut {
     pack_reused: boolean;
     /** Slicing cache: how many of its plates already have cached gcode (used if a printer's slice matches). */
     cached_plates: number;
+    /** Whether per-plate part counts are exact (new Laminus) or estimated. */
+    plate_contents?: 'exact' | 'estimated';
   }[];
   eligible_printer_ids: number[];
   pack_bed_x: number;
@@ -174,6 +176,8 @@ export interface GenerateCacheOptions {
   allowCached?: boolean;
   /** Keep each generated job's slice in the library as cached gcode. */
   saveSlice?: boolean;
+  /** 'remaining' queues only parts not yet printed or queued (reprints failed/cancelled); omitted = 'all'. */
+  quantities?: 'all' | 'remaining';
 }
 
 export const generateProject = (
@@ -184,6 +188,7 @@ export const generateProject = (
   process_preset: processPreset,
   allow_cached: cache.allowCached ?? true,
   save_slice: cache.saveSlice ?? false,
+  ...(cache.quantities === 'remaining' ? { quantities: 'remaining' } : {}),
 }));
 
 export interface ProjectJob {

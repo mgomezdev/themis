@@ -42,6 +42,7 @@ export function ProjectDetailScreen() {
   const [generateError, setGenerateError] = useState('');
   const [generateResult, setGenerateResult] = useState<{ jobCount: number; files: GenerateOut['files'] } | null>(null);
   const [allowCached, setAllowCached] = useState(true);
+  const [onlyRemaining, setOnlyRemaining] = useState(false);
   const [saveSlice, setSaveSlice] = useState(false);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
@@ -158,7 +159,9 @@ export function ProjectDetailScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, { allowCached, saveSlice });
+      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, {
+        allowCached, saveSlice, quantities: onlyRemaining ? 'remaining' : 'all',
+      });
       setGenerateResult({ jobCount: result.jobs.length, files: result.files ?? [] });
       reload();
     } catch (e) {
@@ -384,6 +387,12 @@ export function ProjectDetailScreen() {
                 <input type="checkbox" checked={saveSlice} onChange={e => setSaveSlice(e.target.checked)} />
                 Save sliced gcode to library
               </label>
+              {project.jobs_total > 0 && (
+                <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={onlyRemaining} onChange={e => setOnlyRemaining(e.target.checked)} />
+                  Only parts still missing (reprint failed or cancelled)
+                </label>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
@@ -416,6 +425,11 @@ export function ProjectDetailScreen() {
                   {f.cached_plates > 0 ? ` ${f.cached_plates} plate${f.cached_plates === 1 ? ' has' : 's have'} cached versions` : ''}
                 </span>
               ))}
+              {generateResult.files.some(f => f.plate_contents === 'estimated') && (
+                <span className="tiny muted" data-testid="generate-estimated-note" style={{ display: 'block' }}>
+                  Per-plate part counts are estimated — update Laminus for exact counts.
+                </span>
+              )}
             </span>
             <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
           </div>

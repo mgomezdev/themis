@@ -1505,6 +1505,7 @@ def _now() -> str:
     responses={
         400: {"description": "Job has no project items to mark"},
         404: {"description": "Job not found"},
+        409: {"description": "Job has not finished printing"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -1520,6 +1521,10 @@ async def mark_job_outcome(
 
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to mark")
+    if job.status not in ("complete", "failed"):
+        # A plate that has not finished printing has no outcome: counting its parts as made would hide them from the
+        # project's remaining quantity.
+        raise HTTPException(409, f"Job is {job.status} — only a finished (complete or failed) job's parts can be reviewed")
 
     plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
 

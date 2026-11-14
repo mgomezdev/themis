@@ -72,6 +72,36 @@ def _plates_from_model_settings(names: set[str], zf: zipfile.ZipFile) -> set[int
     except Exception:
         return set()
 
+def plate_object_names(zf: zipfile.ZipFile) -> dict[int, list[str]] | None:
+    """{plate number: [object name, one per instance on that plate]} from `Metadata/model_settings.config` — what an arranged
+    project actually holds per plate. None when the archive does not record it (no settings part, no plates, or an instance
+    whose object is unknown): callers must then not pretend to know the layout."""
+    names = set(zf.namelist())
+    if "Metadata/model_settings.config" not in names:
+        return None
+    try:
+        data = zf.read("Metadata/model_settings.config")
+        if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+            return None
+        root = ET.fromstring(data)
+
+        def meta(el, key):
+            return next((m.get("value") for m in el.findall("metadata") if m.get("key") == key), None)
+
+        objects = {o.get("id"): meta(o, "name") or "" for o in root.findall("object")}
+        out: dict[int, list[str]] = {}
+        for n, plate in enumerate(root.findall("plate"), start=1):
+            members = out.setdefault(int(meta(plate, "plater_id") or n), [])
+            for inst in plate.findall("model_instance"):
+                oid = meta(inst, "object_id")
+                if oid not in objects:
+                    return None
+                members.append(objects[oid])
+        return out or None
+    except Exception:
+        return None
+
+
 _PLATE_PNG_RE = re.compile(r"Metadata/plate_(\d+)\.png$")
 _GLOBAL_THUMBNAILS = ("Metadata/thumbnail.png", "Metadata/preview.png")
 

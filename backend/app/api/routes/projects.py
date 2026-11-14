@@ -11,7 +11,7 @@ import secrets
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
@@ -23,10 +23,10 @@ from ._filament_ask import AskFields, ask_columns, ask_out, normalize as _normal
 from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
+from ...models import PROJECT_STAGES, Customer, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
-from ...services.three_mf_parser import plate_numbers
+from ...services.three_mf_parser import plate_numbers, plate_object_names
 from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_store import get_library_store
 from ...services.library_scanner import (
@@ -210,6 +210,11 @@ class GenerateRequest(BaseModel):
     # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
     # instead of slicing when a printer claims it.
     allow_cached: bool = True
+    # What to queue. "all" (default): the full quantity of every item, whatever exists already (another run of the project).
+    # "remaining": each item's quantity minus what is already printed (reviewed good parts) or still on its way (queued /
+    # printing / printed-but-unreviewed plates) — reprints failed or cancelled plates and parts reviewed as failed without
+    # duplicating the rest.
+    quantities: Literal["remaining", "all"] = "all"
 
 
 # ---------------------------------------------------------------------------
@@ -1157,6 +1162,15 @@ async def _stored(store: ArtifactStore, key: str) -> bool:
         return False
 
 
+def _layout_plate_nums(packed: bytes) -> list[int]:
+    try:
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(packed)) as zf:
+            return plate_numbers(zf)
+    except Exception:
+        return []
+
+
 def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
     """Plate numbers of a stored pack: the zip reader needs a path, so the artifact is materialized."""
     with store.materialize(key) as local:
@@ -1164,8 +1178,8 @@ def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
 
 
 def _pack_stored_models(store: ArtifactStore, slicing, keys: list[str], **options) -> bytes:
-    """Pack the STLs stored under `keys` (repeats = quantities). The packer takes paths, so each distinct artifact is
-    materialized once for the duration of the call. Blocking: call from a worker thread."""
+    """Pack the STLs stored under `keys` (quantities travel in `options["counts"]`). The packer takes paths, so each distinct
+    artifact is materialized once for the duration of the call. Blocking: call from a worker thread."""
     with contextlib.ExitStack() as stack:
         local = {k: stack.enter_context(store.materialize(k)) for k in dict.fromkeys(keys)}
         return slicing.pack_models([local[k] for k in keys], **options)
@@ -1187,6 +1201,92 @@ async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFil
     return None
 
 
+_PACK_LABEL_RE = re.compile(r"__m(\d+)(?!\d)")
+
+
+def _pack_label(filename: str, index: int) -> str:
+    """The name every copy of a group's `index`-th model carries inside the pack: readable, and it leads back to the model.
+    It depends only on the model's position in the group, so an identical recipe from another project reuses the pack."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).stem).strip("._") or "model"
+    return f"{stem[:40]}__m{index}"
+
+
+def _layout_of(packed: bytes | Path) -> dict[int, list[str]] | None:
+    try:
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(packed) if isinstance(packed, bytes) else packed) as zf:
+            return plate_object_names(zf)
+    except Exception:
+        return None
+
+
+def _stored_layout(store: ArtifactStore, key: str) -> dict[int, list[str]] | None:
+    with store.materialize(key) as local:
+        return _layout_of(local)
+
+
+def _plate_quantities(
+    layout: dict[int, list[str]] | None, plate_nums: list[int], wanted: list[tuple[int, int]],
+) -> tuple[list[int], list[dict[str, int]], bool, dict[int, int]]:
+    """What each plate of a pack holds, per project item: (plate numbers, {item id: count} per plate, exact?, unplaced).
+
+    `wanted` is the group's [(item id, quantity)] in pack order. With a readable `layout` (the pack's objects carry
+    `_pack_label` names) the counts are what the packer actually put on each plate, plates holding nothing are dropped, and
+    `unplaced` is {item id: copies missing from every plate}. Without one (an older packer, a foreign file) the quantities are
+    spread evenly over the plates — an estimate, flagged as such."""
+    if layout is not None:
+        per_plate: dict[int, dict[str, int]] = {}
+        placed = [0] * len(wanted)
+        readable = True
+        for plate, names in layout.items():
+            for name in names:
+                found = _PACK_LABEL_RE.findall(name or "")       # the label is the tail: a stem may itself contain "__m3"
+                idx = int(found[-1]) if found else -1
+                if not 0 <= idx < len(wanted):
+                    readable = False
+                    break
+                placed[idx] += 1
+                key = str(wanted[idx][0])
+                per_plate.setdefault(plate, {})[key] = per_plate.setdefault(plate, {}).get(key, 0) + 1
+            if not readable:
+                break
+        if readable and all(placed[i] <= qty for i, (_, qty) in enumerate(wanted)):
+            plates = sorted(per_plate)
+            unplaced = {item_id: qty - placed[i] for i, (item_id, qty) in enumerate(wanted) if placed[i] < qty}
+            return plates, [per_plate[p] for p in plates], True, unplaced
+    plates = list(plate_nums) or [1]
+    n = len(plates)
+    split = [{str(item_id): qty // n + (1 if i < qty % n else 0) for item_id, qty in wanted} for i in range(n)]
+    return plates, split, False, {}
+
+
+async def _pending_item_quantities(session: AsyncSession, project_id: int) -> dict[int, int]:
+    """Parts of each project item that are on their way: on the plates of this project's jobs that are still to print, printing,
+    or printed but not yet reviewed (presumed good until someone says otherwise). Failed and cancelled plates count for nothing
+    (their parts are to be made again); reviewed plates are already in the item's own `quantity_completed`."""
+    reviewed = set((await session.execute(
+        select(JobItemFailure.job_id).join(Job, Job.id == JobItemFailure.job_id).where(Job.project_id == project_id)
+    )).scalars().all())
+    pending: dict[int, int] = {}
+    rows = (await session.execute(
+        select(Job).where(Job.project_id == project_id, Job.project_item_quantities.is_not(None),
+                          Job.status.not_in(("failed", "cancelled")))
+    )).scalars().all()
+    for job in rows:
+        if job.id in reviewed:
+            continue
+        try:
+            on_plate = json.loads(job.project_item_quantities)
+        except ValueError:
+            continue
+        for item_id, qty in (on_plate.items() if isinstance(on_plate, dict) else ()):
+            try:
+                pending[int(item_id)] = pending.get(int(item_id), 0) + max(0, int(qty))
+            except (TypeError, ValueError):
+                continue
+    return pending
+
+
 def _filament_label(ask: FilamentTuple) -> str:
     """Short string for use in generated 3MF filenames."""
     parts = [p.lower() for p in (ask.manufacturer, ask.type) if p]
@@ -1202,7 +1302,8 @@ def _filament_label(ask: FilamentTuple) -> str:
     summary="Pack STLs and queue jobs",
     responses={
         404: {"description": "Project not found or a referenced file is missing"},
-        422: {"description": "Project has no items or contains non-STL files"},
+        422: {"description": "Project has no items, nothing is left to generate, an eligible printer is unknown, "
+                             "a file is missing, or a part does not fit the bed"},
         502: {"description": "Orca sidecar error during generation"},
         504: {"description": "Generation timed out"},
         409: {"description": "Project is a draft, or another request with this Idempotency-Key is still running"},
@@ -1219,6 +1320,11 @@ async def generate_project(
     """Pack project STL items into 3MF files (one per filament group), save them to the library,
     and queue one job per plate. Returns created job and file IDs plus the bed dimensions used
     for packing.
+    `quantities: "remaining"` queues only what is still missing: each item's quantity minus the parts already printed or on
+    a plate that is queued, printing or awaiting review (so failed plates and failed parts are made again, nothing else).
+    Each job records the parts its plate really holds
+    (`files[].plate_contents` is `exact`; `estimated` when the pack does not say), and generation fails with 422 — queuing
+    nothing for that group — when the packer could not place every part (too large for the smallest eligible bed).
     Send an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result
     (`Idempotent-Replay: true`) and creates no further files or jobs."""
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
@@ -1263,6 +1369,9 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             select(Printer).where(Printer.id.in_(body.eligible_printer_ids))
         )).scalars().all()
         eligible_printers = list(rows)
+        unknown = sorted(set(body.eligible_printer_ids) - {p.id for p in eligible_printers})
+        if unknown:   # packing for a default bed and queueing jobs nothing can take would only surface much later
+            raise HTTPException(422, f"Unknown eligible printer(s): {', '.join(map(str, unknown))}")
     model_printers: list[Printer] = []
     if body.eligible_model_uuids:
         model_printers = list((await session.execute(
@@ -1270,10 +1379,16 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         )).scalars().all())
 
     # Pack for the smallest bed among everything that could take the job (explicit picks + matching models).
+    # A model's registry entry counts too: a printer of that model added later takes the same jobs.
     bed_printers = eligible_printers + [p for p in model_printers if p.id not in {e.id for e in eligible_printers}]
-    if bed_printers:
-        pack_bed_x = min(p.bed_x_mm for p in bed_printers)
-        pack_bed_y = min(p.bed_y_mm for p in bed_printers)
+    beds = [(p.bed_x_mm, p.bed_y_mm) for p in bed_printers]
+    if body.eligible_model_uuids:
+        beds += [(m.bed_x_mm, m.bed_y_mm) for m in (await session.execute(
+            select(PrinterModelRecord).where(PrinterModelRecord.id.in_(body.eligible_model_uuids)))).scalars().all()]
+    beds = [(x, y) for x, y in beds if x and y and x > 0 and y > 0]
+    if beds:
+        pack_bed_x = min(x for x, _ in beds)
+        pack_bed_y = min(y for _, y in beds)
     else:
         pack_bed_x, pack_bed_y = 256.0, 256.0
 
@@ -1288,19 +1403,34 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
+    # How many of each item to queue now.
+    pending = await _pending_item_quantities(session, project_id) if body.quantities == "remaining" else {}
+    item_qty = {
+        item.id: (item.quantity if body.quantities == "all"
+                  else max(0, item.quantity - (item.quantity_completed or 0) - pending.get(item.id, 0)))
+        for item in item_rows
+    }
+    if not any(item_qty.values()):
+        raise HTTPException(422, "Nothing left to generate — every part is already printed or queued")
+
     # Group items by filament requirement (the ask tuple)
     groups: dict[FilamentTuple, list[ProjectItem]] = {}
     for item in item_rows:
-        groups.setdefault(row_tuple(item), []).append(item)
+        if item_qty[item.id] > 0:
+            groups.setdefault(row_tuple(item), []).append(item)
 
     library = get_library_store()
 
     # Resolve STL keys per group (+ what each group packs from, for pack reuse)
     group_keys: dict[FilamentTuple, list[str]] = {}
+    group_labels: dict[FilamentTuple, list[str]] = {}
+    group_names: dict[FilamentTuple, list[str]] = {}
     group_recipe: dict[FilamentTuple, list[tuple[str, int]]] = {}
     for key, group_items in groups.items():
         keys: list[str] = []
         group_recipe[key] = []
+        group_labels[key] = []
+        group_names[key] = []
         for item in group_items:
             f = await session.get(UploadedFile, item.file_id)
             if f is None:
@@ -1309,10 +1439,12 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
             if not await _stored(library, f.relative_path):
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            keys.extend([f.relative_path] * item.quantity)
+            keys.append(f.relative_path)
+            group_labels[key].append(_pack_label(f.original_filename, len(group_labels[key])))
+            group_names[key].append(f.original_filename)
             # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
             await refresh_content_hash(f, library)
-            group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
+            group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item_qty[item.id]))
         group_keys[key] = keys
     pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
                  if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
@@ -1350,6 +1482,8 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
 
     for ask, stl_keys in group_keys.items():
         group_items = groups[ask]
+        wanted = [(item.id, item_qty[item.id]) for item in group_items]
+        counts = [qty for _, qty in wanted]
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
         recipe_hash = slice_cache.sha256_of({"items": group_recipe[ask], "pack": pack_mode})
@@ -1359,6 +1493,11 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         if reused is not None:
             new_file = reused
             plate_nums = [p.get("plate_number") for p in (reused.plates or []) if p.get("plate_number") is not None]
+            try:
+                layout = await asyncio.to_thread(_stored_layout, library, reused.relative_path)
+            except ArtifactError:
+                layout = None
+            job_plates, plate_item_qtys, exact, _ = _plate_quantities(layout, plate_nums, wanted)
             slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
                                   pack_content_hash=reused.content_hash)
         else:
@@ -1368,11 +1507,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                     packed_bytes = await asyncio.to_thread(
                         _pack_stored_models, library, slicing, stl_keys,
                         machine_ref=proj.machine_uuid, process_ref=proj.process_uuid, filament_refs=[],
+                        counts=counts, labels=group_labels[ask],
                     )
                 else:
                     # Geometry-only pack; slicing profiles applied at dispatch time
                     packed_bytes = await asyncio.to_thread(
                         _pack_stored_models, library, slicing, stl_keys, bed=(pack_bed_x, pack_bed_y, 250.0),
+                        counts=counts, labels=group_labels[ask],
                     )
             except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
                 raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
@@ -1380,6 +1521,20 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 if "timed out" in str(exc).lower():
                     raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
                 raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
+
+            # Read back what the packer did BEFORE anything is stored or queued: a part it could not place (too large for the
+            # bed) must stop here, not surface as a short project after hours of printing.
+            layout = await asyncio.to_thread(_layout_of, packed_bytes)
+            pre_plates = await asyncio.to_thread(_layout_plate_nums, packed_bytes)
+            job_plates, plate_item_qtys, exact, unplaced = _plate_quantities(layout, pre_plates, wanted)
+            if unplaced:
+                names = {item.id: group_names[ask][i] for i, item in enumerate(group_items)}
+                detail = ", ".join(f"{n} x {names[item_id]}" for item_id, n in unplaced.items())
+                raise HTTPException(422, f"The packer could not place every part on a {pack_bed_x:g} x {pack_bed_y:g} mm bed "
+                                         f"({detail}): the part may be too large for the smallest eligible printer")
+            if not exact:
+                logger.warning("Project %s: the pack does not say which parts are on which plate; per-plate quantities are "
+                               "estimated (update the slicing provider for exact ones)", proj.id)
 
             label = _filament_label(ask)
             out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
@@ -1410,16 +1565,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
                                   pack_content_hash=pack_hash)
 
-        effective_plates = plate_nums or [1]
-        num_plates = len(effective_plates)
-        plate_item_qtys: list[dict[str, int]] = []
-        for i in range(num_plates):
-            plate_q: dict[str, int] = {}
-            for item in group_items:
-                base = item.quantity // num_plates
-                extra = 1 if i < (item.quantity % num_plates) else 0
-                plate_q[str(item.id)] = base + extra
-            plate_item_qtys.append(plate_q)
+        effective_plates = job_plates
 
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
@@ -1466,6 +1612,8 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             "original_filename": new_file.original_filename,
             "folder": new_file.folder,
             "plate_count": len(plate_nums),
+            # Whether each job's part counts were read from the pack ("exact") or spread evenly over its plates ("estimated").
+            "plate_contents": "exact" if exact else "estimated",
             # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
             "pack_reused": reused is not None,
             "cached_plates": cached_plates,

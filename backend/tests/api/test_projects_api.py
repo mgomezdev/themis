@@ -592,7 +592,8 @@ async def test_generate_packs_by_bed_size_when_the_project_has_no_presets(client
     resp = await _generate_with(client, tmp_path, provider, project_id)
     assert resp.status_code == 200, resp.text
     (call,) = provider.pack_models.call_args_list
-    assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}   # no eligible printers → default bed, Laminus default z
+    # no eligible printers → default bed, Laminus default z; one copy of the one model, labelled so its plate can be read back
+    assert call.kwargs == {"bed": (256.0, 256.0, 250.0), "counts": [1], "labels": ["part__m0"]}
 
 
 async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client, tmp_path):

@@ -1357,13 +1357,12 @@ class QueueEngine:
                 config.slice_failed = True
                 config.slice_error = error
 
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = "blocked"
-                job.block_reason = f"slicing failed: {error}"
-                job.assigned_printer_id = None
-                job.updated_at = _now()
+            # Conditional: a job cancelled (or otherwise moved on) while its slice ran must not come back as `blocked`.
+            moved = await session.execute(update(Job).where(Job.id == job_id, Job.status.in_(("slicing", "queued", "blocked"))).values(
+                status="blocked", block_reason=f"slicing failed: {error}", assigned_printer_id=None, updated_at=_now()))
             await session.commit()
+            if moved.rowcount == 0:
+                return
 
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.blocked")

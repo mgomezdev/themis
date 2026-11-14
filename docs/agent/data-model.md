@@ -157,7 +157,7 @@ Library index fields (filesystem is source of truth; these cache it):
 project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`.
 - `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `FormatProvider.curated_settings()` (Laminus: `providers/laminus/overrides.py`).
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
-- `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
+- `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`. Read from the pack's plate layout at generate time (an even split only when the pack does not record it). `PUT /jobs/{id}/outcome` reviews it — only for a `complete` or `failed` job (409 otherwise).
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
 - `POST /api/v1/jobs/{id}/complete-manually`: slices for a chosen printer (real slice, isolated
   directory, same pattern as `verify-slice`) then marks the job `complete` without ever printing it -

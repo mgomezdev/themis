@@ -5375,6 +5375,9 @@
           "404": {
             "description": "Job not found"
           },
+          "409": {
+            "description": "Job has not finished printing"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -7581,7 +7584,7 @@
           "projects"
         ],
         "summary": "Pack STLs and queue jobs",
-        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.\nSend an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result\n(`Idempotent-Replay: true`) and creates no further files or jobs.",
+        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.\n`quantities: \"remaining\"` queues only what is still missing: each item's quantity minus the parts already printed or on\na plate that is queued, printing or awaiting review (so failed plates and failed parts are made again, nothing else).\nEach job records the parts its plate really holds\n(`files[].plate_contents` is `exact`; `estimated` when the pack does not say), and generation fails with 422 \u2014 queuing\nnothing for that group \u2014 when the packer could not place every part (too large for the smallest eligible bed).\nSend an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result\n(`Idempotent-Replay: true`) and creates no further files or jobs.",
         "operationId": "generate_project_api_v1_projects__project_id__generate_post",
         "parameters": [
           {
@@ -7639,7 +7642,7 @@
             "description": "Project not found or a referenced file is missing"
           },
           "422": {
-            "description": "Project has no items or contains non-STL files"
+            "description": "Project has no items, nothing is left to generate, an eligible printer is unknown, a file is missing, or a part does not fit the bed"
           },
           "502": {
             "description": "Orca sidecar error during generation"
@@ -11790,6 +11793,15 @@
             "type": "boolean",
             "title": "Allow Cached",
             "default": true
+          },
+          "quantities": {
+            "type": "string",
+            "enum": [
+              "remaining",
+              "all"
+            ],
+            "title": "Quantities",
+            "default": "all"
           }
         },
         "type": "object",

@@ -185,6 +185,65 @@ describe('ProjectDetailScreen - generating jobs', () => {
       'project-x-PLA.3mf: reused previous pack, 2 plates have cached versions');
   });
 
+  it('hides "only parts still missing" until the project has jobs', async () => {
+    open();
+    await ready();
+    await userEvent.click(button('Generate…'));
+    await screen.findByText('Eligible printers');
+    expect(screen.queryByRole('checkbox', { name: /Only parts still missing/ })).toBeNull();
+  });
+
+  it('sends quantities "remaining" only when "only parts still missing" is ticked', async () => {
+    const { api } = open({ 'POST /api/v1/projects/42/generate': generated(1) }, project({ jobs_total: 2 }));
+    await ready();
+    await userEvent.click(button('Generate…'));
+    const box = await screen.findByRole('checkbox', { name: 'Only parts still missing (reprint failed or cancelled)' });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('1 job queued');
+
+    await userEvent.click(button('Generate…'));
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Only parts still missing/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/42/generate')).toHaveLength(2));
+
+    const bodies = api.to('POST', '/api/v1/projects/42/generate').map(c => c.body as Record<string, unknown>);
+    expect('quantities' in bodies[0]).toBe(false);
+    expect(bodies[1].quantities).toBe('remaining');
+  });
+
+  it('shows the "nothing left to generate" 422 message', async () => {
+    open({ 'POST /api/v1/projects/42/generate': new Reply(422, 'Nothing left to generate — every part is already printed or queued') },
+      project({ jobs_total: 2 }));
+    await ready();
+    await userEvent.click(button('Generate…'));
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Only parts still missing/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+
+    expect(await screen.findByText(/Nothing left to generate/)).toBeTruthy();
+    expect(screen.queryByText(/jobs? queued/)).toBeNull();
+  });
+
+  it('notes estimated plate counts only when a file is estimated', async () => {
+    const file = (plate_contents: string) => ({ id: 9, original_filename: 'a.3mf', folder: '/', plate_count: 1, pack_reused: false, cached_plates: 0, plate_contents });
+    open({ 'POST /api/v1/projects/42/generate': { ...generated(1), files: [file('exact')] } });
+    await ready();
+    await userEvent.click(button('Generate…'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('1 job queued');
+    expect(screen.queryByTestId('generate-estimated-note')).toBeNull();
+  });
+
+  it('shows the estimated-counts note when a file is estimated', async () => {
+    open({ 'POST /api/v1/projects/42/generate': { ...generated(1), files: [
+      { id: 9, original_filename: 'a.3mf', folder: '/', plate_count: 1, pack_reused: false, cached_plates: 0, plate_contents: 'estimated' }] } });
+    await ready();
+    await userEvent.click(button('Generate…'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    expect((await screen.findByTestId('generate-estimated-note')).textContent)
+      .toBe('Per-plate part counts are estimated — update Laminus for exact counts.');
+  });
+
   it('View Queue jumps to the queue', async () => {
     open({ 'POST /api/v1/projects/42/generate': generated(1) });
     await ready();

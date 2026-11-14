@@ -164,9 +164,12 @@ class SlicingProvider(ABC):
     def pack_models(
         self, paths: list[Path], *, machine_ref: str | None = None, process_ref: str | None = None,
         filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
+        counts: list[int] | None = None, labels: list[str] | None = None,
     ) -> bytes:
         """Arrange loose models into a multi-plate project: by presets (machine/process/filaments refs)
-        or, without presets, by explicit bed dimensions (x, y, z)."""
+        or, without presets, by explicit bed dimensions (x, y, z). `counts[i]` copies of `paths[i]` are packed (default one
+        each); `labels[i]` names every copy of `paths[i]` in the output project, so the caller can read back which model
+        landed on which plate (default: the file's stem)."""
         raise NotImplementedError("provider does not support PACK_MODELS")
 
 

@@ -145,13 +145,15 @@ class LaminusSlicingProvider(SlicingProvider):
     def pack_models(
         self, paths: list[Path], *, machine_ref: str | None = None, process_ref: str | None = None,
         filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
+        counts: list[int] | None = None, labels: list[str] | None = None,
     ) -> bytes:
         client = self._client()
         try:
             if machine_ref is not None:
-                return client.pack_stls_by_uuid(paths, machine_ref, process_ref or "", filament_refs or [])
+                return client.pack_stls_by_uuid(paths, machine_ref, process_ref or "", filament_refs or [],
+                                                counts=counts, labels=labels)
             if bed is None:
                 raise SlicingProviderError("pack_models needs presets or bed dimensions")
-            return client.pack_stls(paths, *bed)
+            return client.pack_stls(paths, *bed, counts=counts, labels=labels)
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e

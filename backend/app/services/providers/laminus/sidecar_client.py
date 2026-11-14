@@ -306,32 +306,76 @@ class LaminusSidecarClient:
             raise SidecarError(f"arrange returned {r.status_code}: {_detail(r)}")
         return r.content
 
+    # One request may carry at most this many uploads on a sidecar without `pack.counts` (each copy is its own upload there).
+    _LEGACY_PACK_MAX_PARTS = 50
+
+    def features(self, timeout: float = 5.0) -> frozenset[str]:
+        """Feature flags from GET /api/v1 (capability discovery). Empty when the sidecar predates it or does not answer:
+        callers then use the oldest behaviour."""
+        try:
+            r = self._client.get("/api/v1", timeout=timeout)
+            if r.status_code != 200:
+                return frozenset()
+            feats = r.json().get("features")
+            return frozenset(f for f in feats if isinstance(f, str)) if isinstance(feats, list) else frozenset()
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return frozenset()
+
+    def _pack(self, stl_paths: list[Path], data: dict, counts: list[int] | None, labels: list[str] | None) -> bytes:
+        """POST /api/v1/pack with `counts[i]` copies of `stl_paths[i]`, each uploaded under `labels[i]` (the sidecar names the
+        packed objects after the upload). A sidecar with `pack.counts` gets each file once plus the counts; an older one gets
+        every copy as its own upload, which it caps at 50 per request."""
+        import json as _json
+        counts = list(counts) if counts is not None else [1] * len(stl_paths)
+        if len(counts) != len(stl_paths) or any(not isinstance(c, int) or c < 1 for c in counts):
+            raise SidecarError("pack needs one positive count per model")
+        if labels is not None and len(labels) != len(stl_paths):
+            raise SidecarError("pack needs one label per model")
+        upload_names = [f"{labels[i]}.stl" if labels is not None else p.name for i, p in enumerate(stl_paths)]
+        if any(c != 1 for c in counts):
+            if "pack.counts" in self.features():
+                data = {**data, "counts": _json.dumps(counts)}
+                repeats = [1] * len(stl_paths)
+            else:
+                total = sum(counts)
+                if total > self._LEGACY_PACK_MAX_PARTS:
+                    raise SidecarError(
+                        f"this Laminus version packs at most {self._LEGACY_PACK_MAX_PARTS} parts per request (asked for {total}): "
+                        "update Laminus or reduce the quantities")
+                repeats = counts
+        else:
+            repeats = counts
+        handles = []
+        try:
+            files = []
+            for path, name, n in zip(stl_paths, upload_names, repeats):
+                for _ in range(n):
+                    fh = open(path, "rb")
+                    handles.append(fh)
+                    files.append(("files", (name, fh, "application/octet-stream")))
+            try:
+                r = self._client.post("/api/v1/pack", files=files, data=data)
+            except httpx.HTTPError as e:
+                raise SidecarError(f"pack request failed: {e}") from e
+        finally:
+            for fh in handles:
+                fh.close()
+        if r.status_code != 200:
+            raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
+        return r.content
+
     def pack_stls(
         self,
         stl_paths: list[Path],
         bed_x: float,
         bed_y: float,
         bed_z: float = 250.0,
+        *,
+        counts: list[int] | None = None,
+        labels: list[str] | None = None,
     ) -> bytes:
         """POST /api/v1/pack → multi-plate arranged 3MF bytes."""
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
-        try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)}
-            try:
-                r = self._client.post("/api/v1/pack", files=files, data=data)
-            except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
-        finally:
-            for _, fh in file_handles:
-                fh.close()
-
-        if r.status_code != 200:
-            raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
-        return r.content
+        return self._pack(stl_paths, {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)}, counts, labels)
 
     def pack_stls_by_uuid(
         self,
@@ -339,6 +383,9 @@ class LaminusSidecarClient:
         machine_uuid: str,
         process_uuid: str,
         filament_uuids: list[str],
+        *,
+        counts: list[int] | None = None,
+        labels: list[str] | None = None,
     ) -> bytes:
         """POST /api/v1/pack (UUID mode) → multi-plate 3MF bytes with embedded settings.
 
@@ -346,25 +393,5 @@ class LaminusSidecarClient:
         UUIDs, so no bed_x/bed_y is needed.
         """
         import json as _json
-        file_handles = [(p, open(p, "rb")) for p in stl_paths]
-        try:
-            files = [
-                ("files", (p.name, fh, "application/octet-stream"))
-                for p, fh in file_handles
-            ]
-            data = {
-                "machine_uuid": machine_uuid,
-                "process_uuid": process_uuid,
-                "filament_uuids": _json.dumps(filament_uuids),
-            }
-            try:
-                r = self._client.post("/api/v1/pack", files=files, data=data)
-            except httpx.HTTPError as e:
-                raise SidecarError(f"pack request failed: {e}") from e
-        finally:
-            for _, fh in file_handles:
-                fh.close()
-
-        if r.status_code != 200:
-            raise SidecarError(f"pack returned {r.status_code}: {_detail(r)}")
-        return r.content
+        data = {"machine_uuid": machine_uuid, "process_uuid": process_uuid, "filament_uuids": _json.dumps(filament_uuids)}
+        return self._pack(stl_paths, data, counts, labels)

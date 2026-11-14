@@ -171,7 +171,8 @@ class FakeSlicingProvider(SlicingProvider):
         self._enter("arrange", project_path)
         return b"ARRANGED"
 
-    def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None) -> bytes:
+    def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None,
+                    counts=None, labels=None) -> bytes:
         self._enter("pack_models", list(paths), machine_ref, bed)
         return b"PACKED"
 
