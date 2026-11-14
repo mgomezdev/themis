@@ -1891,3 +1891,64 @@ def test_parse_gcode_estimates_reads_the_summary_at_the_end_of_a_long_file(tmp_p
     gcode.write_text("; HEADER_BLOCK_START\n" + "G1 X1 Y1\n" * 20000 +
                      "; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n")
     assert _parse_gcode_estimates(str(gcode)) == (4.0, 93784, [1.25, 2.75])
+
+
+def _spy_on_block_events(qe: QueueEngine) -> dict:
+    spies = {name: AsyncMock() for name in ("_broadcast_job", "_fire_webhooks", "_fire_notifications", "_publish_job_event")}
+    for name, spy in spies.items():
+        setattr(qe, name, spy)
+    return spies
+
+
+@pytest.mark.asyncio
+async def test_slice_failure_of_a_job_cancelled_meanwhile_leaves_it_cancelled_and_silent(db):
+    qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())
+    spies = _spy_on_block_events(qe)
+    job_id = await _seed_job(db, printer_id=1, status="cancelled")
+
+    await qe._handle_slice_failure(job_id, 1, "boom")
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason) == ("cancelled", None)
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert cfg.slice_failed is True        # the printer's config is still marked: it must not be retried
+    for spy in spies.values():
+        spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["complete", "printing", "failed"])
+async def test_slice_failure_never_overwrites_a_job_that_has_moved_past_slicing(db, status):
+    qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())
+    spies = _spy_on_block_events(qe)
+    job_id = await _seed_job(db, printer_id=1, status=status)
+
+    await qe._handle_slice_failure(job_id, 1, "boom")
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason) == (status, None)
+    spies["_fire_webhooks"].assert_not_awaited()
+    spies["_fire_notifications"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_slice_failure_of_a_slicing_job_blocks_it_and_announces_it(db):
+    qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())
+    spies = _spy_on_block_events(qe)
+    job_id = await _seed_job(db, printer_id=1, status="slicing")
+    async with db() as session:
+        (await session.get(Job, job_id)).assigned_printer_id = 1
+        await session.commit()
+
+    await qe._handle_slice_failure(job_id, 1, "boom")
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason, job.assigned_printer_id) == ("blocked", "slicing failed: boom", None)
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert (cfg.slice_failed, cfg.slice_error) == (True, "boom")
+    spies["_fire_webhooks"].assert_awaited_once_with(job_id, "job.blocked")
+    spies["_fire_notifications"].assert_awaited_once()
+    spies["_broadcast_job"].assert_awaited_once_with(job_id)

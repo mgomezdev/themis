@@ -193,6 +193,38 @@ def test_laminus_http_errors_map_to_neutral_error(sidecar):
         LaminusSlicingProvider(URL).get_catalog()
 
 
+def _pack_posts(sidecar):
+    return [r for r in sidecar.requests if r.method == "POST" and r.url.path == "/api/v1/pack"]
+
+
+def test_laminus_pack_passes_counts_and_labels_down_in_bed_mode(sidecar, tmp_path):
+    stl = tmp_path / "a.stl"
+    stl.write_bytes(b"solid")
+    assert LaminusSlicingProvider(URL).pack_models([stl], bed=(220.0, 200.0, 250.0), counts=[2], labels=["a__m0"]) == b"PACKED"
+    (post,) = _pack_posts(sidecar)
+    body = post.content.decode(errors="ignore")
+    assert body.count('filename="a__m0.stl"') == 2       # the default sidecar advertises no pack.counts: one upload per copy
+    assert 'name="bed_x"' in body and "220.0" in body
+
+
+def test_laminus_pack_passes_counts_and_labels_down_in_preset_mode(sidecar, tmp_path):
+    stl = tmp_path / "a.stl"
+    stl.write_bytes(b"solid")
+    LaminusSlicingProvider(URL).pack_models([stl], machine_ref="m-1", process_ref="p-1", filament_refs=[],
+                                            counts=[3], labels=["a__m0"])
+    (post,) = _pack_posts(sidecar)
+    body = post.content.decode(errors="ignore")
+    assert body.count('filename="a__m0.stl"') == 3 and 'name="machine_uuid"' in body
+
+
+def test_laminus_pack_counts_that_do_not_match_the_models_surface_as_a_provider_error(sidecar, tmp_path):
+    stl = tmp_path / "a.stl"
+    stl.write_bytes(b"solid")
+    with pytest.raises(SlicingProviderError, match="count"):
+        LaminusSlicingProvider(URL).pack_models([stl], bed=(220.0, 200.0, 250.0), counts=[1, 2])
+    assert _pack_posts(sidecar) == []
+
+
 def test_laminus_pack_without_presets_or_bed_is_rejected(sidecar, tmp_path):
     with pytest.raises(SlicingProviderError):
         LaminusSlicingProvider(URL).pack_models([tmp_path / "a.stl"])

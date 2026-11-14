@@ -1211,6 +1211,13 @@ def _pack_label(filename: str, index: int) -> str:
     return f"{stem[:40]}__m{index}"
 
 
+def _label_index(name: str | None) -> int:
+    """The model index a packed object's name carries (-1 if none). The label is the tail: a file stem may itself contain
+    "__m3", so the LAST match counts."""
+    found = _PACK_LABEL_RE.findall(name or "")
+    return int(found[-1]) if found else -1
+
+
 def _layout_of(packed: bytes | Path) -> dict[int, list[str]] | None:
     try:
         import zipfile
@@ -1240,8 +1247,7 @@ def _plate_quantities(
         readable = True
         for plate, names in layout.items():
             for name in names:
-                found = _PACK_LABEL_RE.findall(name or "")       # the label is the tail: a stem may itself contain "__m3"
-                idx = int(found[-1]) if found else -1
+                idx = _label_index(name)
                 if not 0 <= idx < len(wanted):
                     readable = False
                     break
