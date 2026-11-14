@@ -338,3 +338,60 @@ describe('Print defaults - printer offline limit', () => {
     expect(deadAfter().value).toBe('30');
   });
 });
+
+
+describe('Print defaults - fleet waiver thresholds', () => {
+  const flag = () => screen.getByLabelText('Flag a printer after it is waived for') as HTMLInputElement;
+  const stop = () => screen.getByLabelText('Take a printer out of the queue after it is waived for') as HTMLInputElement;
+  const fields = [['waiver_flag_at', flag], ['waiver_stop_at', stop]] as const;
+
+  it('shows the stored thresholds, defaulting to 0 when the server omits them', async () => {
+    open({ 'GET /api/v1/settings/queue': { ...CONFIG, waiver_flag_at: 3, waiver_stop_at: 7 } });
+    await waitFor(() => expect(flag().value).toBe('3'));
+    expect(stop().value).toBe('7');
+  });
+
+  it('defaults to 0 for an older server', async () => {
+    open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+    expect(flag().value).toBe('0');
+    expect(stop().value).toBe('0');
+  });
+
+  it.each(fields)('saves %s alone on blur, clamped to 0..1000', async (key, field) => {
+    const api = open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+
+    fireEvent.change(field(), { target: { value: '12' } });
+    fireEvent.blur(field());
+    await waitFor(() => expect(puts(api)).toEqual([{ [key]: 12 }]));
+
+    fireEvent.change(field(), { target: { value: '-5' } });
+    fireEvent.blur(field());
+    await waitFor(() => expect(puts(api)).toEqual([{ [key]: 12 }, { [key]: 0 }]));
+    expect(field().value).toBe('0');
+
+    fireEvent.change(field(), { target: { value: '5000' } });
+    fireEvent.blur(field());
+    await waitFor(() => expect(puts(api)).toEqual([{ [key]: 12 }, { [key]: 0 }, { [key]: 1000 }]));
+    expect(field().value).toBe('1000');
+  });
+
+  it.each(fields)('puts %s back to the last saved value when the save is refused', async (_key, field) => {
+    let attempts = 0;
+    open({
+      'GET /api/v1/settings/queue': { ...CONFIG, waiver_flag_at: 2, waiver_stop_at: 4 },
+      [QUEUE]: () => (++attempts === 2 ? new Reply(500, 'flaky') : CONFIG),
+    });
+    await waitFor(() => expect(field().value).not.toBe('0'));
+
+    fireEvent.change(field(), { target: { value: '9' } });
+    fireEvent.blur(field());                                             // saved
+    await waitFor(() => expect(attempts).toBe(1));
+    fireEvent.change(field(), { target: { value: '20' } });
+    fireEvent.blur(field());                                             // refused
+
+    await waitFor(() => expect(alertText()).toContain('500 flaky'));
+    expect(field().value).toBe('9');
+  });
+});

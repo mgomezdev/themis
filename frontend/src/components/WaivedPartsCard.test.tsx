@@ -30,7 +30,13 @@ describe('WaivedPartsCard (BIZ-365)', () => {
     await waitFor(() => expect(api.to('DELETE', '/api/v1/printers/7/waivers')).toHaveLength(1));
   });
 
-  it('edits the flag / stop thresholds (whole numbers, 0 = off)', async () => {
+  it('says 0 uses the fleet setting', async () => {
+    stubFetch({ 'GET /api/v1/printers/7/waivers': [] });
+    render(<WaivedPartsCard printerId={7} flagAt={0} stopAt={0} onThresholds={() => {}} />);
+    expect(await screen.findByText(/0 = use the fleet setting from Settings/)).toBeTruthy();
+  });
+
+  it('edits the flag / stop thresholds (whole numbers, floored at 0)', async () => {
     stubFetch({ 'GET /api/v1/printers/7/waivers': [] });
     const onThresholds = vi.fn();
     render(<WaivedPartsCard printerId={7} flagAt={0} stopAt={2} onThresholds={onThresholds} />);

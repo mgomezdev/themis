@@ -306,6 +306,10 @@ export interface QueueConfig {
   part_retry_limit: number;
   /** A printer is waived for a part after failing it this many times (BIZ-365). */
   waive_after: number;
+  /** Fleet-wide: a printer waived for at least this many parts is flagged (0 = off). A printer's own non-zero limit wins. */
+  waiver_flag_at: number;
+  /** Fleet-wide: a printer waived for at least this many parts takes no more work (0 = off). A printer's own non-zero limit wins. */
+  waiver_stop_at: number;
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

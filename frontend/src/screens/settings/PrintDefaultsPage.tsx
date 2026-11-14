@@ -18,7 +18,7 @@ import { FieldRow, PageHeader, Toggle } from '../../components/settingsUi';
 export function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, snapshot: 2, name: '', estimates: false, useLatest: true });
+  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, flagAt: 0, stopAt: 0, snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -80,6 +80,30 @@ export function PrintDefaultsPage() {
     setWaiveAfter(v);
     await persist('the printer waiver limit', { waive_after: v },
       () => setWaiveAfter(saved.current.waive), () => { saved.current.waive = v; }, setSavingWaive);
+  }
+
+  // Fleet-wide waiver thresholds: flag / take out of the queue a printer waived for this many parts (0 = off)
+  const [flagAt, setFlagAt] = useState<number>(0);
+  const [savingFlagAt, setSavingFlagAt] = useState(false);
+  const [stopAt, setStopAt] = useState<number>(0);
+  const [savingStopAt, setSavingStopAt] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => {
+      const f = c.waiver_flag_at ?? 0; const st = c.waiver_stop_at ?? 0;
+      saved.current.flagAt = f; saved.current.stopAt = st; setFlagAt(f); setStopAt(st);
+    }).catch(console.error);
+  }, []);
+  async function commitFlagAt(n: number) {
+    const v = Math.min(1000, Math.max(0, Math.round(n) || 0));
+    setFlagAt(v);
+    await persist('the waiver flag limit', { waiver_flag_at: v },
+      () => setFlagAt(saved.current.flagAt), () => { saved.current.flagAt = v; }, setSavingFlagAt);
+  }
+  async function commitStopAt(n: number) {
+    const v = Math.min(1000, Math.max(0, Math.round(n) || 0));
+    setStopAt(v);
+    await persist('the waiver stop limit', { waiver_stop_at: v },
+      () => setStopAt(saved.current.stopAt), () => { saved.current.stopAt = v; }, setSavingStopAt);
   }
 
   // Snapshot interval
@@ -287,6 +311,32 @@ export function PrintDefaultsPage() {
                  onBlur={e => commitWaiveAfter(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">failures{savingWaive ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Flag a printer after it is waived for"
+                hint="Flags a printer on the Printers page once it is waived for this many parts. 0 turns it off. A printer's own limit (Printers → the printer → Waived parts) overrides it.">
+        <div className="row gap-2">
+          <input className="input" type="number" min={0} max={1000} step={1}
+                 aria-label="Flag a printer after it is waived for"
+                 value={flagAt}
+                 onChange={e => setFlagAt(Number(e.target.value))}
+                 onBlur={e => commitFlagAt(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">parts{savingFlagAt ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Take a printer out of the queue after it is waived for"
+                hint="A printer waived for this many parts takes no more work until its waivers are cleared. 0 turns it off. A printer's own limit (Printers → the printer → Waived parts) overrides it.">
+        <div className="row gap-2">
+          <input className="input" type="number" min={0} max={1000} step={1}
+                 aria-label="Take a printer out of the queue after it is waived for"
+                 value={stopAt}
+                 onChange={e => setStopAt(Number(e.target.value))}
+                 onBlur={e => commitStopAt(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">parts{savingStopAt ? ' · saving…' : ''}</span>
         </div>
       </FieldRow>
 
