@@ -194,7 +194,8 @@
       "printer_type": "bambu",
       "queue_on": 1,
       "quiet_end": null,
-      "quiet_start": null
+      "quiet_start": null,
+      "slice_overrides": null
     }
   ],
   "project_items": [

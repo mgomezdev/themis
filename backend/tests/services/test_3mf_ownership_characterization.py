@@ -116,11 +116,17 @@ def test_global_thumbnail_is_reused_for_every_plate_of_a_non_bambu_file(tmp_path
 def test_embedded_settings_of_reference_file_are_the_curated_subset_in_curated_order():
     out = parse_embedded_settings(str(ELEGOO_1))
     by_key = {r["key"]: r for r in out}
-    assert by_key["layer_height"] == {"key": "layer_height", "label": "Layer height", "value": "0.16"}
+    assert by_key["layer_height"] == {"key": "layer_height", "label": "Layer height", "value": "0.16", "carried": False}
     assert by_key["sparse_infill_density"]["value"] == "15%"
     assert by_key["wall_loops"]["value"] == "2"
     curated = [s.key for s in get_format_provider().curated_settings()]
     assert [r["key"] for r in out] == [k for k in curated if k in by_key]
+
+
+def test_reference_file_carries_no_overrides_because_only_its_printer_preset_changed():
+    """The real Elegoo export's different_settings_to_system is ['', '', 'host_type;print_host;support_multi_bed_types']:
+    process first, printer last. Printer-preset changes are never carried onto another printer's preset."""
+    assert get_format_provider().embedded_overrides(str(ELEGOO_1)) == {}
 
 
 def test_filament_slots_of_reference_files():
