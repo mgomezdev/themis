@@ -41,6 +41,22 @@ describe('Fleet: out-of-queue states (BIZ-369)', () => {
     expect([...container.querySelectorAll('span')].map(s => s.textContent)).toEqual(['SETUP INCOMPLETE', 'QUEUE OFF']);
   });
 
+  it('shows why Themis paused the queue, only while the queue is off and a reason is set', () => {
+    const REASON = '3 prints failed in a row';
+    const { unmount } = render(<QueueStateBadges printer={printer({ queueOn: false, queuePausedReason: REASON })} />);
+    const badge = screen.getByText(`Paused: ${REASON}`);
+    expect(badge.getAttribute('title')).toBe('Switch the queue back on to resume');
+    expect(screen.queryByText('QUEUE OFF')).toBeNull();
+    unmount();
+
+    const on = render(<QueueStateBadges printer={printer({ queueOn: true, queuePausedReason: REASON })} />);
+    expect(on.container.textContent).toBe('');
+    on.unmount();
+
+    render(<QueueStateBadges printer={printer({ queueOn: false, queuePausedReason: null })} />);
+    expect(screen.getByText('QUEUE OFF')).toBeTruthy();
+  });
+
   it('a configured printer (or an older server without the field) shows no setup card', () => {
     const { container } = render(<SetupIncompleteCard printer={printer({ configured: undefined })} refetchFleet={() => {}} />);
     expect(container.innerHTML).toBe('');
