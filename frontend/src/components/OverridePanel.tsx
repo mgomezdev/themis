@@ -59,7 +59,7 @@ export function OverridePanel({ settings, value, onChange }: OverridePanelProps)
                 style={{ width: 15, height: 15, accentColor: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}
               />
               <span className="small" style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
-              <span className="tiny muted mono" style={{ flexShrink: 0 }}>{s.value}</span>
+              <span className="tiny muted mono" style={{ flexShrink: 0 }}>{checked ? value[s.key] : s.value}</span>
             </label>
           );
         })}

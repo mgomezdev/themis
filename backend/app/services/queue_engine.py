@@ -1031,15 +1031,16 @@ class QueueEngine:
                 printer.preferred_slicer_plugin_id))) if printer else None
             machine_preset = resolution.profile if resolution else None
             printer_view = PrinterView.of(printer, resolution) if printer else None
+            is_gcode = is_presliced_file(uploaded_file)
+            allow_cached = bool(job.allow_cached_slice) if job else False
+            if uploaded_file is not None and not is_gcode:
+                # Never trust an index entry the file has outgrown: the slicing cache keys on the model's bytes, and the
+                # 3MF's own preset changes (memoized per file version) must be read from the bytes being sliced.
+                if await refresh_content_hash(uploaded_file, get_library_store()):
+                    await session.commit()
             params = _slice_params(job, config, printer, uploaded_file, machine_preset, plan,
                                    await slice_overrides.embedded_for(uploaded_file))
             cfg_tool_index = params["tool_index"]
-            is_gcode = is_presliced_file(uploaded_file)
-            allow_cached = bool(job.allow_cached_slice) if job else False
-            if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
-                # The slicing cache keys on the model's bytes: never trust an index entry the file has outgrown.
-                if await refresh_content_hash(uploaded_file, get_library_store()):
-                    await session.commit()
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
             source_file_id = uploaded_file.id if uploaded_file else None
 

@@ -381,3 +381,35 @@ async def test_check_overrides_flags_what_the_job_and_printer_overrides_change(c
         {"key": "brim_type", "from": "no_brim", "to": "brim_ears"},
         {"key": "support_type", "from": "normal(auto)", "to": "tree(auto)"},
     ]
+
+
+@pytest.mark.parametrize("endpoint", ["verify-slice", "complete-manually"])
+async def test_manual_slices_use_job_over_3mf_over_printer(client, tmp_path, upload_3mf, create_printer, endpoint):
+    from tests.api.test_complete_manually import _fake_gcode_with_estimates
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"):
+        await _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates)
+
+
+async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates):
+    file_id = await upload_3mf(data=_orca_3mf({"brim_type": "no_brim", "wall_loops": "4"}, ["brim_type", "wall_loops"]))
+    printer_id = await create_printer(slice_overrides={"brim_type": "outer_only", "support_type": "tree(auto)"},
+                                      build_plate_type="Textured PEI Plate")
+    with patch("app.api.routes.jobs.queue_engine"):
+        job_id = (await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1, "overrides": {"enable_support": "1"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
+        })).json()["id"]
+    seen = []
+
+    async def fake_run_verify_slice(req, output_dir):
+        seen.append(req.extra_config)
+        return _fake_gcode_with_estimates(output_dir)
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+    mock_qe.run_verify_slice = fake_run_verify_slice
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/{endpoint}", json={"printer_id": printer_id})
+
+    assert resp.status_code == 200, resp.text
+    assert seen == [{"curr_bed_type": "Textured PEI Plate", "support_type": "tree(auto)", "brim_type": "no_brim",
+                     "wall_loops": "4", "enable_support": "1"}]

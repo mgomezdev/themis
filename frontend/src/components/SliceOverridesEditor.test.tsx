@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useState } from 'react';
 import { SliceOverridesEditor, resetOverrideSettingsCache } from './SliceOverridesEditor';
 import { stubFetch, Reply } from '../test/fetchStub';
@@ -50,11 +50,15 @@ describe('SliceOverridesEditor', () => {
     expect(seen[seen.length - 1]).toEqual({ brim_type: 'brim_ears', wall_loops: '5' });
   });
 
-  it('renders nothing when the settings cannot be loaded', async () => {
-    const f = stubFetch({ 'GET /api/v1/jobs/override-settings': new Reply(500, 'down') });
-    const { container } = render(<Harness onValue={() => {}} />);
-    await vi.waitFor(() => expect(f.to('GET', '/api/v1/jobs/override-settings')).toHaveLength(1));
-    await new Promise(r => setTimeout(r, 0));
-    expect(container.textContent).toBe('');
+  it('renders nothing when the settings cannot be loaded, and loads them on the next mount', async () => {
+    stubFetch({ 'GET /api/v1/jobs/override-settings': new Reply(500, 'down') });
+    const first = render(<Harness onValue={() => {}} />);
+    await act(async () => {});
+    expect(first.container.textContent).toBe('');
+    first.unmount();
+
+    stubFetch({ 'GET /api/v1/jobs/override-settings': SETTINGS });     // a failed load is not cached
+    render(<Harness onValue={() => {}} />);
+    expect(await screen.findByLabelText('Add override')).toBeTruthy();
   });
 });

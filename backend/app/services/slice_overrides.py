@@ -14,12 +14,15 @@ slicing-cache key. Job and printer overrides are limited to the provider's curat
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict
 from typing import Mapping
 
 from .library_scanner import is_presliced_file
 from .library_store import get_library_store, with_local_path
 from .providers.slicing import get_format_provider
+
+logger = logging.getLogger(__name__)
 
 BED_TYPE_KEY = "curr_bed_type"
 
@@ -48,14 +51,19 @@ def extra_config(build_plate_type: str | None, printer: Mapping | None, embedded
     return {**base, **effective(printer, embedded, job)}
 
 
-def _read_embedded(uploaded_file) -> dict:
+_MISSING = object()
+
+
+def _read_embedded(uploaded_file):
+    """{key: value}, or `_MISSING` when the file isn't in the store (never memoized)."""
     return with_local_path(get_library_store(), uploaded_file.relative_path,
-                           lambda path: get_format_provider().embedded_overrides(path), {}) or {}
+                           lambda path: get_format_provider().embedded_overrides(path), _MISSING)
 
 
 async def embedded_for(uploaded_file) -> dict:
     """The project file's own preset changes (see module doc); {} for G-code, a missing file or none recorded.
-    File I/O runs in a worker thread (never on the queue loop), memoized per file version."""
+    File I/O runs in a worker thread (never on the queue loop). Memoized per file version, successful reads only: a
+    missing file or a read error yields {} for this slice but is retried next time (and logged)."""
     if uploaded_file is None or not uploaded_file.relative_path or is_presliced_file(uploaded_file):
         return {}
     key = (uploaded_file.relative_path, uploaded_file.content_hash or "", uploaded_file.mtime or 0.0)
@@ -64,10 +72,15 @@ async def embedded_for(uploaded_file) -> dict:
         return dict(_EMBEDDED_MEMO[key])
     try:
         found = await asyncio.to_thread(_read_embedded, uploaded_file)
-    except Exception:   # an unreadable file carries nothing; the slice itself reports what's wrong with it
-        found = {}
+    except Exception:
+        logger.warning("could not read the project file's own settings from %s; slicing without them",
+                       uploaded_file.relative_path, exc_info=True)
+        return {}
+    if found is _MISSING:
+        return {}
+    found = dict(found or {})
     if key[1]:   # only memoize a version we can tell apart from the next one
         _EMBEDDED_MEMO[key] = dict(found)
         while len(_EMBEDDED_MEMO) > _EMBEDDED_MEMO_MAX:
             _EMBEDDED_MEMO.popitem(last=False)
-    return dict(found)
+    return found
