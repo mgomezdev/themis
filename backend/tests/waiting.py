@@ -42,6 +42,18 @@ async def settle_background_tasks(*, timeout: float = 5.0) -> None:
         await asyncio.wait(pending, timeout=remaining)
 
 
+async def cancel_background_tasks(prefix: str) -> None:
+    """Cancel and reap every task named `prefix`* (e.g. the queue engine's "slice-" tasks) a test spawned but does not exercise.
+
+    A test that asserts only on a claim must not leave its slice task pending: pytest closes the loop, and the garbage collector
+    later destroys the task inside whatever test is running then (a GeneratorExit there)."""
+    current = asyncio.current_task()
+    tasks = [t for t in asyncio.all_tasks() if t is not current and t.get_name().startswith(prefix)]
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def settle_events(factory) -> None:
     """Deliver every due durable event (e.g. a job's `job.complete` effects) and the inventory work it spawns, then return.
 

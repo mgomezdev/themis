@@ -1,5 +1,5 @@
 from tests.catalog_helpers import patch_cached_catalog, prime_catalog
-from tests.fake_providers import FakeFormatProvider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
 from app.services.providers.contract import OverrideInspection, SettingChange, SlotWarning
 from contextlib import nullcontext
 from pathlib import Path
@@ -115,23 +115,15 @@ def test_extra_config_forwarded_to_sidecar():
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="MyPrinter", process_preset="MyProcess",
         filament_presets=["MyFilament"],
-        extra_config={"fill_pattern": "grid", "layer_height": "0.15"},
+        extra_config={"sparse_infill_pattern": "grid", "layer_height": "0.15"},
     )
-
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "sidecar-job-1"
-    mock_client.poll_status.return_value = {"artifact": {"name": "out.gcode"}}
-    mock_client.download.return_value = Path("/tmp/out.gcode")
-
-    with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
-         patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
-        mock_exec.return_value = "/tmp/out.gcode"
+    from tests.slicing_env import slicing_provider
+    fake = FakeSlicingProvider()
+    with slicing_provider(fake):
         svc.slice(req)
 
-    mock_exec.assert_called_once()
-    _, kwargs = mock_exec.call_args[0], mock_exec.call_args[1]
-    # extra_config must be passed through to _execute_slice_by_ids
-    assert req.extra_config == {"fill_pattern": "grid", "layer_height": "0.15"}
+    (spec,) = [c[1] for c in fake.calls if c[0] == "slice"]
+    assert spec.extra_config == {"sparse_infill_pattern": "grid", "layer_height": "0.15"}   # curated overrides reach the slicer
 
 
 def test_slice_raises_without_sidecar():
@@ -143,11 +135,8 @@ def test_slice_raises_without_sidecar():
         machine_preset="m", process_preset="p", filament_presets=["f"],
     )
     with patch("app.services.providers.slicing.configured_server_url", return_value=None):
-        try:
+        with pytest.raises(SliceError, match="Settings -> Laminus"):
             svc.slice(req)
-            assert False, "expected SliceError"
-        except SliceError as e:
-            assert "Settings -> Laminus" in str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +146,6 @@ def test_slice_raises_without_sidecar():
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -337,6 +325,20 @@ async def test_check_overrides_serializes_the_providers_inspection_dto_to_the_un
     assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one
 
 
+async def test_check_overrides_diffs_against_the_printer_default_process_for_a_printer_default_config(check):
+    """BIZ-358: print_profile "" means the printer's default process, so the diff resolves that preset, not ""."""
+    from tests.catalog_helpers import catalog_from_dict
+    compat = catalog_from_dict({"machine": _CATALOG["machine"], "filament": [],
+                                "process": [{"name": "0.20mm Standard", "uuid": "p-1", "compatible_printers": ["Bambu Lab P1S 0.4"]}]})
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=compat):
+        resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), print_profile="",
+                                    printer={"default_process_profile": "0.20mm Standard"},
+                                    merged={"layer_height": "0.28"})
+    assert resp.status_code == 200, resp.text
+    assert "error" not in resp.json()
+    assert [c[2] for c in _merge_calls(sidecar)] == ["p-1"]
+
+
 async def test_override_settings_lists_curated_keys_with_kinds_and_options(client: AsyncClient):
     resp = await client.get("/api/v1/jobs/override-settings")
     assert resp.status_code == 200
@@ -387,7 +389,12 @@ async def test_check_overrides_flags_what_the_job_and_printer_overrides_change(c
 async def test_manual_slices_use_job_over_3mf_over_printer(client, tmp_path, upload_3mf, create_printer, endpoint):
     from tests.api.test_complete_manually import _fake_gcode_with_estimates
     with patch("app.config.get_library_dir", return_value=tmp_path / "library"):
-        await _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates)
+        resp, seen = await _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates)
+    assert resp.status_code == 200, resp.text
+    # The job's input (+ bed type) and the printer's overrides travel separately; the provider puts the 3MF's own
+    # changes between them (see tests/services/test_laminus_producer.py for that merge).
+    assert seen == [({"curr_bed_type": "Textured PEI Plate", "enable_support": "1"},
+                     {"brim_type": "outer_only", "support_type": "tree(auto)"})]
 
 
 async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates):
@@ -402,7 +409,7 @@ async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpo
     seen = []
 
     async def fake_run_verify_slice(req, output_dir):
-        seen.append(req.extra_config)
+        seen.append((req.extra_config, req.printer_overrides))
         return _fake_gcode_with_estimates(output_dir)
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
@@ -410,6 +417,4 @@ async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpo
     with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(f"/api/v1/jobs/{job_id}/{endpoint}", json={"printer_id": printer_id})
 
-    assert resp.status_code == 200, resp.text
-    assert seen == [{"curr_bed_type": "Textured PEI Plate", "support_type": "tree(auto)", "brim_type": "no_brim",
-                     "wall_loops": "4", "enable_support": "1"}]
+    return resp, seen

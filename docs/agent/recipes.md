@@ -52,11 +52,11 @@ A vendor is a bundled plugin package; core names none (`tests/test_vendor_extrac
 1. Compose existing utility/component classes (`styling.md` vocabulary) + tokens; prefer the
    `components/ui.tsx` components (`Card`, `StatusPill`, `Progress`, `SectionHeader`, `Empty`, `Kv`…).
 2. Only add a new class to `frontend/src/styles/app.css` if nothing fits; reference tokens
-   (`var(--bg-2)`, `var(--accent)`, `var(--pad-3)`), never raw hex/px, so density/accent theming works.
+   (`var(--bg-2)`, `var(--accent)`, `var(--pad-3)`), never raw hex/px, so density theming works.
 3. **New styled status** → add the key to `StatusKey` (`data/types.ts`) AND the tone map in
-   `components/ui.tsx` (pick an `ok/warn/err/info/idle/accent` tone), else it renders as a grey pill.
-4. **New design token** → define in `:root`; add `[data-density]`/`[data-accent]` overrides if it
-   should react to theming.
+   `components/ui.tsx` (pick an `ok/warn/err/info/idle` tone), else it renders as a grey pill.
+4. **New design token** → define in `:root`; add a `[data-density]` override if it should react to
+   density. Derive tints with `color-mix` instead of adding a colour token.
 
 ## Add a table or column
 
@@ -83,7 +83,7 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 ## Change queue / print behavior
 
 - **Eligibility** (when a printer may claim): `printer_manager.is_printer_ready` and
-  `queue_engine._try_claim_for_printer`. Head-of-line — a mismatch blocks the job, it does not skip ahead.
+  `queue_engine._try_claim_for_printer` (both refuse an unconfigured printer, BIZ-369). Head-of-line — a mismatch blocks the job, it does not skip ahead.
 - **Filament matching / AMS mapping**: `queue_engine._matching_loaded_filament` + the loaded-slot dict
   shape. AMS mapping flows from the matched slot's `ams_tray_id` into `StartPrintOptions.ams_mapping`.
 - **Slice→upload→print sequence**: `queue_engine._run_slice_and_print`. Sets `awaiting_plate_clear=True`
@@ -98,7 +98,7 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 1. Broadcast from the backend hub (the WS manager `main.py` exposes; `printer_manager`/`queue_engine`
    call it). Message shape `{type, data}`.
 2. Frontend: handle the new `type` in the `openLiveSocket` message handler of the relevant hook (`useQueue`/`useOrders`/
-   `useFleetData`). Existing types: `job_update`, `queue_update`, `printer_state`, `plate_clear_required`.
+   `useFleetData`). Existing types: `job_update`, `queue_update`, `printer_state`, `plate_clear_required`, `printer_configured`.
 
 ## Add a per-printer print option (e.g. a new calibration toggle)
 

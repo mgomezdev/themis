@@ -11,20 +11,12 @@ import { JobProjectControl } from '../components/JobProjectControl';
 import { getProject } from '../api/projects';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
 import { askIsUndefined, describeAsk } from '../lib/filamentAsk';
-
-const BADGE: Record<string, string> = {
-  elegoo_centauri: 'ECC',
-  bambu: 'P1S',
-};
-
-function printerBadge(type: string): string {
-  return BADGE[type] ?? type.slice(0, 3).toUpperCase();
-}
+import { typeBadge } from '../api/fleet';
 
 function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   if (cfg.slice_failed) {
     return (
-      <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+      <div className="tone-err tint" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
         <div style={{ color: 'var(--err)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Slice failed</div>
         {cfg.slice_error && (
           <div className="mono tiny" style={{ color: 'var(--err)', opacity: 0.8, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cfg.slice_error}</div>
@@ -38,7 +30,7 @@ function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
 function LowStockStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   if (!cfg.low_stock_warning) return null;
   return (
-    <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+    <div className="tone-warn tint" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Low filament</div>
       <div className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{cfg.low_stock_warning.message}</div>
     </div>
@@ -50,7 +42,7 @@ function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   const m = cfg.filament_match;
   if (!m || m.eligible) return null;
   return (
-    <div data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+    <div className="tone-warn tint" data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6 }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Filament doesn't match</div>
       {m.reasons.map((r, i) => <div key={i} className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{r}</div>)}
     </div>
@@ -58,20 +50,20 @@ function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
 }
 
 function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAssigned: boolean }) {
-  const badge = printerBadge(cfg.printer_type);
+  const badge = typeBadge(cfg.printer_type);
   return (
     <div style={{
       padding: 14, borderRadius: 10,
-      background: isAssigned ? 'var(--bg-3)' : 'var(--bg-1)',
+      background: isAssigned ? 'var(--bg-2)' : 'var(--bg-0)',
       border: `1px solid ${isAssigned ? 'var(--accent)' : 'var(--border-1)'}`,
     }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
         <span className={`elig ${isAssigned ? 'on' : 'off'}`}
-              style={isAssigned ? { background: 'rgba(59,130,246,0.2)' } : undefined}>
+              style={isAssigned ? { background: 'var(--accent-tint)' } : undefined}>
           {badge}
         </span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{cfg.printer_name}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{cfg.printer_name}</div>
           <div className="tiny muted">{cfg.printer_type}</div>
         </div>
         {isAssigned && (
@@ -86,7 +78,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
         </div>
         <div>
           <div className="tag-key" style={{ marginBottom: 4 }}>Filament</div>
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             {cfg.filament_color && (
               <div style={{
                 width: 14, height: 14, borderRadius: 3, flexShrink: 0,
@@ -94,7 +86,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
                 border: '1px solid rgba(255,255,255,0.15)',
               }} />
             )}
-            <div className="col" style={{ minWidth: 0 }}>
+            <div className="col min-0">
               <div className="small" style={{ color: 'var(--text-1)' }}>
                 {askIsUndefined(cfg) ? 'Any loaded filament' : describeAsk(cfg)}
               </div>
@@ -248,7 +240,7 @@ export function JobDetailScreen() {
         <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate(-1)}>
           {Icons.chevL} Back
         </button>
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>
           {error ?? 'Job not found'}
         </div>
       </div>
@@ -269,7 +261,7 @@ export function JobDetailScreen() {
       </button>
 
       {error && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{error}</div>
       )}
 
       <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0,1fr) 300px' }}>
@@ -279,7 +271,7 @@ export function JobDetailScreen() {
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{
               width: '100%', height: 200, position: 'relative',
-              background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
+              background: 'linear-gradient(135deg, var(--bg-2), var(--border-2))',
               display: 'grid', placeItems: 'center',
               overflow: 'hidden',
             }}>
@@ -292,12 +284,7 @@ export function JobDetailScreen() {
                 </span>
               )}
               {job.status === 'failed' && (
-                <div style={{
-                  position: 'absolute', bottom: 10, left: 10,
-                  padding: '3px 10px', borderRadius: 6,
-                  background: 'rgba(239,68,68,0.85)', color: 'white',
-                  fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
-                }}>FAILED</div>
+                <div className="tone-err tone-solid" style={{ position: 'absolute', bottom: 10, left: 10, padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, letterSpacing: '0.05em' }}>FAILED</div>
               )}
             </div>
 
@@ -345,19 +332,12 @@ export function JobDetailScreen() {
               </div>
 
               {job.block_reason && (
-                <div style={{
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  background: job.status === 'failed' ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
-                  border: `1px solid ${job.status === 'failed' ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.3)'}`,
-                  color: job.status === 'failed' ? 'var(--err)' : 'var(--warn)',
-                  fontSize: 13
-                }}>
+                <div className={`tint tone-text ${job.status === 'failed' ? 'tone-err' : 'tone-warn'}`} style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13 }}>
                   {job.status === 'failed' ? 'Failure Reason: ' : 'Blocked: '}{job.block_reason}
                 </div>
               )}
 
-              <div className="row gap-5" style={{ flexWrap: 'wrap' }}>
+              <div className="row gap-5 wrap">
                 {(job.estimated_seconds_live != null || job.plate?.estimated_time != null) && (
                   <Kv k="Est. print" v={
                     <span className="num small">
@@ -381,7 +361,7 @@ export function JobDetailScreen() {
                   <Kv k="Printing on" v={
                     <span className="small">
                       <span className={`elig on`} style={{ fontSize: 10, marginRight: 4 }}>
-                        {printerBadge(job.assigned_printer.printer_type)}
+                        {typeBadge(job.assigned_printer.printer_type)}
                       </span>
                       {job.assigned_printer.name}
                     </span>
@@ -395,8 +375,8 @@ export function JobDetailScreen() {
           {job.model_targets.length > 0 && (
             <div className="card" style={{ padding: 20 }} data-testid="model-targets">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Any printer of</div>
-              <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-                {job.model_targets.map(t => <span key={t.model_uuid} className="elig on">{t.model_label ?? t.model_uuid}</span>)}
+              <div className="row gap-2 wrap">
+                {job.model_targets.map(t => <span key={t.model_uuid ?? 'any'} className="elig on">{t.model_label ?? t.model_uuid}</span>)}
               </div>
               {job.printer_configs.length === 0 && (
                 <div className="tiny muted" style={{ marginTop: 8 }}>No printer of this model is set up yet — the job waits for one.</div>
@@ -430,7 +410,7 @@ export function JobDetailScreen() {
             <div className="card" style={{ padding: 20 }}>
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Estimate</div>
               {job.estimate_status === 'pending' && (
-                <p style={{ color: 'var(--muted)', margin: 0 }}>Estimating…</p>
+                <p style={{ color: 'var(--text-3)', margin: 0 }}>Estimating…</p>
               )}
               {job.estimate_status === 'done' && job.estimate_seconds !== null && (
                 <>
@@ -490,7 +470,7 @@ export function JobDetailScreen() {
                 </ul>
               )}
               {job.deduction_skipped && (
-                <div style={{ marginTop: 10, color: 'var(--warn, #f59e0b)', fontWeight: 500, fontSize: 13 }}>
+                <div style={{ marginTop: 10, color: 'var(--warn)', fontWeight: 500, fontSize: 13 }}>
                   {job.deduction_note
                     ? `Filament usage was not recorded: ${job.deduction_note}.`
                     : 'Print was aborted — please manually update your filament inventory.'}
@@ -503,7 +483,7 @@ export function JobDetailScreen() {
           {(job.status === 'queued' || job.status === 'blocked') && (
             <div className="card" style={{ padding: 20 }} data-testid="start-time-card">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Start time</div>
-              <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="row gap-2 wrap">
                 <input
                   type="datetime-local" className="input" aria-label="Earliest start"
                   style={{ maxWidth: 220 }}
@@ -531,7 +511,7 @@ export function JobDetailScreen() {
           {/* Cost */}
           <div className="card" style={{ padding: 20 }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Filament cost</div>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div className="row gap-2">
               <input
                 type="number" min="0" step="0.01"
                 className="input" placeholder="0.00"

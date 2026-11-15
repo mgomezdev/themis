@@ -35,3 +35,16 @@ the project's generated jobs, and the printer. Pre-sliced G-code is never touche
 `tests/api/test_job_overrides.py` (override-settings, printer overrides API, check-overrides precedence),
 `tests/api/test_projects_api.py` (generate overrides), `tests/test_v057_migration.py`, `tests/test_embedded_settings.py`;
 frontend `SliceOverridesEditor.test.tsx`, printer edit form, project generate. Laminus: clamp unit test.
+
+## Port onto develop (merge of `develop`, 2026-11-15)
+
+`develop` moved to a neutral `GcodeProducer.produce()` whose `SliceSettings.overrides` must be curated keys, plus
+per-target config overrides (v070) and print-group overrides (v068). Adapted design:
+
+- Core sends the job's input (`jobs.overrides` + the per-target config's) as `extra_config` and the printer's as the new
+  `SliceRequest.printer_overrides` → `SliceSettings.printer_overrides`. The **Laminus producer** reads the 3MF it slices
+  (`embedded_process_overrides`) and merges bed < printer < 3MF < job. No core-side 3MF read at slice time (and so no memo).
+- Slice-cache key gains `printer_overrides` (hashed only when set; the 3MF's changes follow from the source hash).
+- Migration renumbered v057 → **v072**.
+- Project-level overrides = **print-group overrides** (already persisted and copied onto jobs on develop): the editor
+  lives in `PrintGroupsCard`; the `GenerateRequest.overrides` field is dropped.

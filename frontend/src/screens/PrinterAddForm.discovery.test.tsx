@@ -8,13 +8,13 @@ import { printerType } from '../test/printerTypes';
 
 const TYPES: PrinterType[] = [
   printerType({ plugin_id: 'elegoo_centauri', manufacturer_id: 'elegoo', manufacturer_name: 'Elegoo', model_id: 'centauri', display_name: 'Centauri Carbon', connection_fields: [
-    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'port', label: 'Port', field_type: 'number', required: false, default: 3030, placeholder: '', help_text: '' },
+    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'port', label: 'Port', field_type: 'number', required: false, default: 3030, placeholder: '', help_text: '', quick_add: false },
   ] }),
   printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S', connection_fields: [
-    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-    { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
+    { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
+    { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '', quick_add: false },
   ] }),
 ];
 
@@ -38,7 +38,7 @@ describe('PrinterAddForm — discovery', () => {
     await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
     await user.type(screen.getByLabelText('Network ranges'), '192.168.7.0/24');
     await user.click(screen.getByRole('button', { name: 'Scan' }));
-    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    await user.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.20' }));
 
     expect(screen.getByText('Connect to P1S')).toBeTruthy();                       // step 2 of a Bambu, not the default first type
     const field = (label: string) => screen.getByText(label).parentElement!.querySelector('input') as HTMLInputElement;
@@ -56,7 +56,7 @@ describe('PrinterAddForm — discovery', () => {
 
     await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
     await user.click(screen.getByRole('button', { name: 'Scan' }));
-    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    await user.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.20' }));
 
     expect(screen.getByText('Connect to X1 Carbon')).toBeTruthy();
   });
@@ -69,7 +69,7 @@ describe('PrinterAddForm — discovery', () => {
 
     await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
     await user.click(screen.getByRole('button', { name: 'Scan' }));
-    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    await user.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.20' }));
 
     expect(screen.getByRole('status').textContent).toMatch(/could not tell which model/);
     expect(screen.queryByText(/^Connect to /)).toBeNull();                                // not advanced to the connect step
@@ -83,7 +83,7 @@ describe('PrinterAddForm — discovery', () => {
 
     await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
     await user.click(screen.getByRole('button', { name: 'Scan' }));
-    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+    await user.click(await screen.findByRole('button', { name: 'More settings for 192.168.7.20' }));
     await user.click(screen.getByRole('button', { name: /^Next/ }));                     // → profile step
     await user.click(screen.getByRole('button', { name: /^Next/ }));                     // → review
     expect(await screen.findByText('My Atlas')).toBeTruthy();

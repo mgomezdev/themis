@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.providers.slicing import Catalog
 from app.plugins.capabilities.filament_inventory import PROFILE_LINKS_READ, InvMaterial
-from app.services.inventory import provider as inventory_provider, read as inventory_read
+from app.services.inventory import provider as inventory_provider
 
 logger = logging.getLogger("app.catalog_utils")
 

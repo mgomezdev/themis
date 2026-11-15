@@ -1,23 +1,17 @@
 """Preset overrides for sliced jobs: the 3MF's own preset changes are carried onto the routed printer's preset, and
-job > 3MF > printer when they conflict (services/slice_overrides)."""
+job > 3MF > printer when they conflict. Core sends the job's input (`extra_config`) and the printer's overrides
+(`printer_overrides`) separately; the provider reads the 3MF and merges (see test_laminus_producer.py for that merge)."""
 import io
 import json
 import zipfile
 
 import pytest
-from sqlalchemy import select
 
 from app.models import Job, Printer
-from app.services import slice_overrides
+from app.services import slice_cache, slice_overrides
 from app.services.providers.laminus.overrides import embedded_process_overrides
+from app.services.slicer_service import SliceRequest, _settings_of
 from tests.services.test_slice_save import _engine, _run_to_printing, _seed, env  # noqa: F401  (env is a fixture)
-
-
-@pytest.fixture(autouse=True)
-def _fresh_memo():
-    slice_overrides._EMBEDDED_MEMO.clear()
-    yield
-    slice_overrides._EMBEDDED_MEMO.clear()
 
 
 def _orca_3mf(settings: dict, process_diff: list[str], filament_diff: list[str] = (), printer_diff: list[str] = ()) -> bytes:
@@ -64,93 +58,6 @@ def test_a_bare_or_broken_file_carries_nothing(tmp_path):
     assert embedded_process_overrides(bare) == {} and embedded_process_overrides(junk) == {}
 
 
-# ---- precedence -------------------------------------------------------------------------------------------------
-
-# The examples: the job picks "enable supports" and a brim type, the printer always wants an outer brim, the 3MF has
-# its own brim/support choices. Job > 3MF > printer; the printer's bed type sits under everything.
-@pytest.mark.parametrize("printer, embedded, job, expected", [
-    ({"brim_type": "outer_only"}, {"brim_type": "no_brim", "enable_support": "0"}, {"enable_support": "1", "brim_type": "brim_ears"},
-     {"brim_type": "brim_ears", "enable_support": "1"}),                                  # job beats both
-    ({"brim_type": "outer_only"}, {"brim_type": "no_brim"}, {"enable_support": "1"},
-     {"brim_type": "no_brim", "enable_support": "1"}),                                    # 3MF beats printer
-    ({"brim_type": "outer_only"}, {}, {"enable_support": "1"},
-     {"brim_type": "outer_only", "enable_support": "1"}),                                 # printer fills what nobody else set
-    (None, None, None, {}),
-])
-def test_job_beats_3mf_beats_printer(printer, embedded, job, expected):
-    assert slice_overrides.effective(printer, embedded, job) == expected
-    assert slice_overrides.extra_config("Textured PEI Plate", printer, embedded, job) == \
-        {"curr_bed_type": "Textured PEI Plate", **expected}
-
-
-def test_clean_keeps_only_curated_keys_as_strings():
-    assert slice_overrides.clean({"brim_type": "outer_only", "enable_support": 1, "post_process": "rm -rf /"}) == \
-        {"brim_type": "outer_only", "enable_support": "1"}
-    assert slice_overrides.clean({"post_process": "x"}) is None and slice_overrides.clean(None) is None
-    assert slice_overrides.clean({"brim_width": " ", "wall_loops": None, "layer_height": " 0.2 "}) == {"layer_height": "0.2"}
-
-
-async def test_embedded_for_skips_gcode_and_reads_a_3mf(env):  # noqa: F811
-    (env / "Prints" / "m.3mf").write_bytes(_orca_3mf({"brim_type": "no_brim"}, ["brim_type"]))
-
-    class F:
-        def __init__(self, name):
-            self.relative_path, self.original_filename, self.content_hash, self.mtime = f"Prints/{name}", name, "h", 1.0
-    assert await slice_overrides.embedded_for(F("m.3mf")) == {"brim_type": "no_brim"}
-    (env / "Prints" / "m.gcode").write_bytes(b"G28\n")
-    assert await slice_overrides.embedded_for(F("m.gcode")) == {}
-    assert await slice_overrides.embedded_for(None) == {}
-
-
-# ---- the real dispatch path ------------------------------------------------------------------------------------
-
-async def _slice_config(session_factory, tmp_path, env, *, printer_overrides, job_overrides, threemf):  # noqa: F811
-    (env / "Prints" / "Benchy.3mf").write_bytes(threemf)        # before seeding, so the index matches the file on disk
-    qe, _ = _engine(session_factory, tmp_path)
-    job_id = await _seed(session_factory, save=False)
-    async with session_factory() as s:
-        p = await s.get(Printer, 1)
-        p.build_plate_type = "Textured PEI Plate"
-        p.slice_overrides = printer_overrides
-        (await s.get(Job, job_id)).overrides = job_overrides
-        await s.commit()
-    await _run_to_printing(qe, session_factory, job_id)
-    return qe._slicer.slice.call_args.args[0]
-
-
-async def test_dispatch_carries_the_3mf_changes_onto_the_printers_preset_under_the_job(session_factory, tmp_path, env):  # noqa: F811
-    """The 3MF was made for an X1C preset; the printer that claims it slices with a different machine preset. The file's
-    own changes still apply, the job's picks (supports on, brim ears) win over it, the printer's outer brim loses to both,
-    and the printer's override fills a key nobody else set."""
-    threemf = _orca_3mf({"enable_support": "0", "brim_type": "no_brim", "wall_loops": "4",
-                         "print_settings_id": "0.20mm Standard @BBL X1C", "printer_settings_id": "Bambu Lab X1 Carbon 0.4 nozzle"},
-                        process_diff=["enable_support", "brim_type", "wall_loops"])
-
-    req = await _slice_config(session_factory, tmp_path, env,
-                              printer_overrides={"brim_type": "outer_only", "support_type": "tree(auto)"},
-                              job_overrides={"enable_support": "1", "brim_type": "brim_ears"}, threemf=threemf)
-
-    assert req.machine_preset == "Test Machine Preset"           # the routed printer's preset, not the file's
-    assert req.extra_config == {"curr_bed_type": "Textured PEI Plate", "support_type": "tree(auto)",
-                                "enable_support": "1", "brim_type": "brim_ears", "wall_loops": "4"}
-
-
-async def test_dispatch_3mf_brim_beats_the_printers_brim_when_the_job_says_nothing(session_factory, tmp_path, env):  # noqa: F811
-    threemf = _orca_3mf({"brim_type": "no_brim"}, process_diff=["brim_type"])
-    req = await _slice_config(session_factory, tmp_path, env, printer_overrides={"brim_type": "outer_only"},
-                              job_overrides=None, threemf=threemf)
-    assert req.extra_config == {"curr_bed_type": "Textured PEI Plate", "brim_type": "no_brim"}
-
-
-async def test_dispatch_uses_the_printers_brim_when_neither_job_nor_3mf_sets_one(session_factory, tmp_path, env):  # noqa: F811
-    threemf = _orca_3mf({"wall_loops": "3"}, process_diff=[])
-    req = await _slice_config(session_factory, tmp_path, env, printer_overrides={"brim_type": "outer_only"},
-                              job_overrides={"enable_support": "1"}, threemf=threemf)
-    assert req.extra_config == {"curr_bed_type": "Textured PEI Plate", "brim_type": "outer_only", "enable_support": "1"}
-
-
-# ---- review follow-ups: unsafe keys, memo, the other slice paths ------------------------------------------------
-
 def test_unsafe_carried_keys_are_dropped(tmp_path):
     """A post-processing script would make the Orca CLI refuse the slice on every printer; wipe-tower positions belong to
     the original bed; a per-extruder (multi-value) setting doesn't fit another printer's extruder count."""
@@ -163,42 +70,71 @@ def test_unsafe_carried_keys_are_dropped(tmp_path):
     assert embedded_process_overrides(path) == {"enable_support": "1"}
 
 
+# ---- precedence (the preview the New Job check uses) ----------------------------------------------------------------
+
+# The examples: the job picks "enable supports" and a brim type, the printer always wants an outer brim, the 3MF has
+# its own brim/support choices. Job > 3MF > printer.
+@pytest.mark.parametrize("printer, embedded, job, expected", [
+    ({"brim_type": "outer_only"}, {"brim_type": "no_brim", "enable_support": "0"}, {"enable_support": "1", "brim_type": "brim_ears"},
+     {"brim_type": "brim_ears", "enable_support": "1"}),                                  # job beats both
+    ({"brim_type": "outer_only"}, {"brim_type": "no_brim"}, {"enable_support": "1"},
+     {"brim_type": "no_brim", "enable_support": "1"}),                                    # 3MF beats printer
+    ({"brim_type": "outer_only"}, {}, {"enable_support": "1"},
+     {"brim_type": "outer_only", "enable_support": "1"}),                                 # printer fills what nobody else set
+    (None, None, None, {}),
+])
+def test_job_beats_3mf_beats_printer(printer, embedded, job, expected):
+    assert slice_overrides.effective(printer, embedded, job) == expected
+
+
+def test_clean_keeps_only_curated_non_blank_keys_as_strings():
+    assert slice_overrides.clean({"brim_type": "outer_only", "enable_support": 1, "post_process": "rm -rf /"}) == \
+        {"brim_type": "outer_only", "enable_support": "1"}
+    assert slice_overrides.clean({"post_process": "x"}) is None and slice_overrides.clean(None) is None
+    assert slice_overrides.clean({"brim_width": " ", "wall_loops": None, "layer_height": " 0.2 "}) == {"layer_height": "0.2"}
+
+
 class _File:
-    def __init__(self, name, content_hash="h", mtime=1.0):
-        self.relative_path, self.original_filename = f"Prints/{name}", name
-        self.content_hash, self.mtime = content_hash, mtime
+    def __init__(self, name):
+        self.relative_path, self.original_filename, self.content_hash, self.mtime = f"Prints/{name}", name, "h", 1.0
 
 
-async def test_a_new_version_of_the_file_is_read_again(env):  # noqa: F811
-    p = env / "Prints" / "m.3mf"
-    p.write_bytes(_orca_3mf({"brim_type": "no_brim"}, ["brim_type"]))
-    assert await slice_overrides.embedded_for(_File("m.3mf", "h1")) == {"brim_type": "no_brim"}
-    p.write_bytes(_orca_3mf({"brim_type": "brim_ears"}, ["brim_type"]))
-    assert await slice_overrides.embedded_for(_File("m.3mf", "h1")) == {"brim_type": "no_brim"}       # same version: memo
-    assert await slice_overrides.embedded_for(_File("m.3mf", "h2")) == {"brim_type": "brim_ears"}     # new hash: re-read
-
-
-async def test_a_failed_or_missing_read_is_not_remembered_as_no_changes(env, monkeypatch):  # noqa: F811
-    (env / "Prints" / "m.3mf").write_bytes(_orca_3mf({"enable_support": "1"}, ["enable_support"]))
-    real = slice_overrides._read_embedded
+async def test_embedded_for_reads_a_3mf_and_skips_gcode_missing_and_broken_files(env, monkeypatch):  # noqa: F811
+    (env / "Prints" / "m.3mf").write_bytes(_orca_3mf({"brim_type": "no_brim"}, ["brim_type"]))
+    assert await slice_overrides.embedded_for(_File("m.3mf")) == {"brim_type": "no_brim"}
+    (env / "Prints" / "m.gcode").write_bytes(b"G28\n")
+    assert await slice_overrides.embedded_for(_File("m.gcode")) == {}
+    assert await slice_overrides.embedded_for(_File("gone.3mf")) == {}
+    assert await slice_overrides.embedded_for(None) == {}
     monkeypatch.setattr(slice_overrides, "_read_embedded", lambda f: (_ for _ in ()).throw(OSError("store hiccup")))
     assert await slice_overrides.embedded_for(_File("m.3mf")) == {}
-    monkeypatch.setattr(slice_overrides, "_read_embedded", real)
-    assert await slice_overrides.embedded_for(_File("m.3mf")) == {"enable_support": "1"}
-
-    assert await slice_overrides.embedded_for(_File("gone.3mf")) == {}                                  # not in the store
-    (env / "Prints" / "gone.3mf").write_bytes(_orca_3mf({"brim_type": "no_brim"}, ["brim_type"]))
-    assert await slice_overrides.embedded_for(_File("gone.3mf")) == {"brim_type": "no_brim"}
 
 
-_EXAMPLE_3MF = _orca_3mf({"brim_type": "no_brim", "wall_loops": "4", "enable_support": "0"},
-                         process_diff=["brim_type", "wall_loops", "enable_support"])
-_EXAMPLE_EXPECTED = {"curr_bed_type": "Textured PEI Plate", "support_type": "tree(auto)", "brim_type": "no_brim",
-                     "wall_loops": "4", "enable_support": "1"}
+# ---- what core sends the provider ------------------------------------------------------------------------------
+
+def _req(**kw) -> SliceRequest:
+    return SliceRequest(job_id=1, source_3mf="", plate_number=1, machine_preset="M", process_preset="P",
+                        filament_presets=["F"], **kw)
+
+
+def test_the_neutral_settings_keep_the_printers_overrides_apart_from_the_jobs():
+    s = _settings_of(_req(extra_config={"curr_bed_type": "Textured PEI Plate", "enable_support": "1"},
+                          printer_overrides={"brim_type": "outer_only"}))
+    assert (s.plate_type, dict(s.overrides), dict(s.printer_overrides)) == \
+        ("Textured PEI Plate", {"enable_support": "1"}, {"brim_type": "outer_only"})
+
+
+def test_the_cache_key_changes_with_the_printers_overrides_and_is_unchanged_without_any():
+    plain = slice_cache.key_inputs(_req(), "hash", None, None)
+    assert "printer_overrides" not in plain.as_dict()                     # keys of printers without overrides don't move
+    brim = slice_cache.key_inputs(_req(printer_overrides={"brim_type": "outer_only"}), "hash", None, None)
+    job_brim = slice_cache.key_inputs(_req(extra_config={"brim_type": "outer_only"}), "hash", None, None)
+    # the same value from the printer and from the job can slice differently (the 3MF sits between them)
+    assert len({slice_cache.cache_key(plain), slice_cache.cache_key(brim), slice_cache.cache_key(job_brim)}) == 3
 
 
 async def _seed_example(session_factory, env, **seed):  # noqa: F811
-    (env / "Prints" / "Benchy.3mf").write_bytes(_EXAMPLE_3MF)
+    (env / "Prints" / "Benchy.3mf").write_bytes(_orca_3mf({"brim_type": "no_brim"}, ["brim_type"]))
     job_id = await _seed(session_factory, **seed)
     async with session_factory() as s:
         p = await s.get(Printer, 1)
@@ -209,26 +145,15 @@ async def _seed_example(session_factory, env, **seed):  # noqa: F811
     return job_id
 
 
-async def test_the_claim_time_cache_check_builds_the_same_config_as_dispatch(session_factory, tmp_path, env):  # noqa: F811
-    from app.models import JobPrinterConfig, UploadedFile
+async def test_dispatch_sends_the_jobs_input_and_the_printers_overrides_separately(session_factory, tmp_path, env):  # noqa: F811
     qe, _ = _engine(session_factory, tmp_path)
     job_id = await _seed_example(session_factory, env, save=False)
-    seen: list[dict] = []
-    real = qe._slice_request
 
-    def spy(*a, **kw):
-        req, fmap = real(*a, **kw)
-        seen.append(dict(req.extra_config))
-        return req, fmap
-    qe._slice_request = spy
-
-    async with session_factory() as s:
-        job = await s.get(Job, job_id)
-        cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-        await qe._cached_version_for_claim(s, job, cfg, await s.get(Printer, 1), await s.get(UploadedFile, job.uploaded_file_id))
     await _run_to_printing(qe, session_factory, job_id)
 
-    assert seen == [_EXAMPLE_EXPECTED, _EXAMPLE_EXPECTED]          # claim-time check, then dispatch
+    req = qe._slicer.slice.call_args.args[0]
+    assert req.extra_config == {"curr_bed_type": "Textured PEI Plate", "enable_support": "1"}
+    assert req.printer_overrides == {"brim_type": "outer_only", "support_type": "tree(auto)"}
 
 
 async def test_the_estimate_slices_with_the_same_overrides(session_factory, tmp_path, env):  # noqa: F811
@@ -241,4 +166,6 @@ async def test_the_estimate_slices_with_the_same_overrides(session_factory, tmp_
 
     await qe.run_estimate(job_id)
 
-    assert qe._slicer.slice.call_args.args[0].extra_config == _EXAMPLE_EXPECTED
+    req = qe._slicer.slice.call_args.args[0]
+    assert req.extra_config == {"curr_bed_type": "Textured PEI Plate", "enable_support": "1"}
+    assert req.printer_overrides == {"brim_type": "outer_only", "support_type": "tree(auto)"}

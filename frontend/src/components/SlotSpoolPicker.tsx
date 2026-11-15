@@ -82,18 +82,12 @@ export function SlotSpoolPicker({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {conflict && !isCustom && (
-        <div data-testid="slot-conflict" style={{
-          fontSize: 12, color: 'var(--err)', padding: '4px 8px',
-          background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
-        }}>
+        <div className="tone-err tint tone-text" data-testid="slot-conflict" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6 }}>
           The bound spool differs from what the printer reports for this slot, so jobs skip it. Rebind the right spool, or unbind this one.
         </div>
       )}
       {isDegraded && (
-        <div style={{
-          fontSize: 12, color: 'var(--warn)', padding: '4px 8px',
-          background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6,
-        }}>
+        <div className="tone-warn tint tone-text" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6 }}>
           {binding && binding.provider !== provider
             ? `Spool #${binding.ref} belongs to another inventory (${binding.provider}), which isn't the active one`
             : `Spool #${binding?.ref} not found in the inventory`}
@@ -105,7 +99,7 @@ export function SlotSpoolPicker({
           {selectedSpool ? (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
-              padding: '7px 10px', background: 'var(--bg-1)',
+              padding: '7px 10px', background: 'var(--bg-0)',
               border: '1px solid var(--border-1)', borderRadius: 8,
             }}>
               <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(selectedSpool), flexShrink: 0 }} />
@@ -137,7 +131,7 @@ export function SlotSpoolPicker({
           {open && !selectedSpool && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-              background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+              background: 'var(--bg-1)', border: '1px solid var(--border-2)',
               borderRadius: 8, marginTop: 4,
               boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
               maxHeight: 240, overflowY: 'auto',
@@ -145,7 +139,7 @@ export function SlotSpoolPicker({
               <div
                 onMouseDown={clearSpool}
                 style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, color: 'var(--text-3)', borderBottom: '1px solid var(--border-1)' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
                 onMouseLeave={e => (e.currentTarget.style.background = '')}
               >
                 Custom
@@ -158,11 +152,11 @@ export function SlotSpoolPicker({
                   key={spool.ref}
                   onMouseDown={() => pickSpool(spool)}
                   style={{ padding: '9px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
                   <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(spool), flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>{spoolRowLabel(spool)}</span>
+                  <span className="grow">{spoolRowLabel(spool)}</span>
                   <span className="muted" style={{ fontSize: 12 }}>{spoolDetail(spool)}</span>
                 </div>
               ))}
@@ -225,8 +219,8 @@ export function SlotSpoolPicker({
         <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{
-              flex: 1, padding: '7px 10px', background: 'var(--bg-1)',
-              border: '1px solid var(--border-1)', borderRadius: 8, fontSize: 13, color: 'var(--text-2)',
+              flex: 1, padding: '7px 10px', background: 'var(--bg-0)',
+              border: '1px solid var(--border-1)', borderRadius: 8, fontSize: 13, color: 'var(--text-1)',
             }}>
               {[selectedSpool.material?.vendor, selectedSpool.material?.material, selectedSpool.material?.subtype]
                 .filter(Boolean).join(' ') || '—'}

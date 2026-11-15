@@ -1,5 +1,6 @@
 """Creating a printer on a disabled plugin is refused (422, nothing stored); a wizard-created printer stores the plugin
 client's printer_type (BIZ-251 review)."""
+from tests.printer_ips import ip_config
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -37,7 +38,7 @@ async def _count(session_factory) -> int:
 
 
 async def _post(client, **fields):
-    return await client.post("/api/v1/printers", json={"name": "P", "connection_config": {}, **fields})
+    return await client.post("/api/v1/printers", json={"name": "P", "connection_config": ip_config(), **fields})
 
 
 async def test_identity_create_on_a_disabled_plugin_is_422_and_stores_nothing(client, session_factory, host_started):

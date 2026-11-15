@@ -1,8 +1,10 @@
-from tests.fake_providers import FakeSlicingProvider
-from tests.catalog_helpers import cached_raw, prime_catalog
+"""Slice-side tool mapping (BIZ-295): `produce()` remaps a job-scoped copy through the slicing provider, never the shared source."""
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from app.services.slicer_service import SlicerService, SliceRequest
+
+from app.services.slicer_service import SliceRequest, SlicerService
+from tests.catalog_helpers import prime_catalog
+from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 
 
 def _req(**kw):
@@ -20,39 +22,53 @@ def _catalog():
     }
 
 
-def test_prepare_hook_runs_on_copy_leaves_source_untouched(tmp_path):
-    """prepare_hook must rewrite a job-scoped copy, never the shared library source file."""
+class RemappingProvider(FakeSlicingProvider):
+    TOOL_MAPPING = True
+
+    def apply_tool_mapping(self, source_3mf, *, tool_index=None, filament_map=None):
+        self.calls.append(("apply_tool_mapping", Path(source_3mf), tool_index, filament_map))
+        Path(source_3mf).write_bytes(b"remapped-bytes")
+
+
+def _svc(tmp_path) -> SlicerService:
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
+    return svc
 
+
+def test_tool_mapping_runs_on_a_copy_and_the_copy_is_what_gets_sliced(tmp_path):
     source = tmp_path / "x.3mf"
     source.write_bytes(b"original-bytes")
-
-    hooked_paths = []
-
-    def hook(p):
-        hooked_paths.append(Path(p))
-        Path(p).write_bytes(b"remapped-bytes")
     prime_catalog(_catalog())
+    fake = RemappingProvider()
+    with slicing_provider(fake):
+        _svc(tmp_path).slice(_req(source_3mf=str(source), tool_index=2))
 
-    fake = FakeSlicingProvider()
-    with patch("app.services.slicer_service.get_slicing_provider", return_value=fake):
-        svc.slice(_req(source_3mf=str(source), prepare_hook=hook))
-
-    assert len(hooked_paths) == 1
-    assert hooked_paths[0] != source, "prepare_hook must run on a copy, not the shared source file"
+    (applied,) = [c for c in fake.calls if c[0] == "apply_tool_mapping"]
+    assert applied[1] != source and applied[2:] == (2, None)
     assert source.read_bytes() == b"original-bytes", "shared library source must not be mutated"
+    passed = next(c[1] for c in fake.calls if c[0] == "slice").source_file
+    assert passed == applied[1] and passed.read_bytes() == b"remapped-bytes"
 
-    passed_source = next(c[1] for c in fake.calls if c[0] == "slice").source_file
-    assert passed_source == hooked_paths[0], "the remapped copy must be what gets sliced"
 
-
-def test_no_hook_with_sidecar_succeeds(tmp_path):
-    """A request without a prepare_hook routes to sidecar successfully."""
-    svc = SlicerService.__new__(SlicerService)
-    svc._data_dir = tmp_path
+def test_a_filament_map_reaches_the_provider_in_its_dict_shape(tmp_path):
+    source = tmp_path / "x.3mf"
+    source.write_bytes(b"original-bytes")
     prime_catalog(_catalog())
+    fake = RemappingProvider()
+    fmap = [{"model_filament": 1, "tool_index": 2}, {"model_filament": 2, "tool_index": 0}]
+    with slicing_provider(fake):
+        _svc(tmp_path).slice(_req(source_3mf=str(source), filament_map=fmap))
+    (applied,) = [c for c in fake.calls if c[0] == "apply_tool_mapping"]
+    assert applied[2:] == (None, fmap)
 
-    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"), \
-         patch.object(SlicerService, "_execute_slice_by_ids", return_value="out.gcode"):
-        assert svc.slice(_req()) == "out.gcode"
+
+def test_no_mapping_slices_the_source_itself(tmp_path):
+    source = tmp_path / "x.3mf"
+    source.write_bytes(b"original-bytes")
+    prime_catalog(_catalog())
+    fake = RemappingProvider()
+    with slicing_provider(fake):
+        _svc(tmp_path).slice(_req(source_3mf=str(source)))
+    assert not [c for c in fake.calls if c[0] == "apply_tool_mapping"]
+    assert next(c[1] for c in fake.calls if c[0] == "slice").source_file == source

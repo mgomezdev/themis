@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.database import Base

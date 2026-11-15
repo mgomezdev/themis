@@ -17,7 +17,7 @@ function ForbiddenToast({ message, onDismiss }: { message: string; onDismiss: ()
         position: 'fixed',
         bottom: 16,
         right: 16,
-        background: 'var(--error)',
+        background: 'var(--err)',
         color: 'white',
         padding: '12px 16px',
         borderRadius: 4,
@@ -198,7 +198,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                onChange={(e) => setPassword(e.target.value)} placeholder="Password"
                style={{ width: '100%', marginBottom: loginError ? 6 : 12 }} />
         {loginError && (
-          <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px' }}>{loginError}</p>
+          <p className="muted small" style={{ color: 'var(--err)', margin: '0 0 12px' }}>{loginError}</p>
         )}
         <button type="submit" className="btn primary" disabled={!email.trim() || !password || isLoggingIn}
                 style={{ width: '100%' }}>
@@ -230,7 +230,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                  onChange={(e) => setRecoveryPassword(e.target.value)} placeholder="New admin password"
                  style={{ width: '100%', marginBottom: recoveryError ? 6 : 12 }} />
           {recoveryError && (
-            <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px' }}>{recoveryError}</p>
+            <p className="muted small" style={{ color: 'var(--err)', margin: '0 0 12px' }}>{recoveryError}</p>
           )}
           <button type="submit" className="btn primary" disabled={!recoveryCode.trim() || !recoveryPassword}
                   style={{ width: '100%' }}>
@@ -242,7 +242,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <h2 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600 }}>Enter your API key</h2>
         {unreachable ? (
           <>
-            <p className="muted small" style={{ color: 'var(--error)', marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+            <p className="muted small" style={{ color: 'var(--err)', marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
               Couldn't reach the Themis server. Check your connection and try again.
             </p>
             <button
@@ -270,7 +270,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           style={{ width: '100%', marginBottom: validationError ? 6 : 12 }}
         />
         {validationError && (
-          <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px', lineHeight: 1.5 }}>
+          <p className="muted small" style={{ color: 'var(--err)', margin: '0 0 12px', lineHeight: 1.5 }}>
             {validationError}
           </p>
         )}

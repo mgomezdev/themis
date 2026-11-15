@@ -29,8 +29,8 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   return (
     <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
       {active > 0 && (
-        <span data-testid="badge-active" className="count num"
-              style={{ marginLeft: 0, background: 'var(--ok-bg)', color: 'var(--ok)', borderColor: 'rgba(34,197,94,0.25)' }}>
+        <span data-testid="badge-active" className="count num tone-ok"
+              style={{ marginLeft: 0 }}>
           {active}
         </span>
       )}
@@ -40,8 +40,8 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
         </span>
       )}
       {blocked > 0 && (
-        <span data-testid="badge-blocked" className="count num"
-              style={{ marginLeft: 0, background: 'rgba(239,68,68,0.12)', color: 'var(--err)', borderColor: 'rgba(239,68,68,0.3)' }}>
+        <span data-testid="badge-blocked" className="count num tone-err"
+              style={{ marginLeft: 0 }}>
           {blocked}
         </span>
       )}
@@ -116,45 +116,47 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
         )}
       </div>
 
-      <div className="nav-section">
-        <div className="nav-section-label">Workshop</div>
-        {items.map(it => (
-          <NavLink key={it.to} to={it.to}
-                   className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            {it.icon}
-            <span className="label">{it.label}</span>
-            {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
-            {it.to === '/alarms' && alarmCount > 0 && (
-              <span data-testid="badge-alarms" className="count num" aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
-                    style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.3)',
-                             color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
-                {alarmCount}
-              </span>
-            )}
-          </NavLink>
-        ))}
-      </div>
+      <div className="sidebar-scroll">
+        <div className="nav-section">
+          <div className="nav-section-label">Workshop</div>
+          {items.map(it => (
+            <NavLink key={it.to} to={it.to}
+                     className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+              {it.icon}
+              <span className="label">{it.label}</span>
+              {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
+              {it.to === '/alarms' && alarmCount > 0 && (
+                <span data-testid="badge-alarms" className={`count num ${alarmWorst === 'info' || alarmWorst === 'warning' ? 'tone-warn' : 'tone-err'}`}
+                      aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
+                      style={{ marginLeft: 'auto' }}>
+                  {alarmCount}
+                </span>
+              )}
+            </NavLink>
+          ))}
+        </div>
 
-      <div className="nav-section">
-        <div className="nav-section-label">Account</div>
-        <NavLink to="/settings"
-                 className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          {Icons.settings}
-          <span className="label">Settings</span>
-        </NavLink>
-        {!collapsed && isSettingsRoute && (
-          <div style={{ paddingLeft: 12 }}>
-            {settingsSubItems.map(item => (
-              <NavLink key={item.to} to={item.to}
-                       className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                       style={{ fontSize: 12, paddingLeft: 8 }}>
-                <span className="label">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
-        <LaminusStatusChip />
-        <InventoryStatusChip />
+        <div className="nav-section">
+          <div className="nav-section-label">Account</div>
+          <NavLink to="/settings"
+                   className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            {Icons.settings}
+            <span className="label">Settings</span>
+          </NavLink>
+          {!collapsed && isSettingsRoute && (
+            <div style={{ paddingLeft: 12 }}>
+              {settingsSubItems.map(item => (
+                <NavLink key={item.to} to={item.to}
+                         className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                         style={{ fontSize: 12, paddingLeft: 8 }}>
+                  <span className="label">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          )}
+          <LaminusStatusChip />
+          <InventoryStatusChip />
+        </div>
       </div>
 
       {!collapsed && build && (

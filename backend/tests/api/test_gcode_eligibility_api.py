@@ -1,4 +1,5 @@
 """G-code machine eligibility over the API (BIZ-263): upload / file detail / filter, job creation per printer, target materialisation."""
+from tests.printer_ips import ip_config
 from unittest.mock import patch
 
 import pytest
@@ -38,7 +39,7 @@ async def model_ids(client) -> dict[str, str]:
 
 
 async def printer_on(client, models, model) -> int:
-    r = await client.post("/api/v1/printers", json={"name": f"on-{model}", "model_uuid": models[model], "connection_config": {}})
+    r = await client.post("/api/v1/printers", json={"name": f"on-{model}", "model_uuid": models[model], "connection_config": ip_config()})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -97,7 +98,7 @@ async def test_put_replaces_the_set_and_a_model_file_has_no_eligibility(client, 
 
 async def test_files_can_be_filtered_by_eligible_model_with_unknown_files_opt_in(client):
     models = await model_ids(client)
-    x1 = await upload(client, "x1.gcode", [models["x1"]])
+    await upload(client, "x1.gcode", [models["x1"]])
     x2 = await upload(client, "x2.gcode", [models["x2"]])
     legacy = await upload(client, "legacy.gcode")
 
@@ -119,6 +120,9 @@ async def test_a_job_for_an_eligible_printer_is_created(client):
     r = await post_job(client, f["id"], [pid])
 
     assert r.status_code == 201, r.text
+    (job,) = (await client.get("/api/v1/jobs")).json()
+    assert (job["id"], job["uploaded_file_id"], job["status"]) == (r.json()["id"], f["id"], "queued")
+    assert [p["id"] for p in job["eligible_printers"]] == [pid]
 
 
 async def test_each_picked_printer_is_judged_on_its_own_and_only_the_incompatible_one_is_named(client):

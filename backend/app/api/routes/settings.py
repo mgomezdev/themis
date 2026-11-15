@@ -8,16 +8,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
-from ...services import slicer_profiles, webhook_service
+from ...services import printer_setup, slicer_profiles, webhook_service
 from ...services import printer_model_registry as model_registry
 from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
-from ...services.printer_client_factory import client_class, create_client
+from ...services.printer_client_factory import client_class
 from ...services.printer_identity import IdentityError, LEGACY_IDENTITY, resolve_legacy
 from ...services.printer_manager import printer_manager
 
@@ -33,6 +33,10 @@ class QueueConfigOut(BaseModel):
     check_interval_minutes: int
     # Minutes a printer may be offline before it counts as dead (its running job fails and is requeued at the top). 0 = never.
     printer_dead_after_minutes: int
+    # A part is held for a person after failing on this many different printers (BIZ-364).
+    part_retry_limit: int
+    # A printer is waived for a part after failing it this many times (BIZ-365).
+    waive_after: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -43,6 +47,8 @@ class QueueConfigOut(BaseModel):
 class QueueConfigIn(BaseModel):
     check_interval_minutes: int | None = None
     printer_dead_after_minutes: int | None = Field(default=None, ge=0, le=MAX_DEAD_AFTER_MINUTES)
+    part_retry_limit: int | None = Field(default=None, ge=1, le=20)
+    waive_after: int | None = Field(default=None, ge=1, le=20)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -80,7 +86,8 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, snapshot_interval_seconds=2, estimates_enabled=False,
+        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2, waive_after=2,
+                          snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
         await session.flush()
@@ -107,6 +114,10 @@ async def update_queue_config(
         row.check_interval_minutes = max(1, body.check_interval_minutes)
     if body.printer_dead_after_minutes is not None:
         row.printer_dead_after_minutes = body.printer_dead_after_minutes
+    if body.part_retry_limit is not None:
+        row.part_retry_limit = body.part_retry_limit
+    if body.waive_after is not None:
+        row.waive_after = body.waive_after
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:
@@ -319,6 +330,7 @@ async def fleet_import(
 
     warnings: list[str] = []
     imported = 0
+    new_ids: list[int] = []
     skipped = 0
 
     await model_registry.sync_registry(session)
@@ -400,7 +412,7 @@ async def fleet_import(
             plugin_id=identity[0],
             manufacturer_id=identity[1],
             model_id=identity[2],
-            connection_config=conn_cfg,
+            connection_config=printer_setup.strip_blank(conn_cfg),   # a redacted secret is absent, never ""
             orca_printer_profiles=orca_profiles,
             machine_profile_override=current_profile,
             nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()
@@ -409,19 +421,19 @@ async def fleet_import(
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),
             queue_on=pr.get("queue_on", True),
+            configured=False,                   # BIZ-369: re-tested here, never trusted from the backup
         )
         session.add(printer)
         await session.flush()
         printer_manager.set_printer_plugin(printer.id, printer.plugin_id)
-
-        try:
-            client = create_client(printer)
-            printer_manager.connect_printer(printer.id, client)
-        except Exception:
-            pass
+        printer_manager.set_configured(printer.id, False)
+        new_ids.append(printer.id)
 
         imported += 1
 
     await session.commit()
+    factory = async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
+    for printer_id in new_ids:
+        printer_setup.schedule(printer_id, factory)
 
     return FleetImportReport(imported=imported, skipped=skipped, warnings=warnings)

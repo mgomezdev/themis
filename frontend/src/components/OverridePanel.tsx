@@ -24,7 +24,7 @@ export function OverridePanel({ settings, value, onChange }: OverridePanelProps)
       border: '1px solid var(--border-1)',
       borderRadius: 10,
       padding: '14px 16px',
-      background: 'var(--bg-1)',
+      background: 'var(--bg-0)',
     }}>
       <div className="label" style={{ marginBottom: 6 }}>3MF Embedded Settings</div>
       <div className="tiny muted" style={{ marginBottom: 10, lineHeight: 1.5 }}>

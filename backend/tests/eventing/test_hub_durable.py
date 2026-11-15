@@ -411,6 +411,10 @@ async def test_a_delivery_whose_subscriber_stays_unavailable_for_a_week_goes_dea
 
 
 async def test_purge_drops_old_finished_events_but_keeps_pending_and_recent_dead_ones(hub, session_factory):
+    # This test builds historical delivery states directly. Automatic delivery would turn
+    # the old pending row into a delivered row before the explicit purge under test.
+    hub._s.loop_task.cancel()
+    await asyncio.gather(hub._s.loop_task, return_exceptions=True)
     async def handler(e): ...
 
     hub.subscribe("job.complete", handler, name="t.purge")
@@ -436,6 +440,9 @@ async def test_purge_drops_old_finished_events_but_keeps_pending_and_recent_dead
 
 
 async def test_the_origin_survives_the_outbox_and_a_stored_v1_envelope_without_one_is_still_delivered(hub, session_factory):
+    # Stage and rewrite the legacy envelope before letting the real dispatcher read it.
+    hub._s.loop_task.cancel()
+    await asyncio.gather(hub._s.loop_task, return_exceptions=True)
     got = []
 
     async def handler(e):
@@ -443,6 +450,8 @@ async def test_the_origin_survives_the_outbox_and_a_stored_v1_envelope_without_o
 
     hub.subscribe("job.complete", handler, name="t.origin")
     assert await publish(hub, session_factory, complete(1).model_copy(update={"origin": "core"})) is True
+    await hub._dispatch_due()
+    await hub.drain()
     await wait_until(lambda: len(got) == 1, what="v2 delivery")
     assert got[0].origin == "core"
     async with session_factory() as s:
@@ -456,6 +465,7 @@ async def test_the_origin_survives_the_outbox_and_a_stored_v1_envelope_without_o
         legacy["schema_version"] = 1
         o.envelope, o.schema_version = legacy, 1
         await s.commit()
-    hub.wake()
+    await hub._dispatch_due()
+    await hub.drain()
     await wait_until(lambda: len(got) == 2, what="v1 delivery")
     assert got[1].origin is None and got[1].schema_version == 1 and got[1].entities == {"job_id": 2}

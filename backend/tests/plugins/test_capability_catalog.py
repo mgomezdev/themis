@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from app.plugins.capabilities import CORE
@@ -12,12 +14,12 @@ def test_core_catalog_has_filament_inventory_v1_with_all_features():
 
 
 @pytest.mark.parametrize("cid,ok", [("inventory.filament", True), ("acme_inv.reports", True), ("a.b.c", True),
-                                    ("inventory", False), ("Inventory.filament", False), ("a..b", False), (".a.b", False), ("a.b-c", False)])
+                                    ("3mf.construct", True), ("inventory", False), ("_a.b", False), ("Inventory.filament", False), ("a..b", False), (".a.b", False), ("a.b-c", False)])
 def test_capability_id_shape(cid, ok):
     assert bool(CAP_ID_RE.match(cid)) is ok
 
 
 def test_definition_is_immutable():
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         CORE["inventory.filament"].version = 2        # type: ignore[misc]
     assert isinstance(CORE["inventory.filament"], CapabilityDef)

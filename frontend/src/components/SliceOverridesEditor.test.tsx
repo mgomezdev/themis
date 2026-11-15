@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useState } from 'react';
-import { SliceOverridesEditor, resetOverrideSettingsCache } from './SliceOverridesEditor';
+import { SliceOverridesEditor } from './SliceOverridesEditor';
+import { resetOverrideSettingsCache } from './overrideSettings';
 import { stubFetch, Reply } from '../test/fetchStub';
 
 const SETTINGS = [

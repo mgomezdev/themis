@@ -43,7 +43,7 @@ test.describe('API Keys management', () => {
         let body: any = {};
         try {
           body = req.postDataJSON() || {};
-        } catch (e) {
+        } catch {
           // No JSON body
         }
         // Create response

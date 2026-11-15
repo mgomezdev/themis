@@ -69,7 +69,7 @@ export function FilamentAskEditor({ value, onChange, materials = [], catalogEnab
               data-testid={`${id}-color`} aria-label="Filament color" type="color"
               value={`#${normColor(color)?.padEnd(6, '0').slice(0, 6) ?? '888888'}`}
               onChange={e => set({ filament_color: e.target.value })}
-              style={{ width: 28, height: 28, padding: 2, borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }}
+              style={{ width: 28, height: 28, padding: 2, borderRadius: 4, border: '1px solid var(--border-1)', cursor: 'pointer' }}
             />
             <button className="btn ghost icon sm" title="Any color" aria-label="Any color" onClick={() => set({ filament_color: null })}
                     style={{ padding: '0 4px' }}>{Icons.x}</button>

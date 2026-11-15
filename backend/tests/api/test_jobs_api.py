@@ -1,5 +1,5 @@
 # backend/tests/api/test_jobs_api.py
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
 from app.models import Job
@@ -130,7 +130,6 @@ async def test_cancel_complete_job_fails(client, upload_3mf, create_printer):
 
 
 async def test_cancel_completed_job_is_rejected_and_leaves_it_complete(client, session_factory, create_job):
-    from app.models import Job
     job_id = await create_job()
     async with session_factory() as session:
         (await session.get(Job, job_id)).status = "complete"
@@ -162,7 +161,7 @@ async def test_get_slice_failures(client, upload_3mf, create_printer):
 async def test_unblock_clears_slice_failure_and_requeues(client, session_factory, upload_3mf, create_printer):
     """Unblocking must reset slice_failed so the job actually re-slices; otherwise
     the engine re-blocks it immediately with the stale error."""
-    from app.models import Job, JobPrinterConfig
+    from app.models import JobPrinterConfig
     from sqlalchemy import select
 
     file_id = await upload_3mf()
@@ -199,7 +198,6 @@ async def test_unblock_clears_slice_failure_and_requeues(client, session_factory
 async def test_cancel_running_job_stops_printer(client, session_factory, upload_3mf, create_printer):
     """Cancelling a job the printer is actively running must also stop the printer."""
     from unittest.mock import MagicMock
-    from app.models import Job
     from app.services.printer_manager import printer_manager
 
     file_id = await upload_3mf()
@@ -413,7 +411,6 @@ async def test_job_response_includes_estimate_fields(client, upload_3mf, create_
 async def test_cancel_job_clears_estimate_status(client, session_factory, upload_3mf, create_printer):
     """POST /jobs/{id}/cancel clears estimate_status when it is 'pending'."""
     from unittest.mock import MagicMock
-    from app.models import Job
 
     file_id = await upload_3mf()
     printer_id = await create_printer()
@@ -443,7 +440,7 @@ async def test_cancel_job_clears_estimate_status(client, session_factory, upload
 
 
 async def test_list_jobs_includes_materials_and_printers(client, session_factory):
-    from app.models import UploadedFile, Job, JobPrinterConfig, Printer
+    from app.models import UploadedFile, JobPrinterConfig, Printer
 
     # Build fixtures directly via the test session
     async with session_factory() as session:
@@ -501,7 +498,7 @@ async def test_job_details_returns_live_fields(client, upload_3mf, create_printe
 
 async def test_reorder_front_gives_lowest_position(client, session_factory):
     """POST /jobs/{id}/reorder with action='front' moves job ahead of all others."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -516,7 +513,7 @@ async def test_reorder_front_gives_lowest_position(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
@@ -530,7 +527,7 @@ async def test_reorder_front_gives_lowest_position(client, session_factory):
 
 async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
     """POST /jobs/{id}/reorder with action='promote' moves job one step up."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -545,7 +542,7 @@ async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
                  updated_at="2026-01-01T00:00:00")
         session.add_all([j1, j2])
         await session.commit()
-        j1_id, j2_id = j1.id, j2.id
+        j2_id = j2.id
         j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
@@ -559,7 +556,7 @@ async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
 
 async def test_reorder_rejects_non_queued_job(client, session_factory):
     """POST /jobs/{id}/reorder returns 422 for jobs not in queued/blocked status."""
-    from app.models import UploadedFile, Job
+    from app.models import UploadedFile
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -585,7 +582,7 @@ async def _seed_spool_warning_fixture(session_factory, estimate_grams):
     via the test session, wired so the job's JobPrinterConfig resolves (via
     _slot_for_config) to the printer's loaded_filaments[0] slot, which carries a
     spoolman_spool_id. Returns (job_id, printer_id)."""
-    from app.models import UploadedFile, Job, JobPrinterConfig, Printer
+    from app.models import UploadedFile, JobPrinterConfig, Printer
 
     async with session_factory() as session:
         f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
@@ -638,3 +635,81 @@ async def test_job_details_spool_warning_set_when_insufficient(client, session_f
     assert warning is not None
     assert "340" in warning["message"]
     assert "220" in warning["message"]
+
+
+# ---- list routes: query count does not grow with the number of jobs ------------------------------------------------
+
+class _QueryCounter:
+    """Counts SELECTs the test database runs inside a `with` block."""
+    def __init__(self, session_factory):
+        self._engine = session_factory.kw["bind"].sync_engine
+        self.selects = 0
+
+    def _on_execute(self, conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            self.selects += 1
+
+    def __enter__(self):
+        from sqlalchemy import event
+        event.listen(self._engine, "before_cursor_execute", self._on_execute)
+        return self
+
+    def __exit__(self, *exc):
+        from sqlalchemy import event
+        event.remove(self._engine, "before_cursor_execute", self._on_execute)
+
+
+async def test_the_queue_listing_names_each_jobs_printers_without_a_query_per_job(
+        client, session_factory, create_job, create_printer, upload_3mf):
+    file_id = await upload_3mf()
+    a, b = await create_printer(name="Alpha"), await create_printer(name="Beta")
+
+    async def listing():
+        with _QueryCounter(session_factory) as counter:
+            body = (await client.get("/api/v1/jobs")).json()
+        return body, counter.selects
+
+    first = await create_job(file_id=file_id, printer_id=a)
+    one, selects_for_one = await listing()
+    for printer in (b, a, b, a, b):
+        await create_job(file_id=file_id, printer_id=printer)
+    six, selects_for_six = await listing()
+
+    assert [j["eligible_printers"] for j in one] == [[{"id": a, "name": "Alpha"}]]
+    assert [j["eligible_printers"][0]["name"] for j in six] == ["Alpha", "Beta", "Alpha", "Beta", "Alpha", "Beta"]
+    assert six[0]["id"] == first
+    assert selects_for_six == selects_for_one             # the listing costs the same however long the queue is
+
+
+async def test_history_is_enriched_with_file_printer_and_project_names_in_a_fixed_number_of_queries(
+        client, session_factory, create_job, create_printer, upload_3mf):
+    from app.models import Project
+    # Every job has its own printer and project, so those are not answered from the session's identity map.
+    ids = []
+    for n in range(4):
+        printer = await create_printer(name=f"Printer {n}")
+        ids.append(await create_job(file_id=await upload_3mf(filename=f"part{n}.3mf"), printer_id=printer))
+        async with session_factory() as s:
+            project = Project(name=f"Project {n}", created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00")
+            s.add(project)
+            await s.flush()
+            job = await s.get(Job, ids[-1])
+            job.status, job.updated_at = "complete", f"2026-01-0{n + 1}T00:00:00+00:00"
+            if n:                                       # the oldest one ran nowhere, for no project
+                job.assigned_printer_id, job.project_id = printer, project.id
+            await s.commit()
+
+    async def history(limit):
+        with _QueryCounter(session_factory) as counter:
+            body = (await client.get(f"/api/v1/jobs/history?limit={limit}")).json()
+        return body, counter.selects
+
+    newest_only, selects_for_one = await history(1)
+    rows, selects_for_four = await history(4)
+
+    assert [r["id"] for r in rows] == ids[::-1]                                            # newest first
+    assert [(r["file_name"], r["printer_name"], r["project_name"]) for r in rows] == [
+        ("part0.3mf", "Printer 3", "Project 3"), ("part0.3mf", "Printer 2", "Project 2"),
+        ("part0.3mf", "Printer 1", "Project 1"), ("part0.3mf", None, None)]     # identical uploads are one library file
+    assert [r["id"] for r in newest_only] == [ids[-1]]
+    assert selects_for_four == selects_for_one            # a longer page costs no more queries

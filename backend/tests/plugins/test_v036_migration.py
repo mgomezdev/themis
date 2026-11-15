@@ -82,4 +82,7 @@ async def test_a_fresh_install_and_malformed_json_are_fine(tmp_path):
         await conn.execute(text("INSERT INTO orders (order_type, customer, title, on_hold, parts, created_at, updated_at) "
                                 "VALUES ('internal','c','t',0,'not json','2026-01-01','2026-01-01')"))
         await v036_inventory_refs.up(conn)                                                  # must not raise on null / junk JSON
+        # ...and leaves what it could not parse exactly as it found it.
+        assert (await conn.execute(text("SELECT loaded_filaments FROM printers"))).scalar_one() == "null"
+        assert (await conn.execute(text("SELECT parts FROM orders"))).scalar_one() == "not json"
     await engine.dispose()

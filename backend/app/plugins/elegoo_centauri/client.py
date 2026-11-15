@@ -259,7 +259,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 label="Bed type",
                 field_type="number",
                 default=4,
-                required=False,
+                required=False, connects=False,
                 help_text="Elegoo plate type code (PrintPlatformType) sent when starting a print.",
             ),
             ConnectionField(
@@ -267,7 +267,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 label="Auto bed leveling",
                 field_type="number",
                 default=1,
-                required=False,
+                required=False, connects=False,
                 help_text="1 = run bed-flatness calibration before each print, 0 = skip.",
             ),
             ConnectionField(
@@ -275,7 +275,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 label="Timelapse",
                 field_type="number",
                 default=0,
-                required=False,
+                required=False, connects=False,
                 help_text="1 = record a timelapse during the print, 0 = off.",
             ),
         ]

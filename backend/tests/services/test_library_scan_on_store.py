@@ -149,8 +149,12 @@ async def test_a_backend_hash_means_a_touched_but_identical_file_is_not_reparsed
         lib.put("m.3mf", io.BytesIO(_3mf()), overwrite=True)            # new mtime, same bytes
         row = (await s.execute(select(UploadedFile))).scalars().one()
         row.mtime = 1.0                                                    # as if the indexed mtime were old
-        with patch.object(LibraryScanner, "parse_plates", side_effect=AssertionError("reparsed")):
-            await sc.scan()
+        with patch.object(LibraryScanner, "parse_plates", side_effect=AssertionError("reparsed")) as parse:
+            summary = await sc.scan()
+        rows = (await s.execute(select(UploadedFile))).scalars().all()
+    parse.assert_not_called()
+    assert (summary["added"], summary["removed"], summary["moved"]) == (0, 0, 0)
+    assert [r.original_filename for r in rows] == ["m.3mf"]               # still the one indexed file
 
 
 async def test_a_moved_file_is_recognised_by_hash_through_the_store(tmp_path, session_factory):

@@ -1,9 +1,9 @@
-"""v057: printers.slice_overrides, NULL for existing rows, idempotent, removable."""
+"""v072: printers.slice_overrides, NULL for existing rows, idempotent, removable."""
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v057_printer_slice_overrides as mig
+from app.migrations import v072_printer_slice_overrides as mig
 from tests.v032_fixture import build_v032_fixture_db
 
 

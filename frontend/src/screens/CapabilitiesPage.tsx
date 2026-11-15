@@ -81,7 +81,7 @@ export function CapabilitiesPage() {
               )}
               {c.providers.length === 0 && c.status !== 'dormant' && <span className="small muted">No plugin provides this</span>}
               {c.dormant_default && (
-                <div role="alert" className="small" style={{ color: 'var(--warn)' }}>
+                <div role="alert" className="small text-warn">
                   The default provider “{c.dormant_default.plugin_id}” is unavailable: {REASON[c.dormant_default.reason]}. Work that needs it is
                   blocked until you choose another — Themis never picks one for you.
                 </div>

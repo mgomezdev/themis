@@ -1,10 +1,11 @@
 """v051 (BIZ-291): saved slices keep matching after the provider became part of every cache key."""
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.migrations import v051_slice_cache_provider_keys as mig
-from app.migrations.runner import rollback_last, run_migrations
+from app.migrations.runner import run_migrations
+from tests.migration_helpers import rollback_to
 from app.models import SlicedVersion, UploadedFile
 from app.services import slice_cache
 
@@ -53,13 +54,7 @@ async def test_v051_rewrites_keys_to_the_current_shape_and_down_restores_the_old
             # The migrated keys are byte-for-byte what the production key builder produces now.
             assert keys == [slice_cache.cache_key(_inputs(c)) for c in CASES]
             assert keys != [_legacy_key(c) for c in CASES]
-            await rollback_last(conn)                                  # v057 (newer than the migration under test)
-            await rollback_last(conn)                                  # v056
-            await rollback_last(conn)                                  # v055
-            await rollback_last(conn)                                  # v054
-            await rollback_last(conn)                                  # v053 (newer than the migration under test)
-            await rollback_last(conn)                                  # v052
-            await rollback_last(conn)                                  # v051
+            await rollback_to(conn, 50)
             keys = [r[0] for r in (await conn.execute(text("SELECT cache_key FROM sliced_versions ORDER BY id"))).fetchall()]
             assert keys == [_legacy_key(c) for c in CASES]
     finally:

@@ -42,22 +42,24 @@ def flush_lock() -> asyncio.Lock:
 
 
 def enqueue(session: AsyncSession, provider_id: str, spool_ref: str, target_g: float, *, job_id: int | None,
-            printer_id: int | None, source: str, pre_weight_g: float | None = None) -> InventoryPendingWrite:
+            printer_id: int | None, source: str, pre_weight_g: float | None = None, attempt_id: str | None = None) -> InventoryPendingWrite:
     """Add the row in the caller's transaction (no commit). `pre_weight_g` (the weight the target was computed from)
     switches the conflict guard on for this row."""
     row = InventoryPendingWrite(provider=provider_id, spool_ref=spool_ref, target_g=max(0.0, float(target_g)),
                                 job_id=job_id, printer_id=printer_id, source=source, created_at=_now(),
-                                pre_weight_g=None if pre_weight_g is None else float(pre_weight_g))
+                                pre_weight_g=None if pre_weight_g is None else float(pre_weight_g), attempt_id=attempt_id or None)
     session.add(row)
     return row
 
 
-async def exists_for_job(session: AsyncSession, provider_id: str, spool_ref: str, job_id: int) -> bool:
-    """Has this job's deduction already been enqueued for the spool (in any state)? The idempotency check that keeps a
-    redelivered completion event from deducting twice."""
+async def exists_for_job(session: AsyncSession, provider_id: str, spool_ref: str, job_id: int, attempt_id: str | None = None) -> bool:
+    """Has this job's (print attempt's) deduction already been enqueued for the spool (in any state)? The idempotency check that keeps
+    a redelivered completion event from deducting twice. Each print attempt deducts on its own (BIZ-366 v2); `attempt_id` None is a
+    job settled without one (before attempts existed)."""
+    attempt = (InventoryPendingWrite.attempt_id.is_(None) if not attempt_id else InventoryPendingWrite.attempt_id == attempt_id)
     return (await session.execute(select(InventoryPendingWrite.id).where(
         InventoryPendingWrite.provider == provider_id, InventoryPendingWrite.spool_ref == spool_ref,
-        InventoryPendingWrite.job_id == job_id).limit(1))).first() is not None
+        InventoryPendingWrite.job_id == job_id, attempt).limit(1))).first() is not None
 
 
 def flush_soon(factory: async_sessionmaker[AsyncSession]) -> None:

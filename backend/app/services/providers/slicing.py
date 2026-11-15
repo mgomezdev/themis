@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from .format_provider import FormatProvider
 
@@ -31,6 +31,7 @@ class Preset:
     name: str
     compatible_printers: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    height_mm: float | None = None        # machine presets: printable height (bed Z), when the provider reports it (BIZ-363)
 
 
 @dataclass
@@ -102,8 +103,6 @@ def default_compatible_presets(catalog: Catalog, machine_preset: str, kind: str)
 
 
 class SlicingProvider(ABC):
-    ARRANGE: ClassVar[bool] = False
-    PACK_MODELS: ClassVar[bool] = False
     PREPARED_PROJECT: ClassVar[bool] = False
     TOOL_MAPPING: ClassVar[bool] = False       # can route a 3MF's filaments to physical tool heads (apply_tool_mapping)
     SUGGEST_PROFILES: ClassVar[bool] = False   # can suggest machine profiles / nozzle variants for a printer model (BIZ-294)
@@ -150,24 +149,14 @@ class SlicingProvider(ABC):
         """Ask the provider to rebuild its catalog from source (returns immediately; poll `catalog_health`)."""
 
     @abstractmethod
-    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
-        """Slice and write the artifact into `output_dir`; returns its path."""
+    def slice(self, spec: SliceSpec, output_dir: Path, *, should_stop: "Callable[[], bool] | None" = None) -> str:
+        """Slice and write the artifact into `output_dir`; returns its path. `should_stop` is polled while waiting: once it returns
+        True the provider abandons the slice and raises SlicingProviderError (the neutral producer reports CANCELLED)."""
 
     def compatible_presets(self, catalog: Catalog, machine_preset: str, kind: str) -> list[Preset]:
         """Presets of `kind` ("process" | "filament") usable with `machine_preset`. Default: the preset names the
         machine in its `compatible_printers`; a provider with richer rules overrides this."""
         return default_compatible_presets(catalog, machine_preset, kind)
-
-    def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
-        raise NotImplementedError("provider does not support ARRANGE")
-
-    def pack_models(
-        self, paths: list[Path], *, machine_ref: str | None = None, process_ref: str | None = None,
-        filament_refs: list[str] | None = None, bed: tuple[float, float, float] | None = None,
-    ) -> bytes:
-        """Arrange loose models into a multi-plate project: by presets (machine/process/filaments refs)
-        or, without presets, by explicit bed dimensions (x, y, z)."""
-        raise NotImplementedError("provider does not support PACK_MODELS")
 
 
 # The slicing provider is whichever plugin the host resolves for the `gcode.produce` capability (BIZ-290): core names none. The plugin

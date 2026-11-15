@@ -1,20 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getOverrideSettings, type OverrideSetting } from '../api/queue';
-
-let settingsPromise: Promise<OverrideSetting[]> | null = null;
-
-/** The overridable settings, fetched once per page load (a failed fetch is retried next time). */
-function loadSettings(): Promise<OverrideSetting[]> {
-  if (!settingsPromise) {
-    settingsPromise = Promise.resolve().then(() => getOverrideSettings())
-      .then(s => { if (!Array.isArray(s)) throw new Error('bad override settings'); return s; })
-      .catch(e => { settingsPromise = null; throw e; });
-  }
-  return settingsPromise;
-}
-
-/** Test hook: forget the cached settings list. */
-export function resetOverrideSettingsCache() { settingsPromise = null; }
+import type { OverrideSetting } from '../api/queue';
+import { loadOverrideSettings } from './overrideSettings';
 
 function defaultValue(s: OverrideSetting): string {
   if (s.kind === 'bool') return '1';
@@ -44,7 +30,7 @@ export function SliceOverridesEditor({ value, onChange, title, hint, testId = 's
 
   useEffect(() => {
     let alive = true;
-    loadSettings().then(s => { if (alive) setSettings(s); }).catch(() => { if (alive) setSettings([]); });
+    loadOverrideSettings().then(s => { if (alive) setSettings(s); }).catch(() => { if (alive) setSettings([]); });
     return () => { alive = false; };
   }, []);
 

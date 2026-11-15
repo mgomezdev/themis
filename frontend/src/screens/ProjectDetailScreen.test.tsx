@@ -92,3 +92,35 @@ describe('ProjectDetailScreen share panel', () => {
     expect(putCall![0]).toBe('/api/v1/projects/42/share');
   });
 });
+
+describe('ProjectDetailScreen file drop', () => {
+  it('uploads a file dropped on the page, adds it to the project and reloads', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    let added = false;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/files/upload' && init?.method === 'POST')
+        return new Response(JSON.stringify({ id: 7, original_filename: 'bracket.stl', kind: 'stl' }), { status: 200 });
+      if (url === '/api/v1/projects/42/items' && init?.method === 'POST') {
+        added = true;
+        return new Response(JSON.stringify({ id: 1, file_id: 7, quantity: 1 }), { status: 201 });
+      }
+      if (url.includes('/jobs')) return new Response('[]', { status: 200 });
+      if (url.match(/\/api\/v1\/projects\/42$/)) {
+        const items = added ? [{ id: 1, file_id: 7, file_name: 'bracket.stl', quantity: 1, sort_order: 0, kind: 'stl',
+          jobs_total: 0, jobs_complete: 0, filament_type: null, filament_color: null }] : [];
+        return new Response(JSON.stringify({ ...BASE_PROJECT, items }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderScreen();
+    await waitFor(() => screen.getByText('Test Project'));
+    fireEvent.drop(screen.getByTestId('file-drop-zone'),
+                   { dataTransfer: { files: [new File(['x'], 'bracket.stl')], types: ['Files'] } });
+
+    await waitFor(() => expect(screen.getByText('Parts (1)')).toBeTruthy());
+    const post = fetchMock.mock.calls.find(([u, i]) => u === '/api/v1/projects/42/items' && i?.method === 'POST')!;
+    expect(JSON.parse(post[1]!.body as string)).toEqual({ file_id: 7, quantity: 1 });
+  });
+});

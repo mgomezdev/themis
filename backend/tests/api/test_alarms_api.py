@@ -1,7 +1,6 @@
 """Alarm feed API, fleet badge, settings, and the PrinterManager → alarms path."""
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.services import alarms as alarm_service
 from app.services.abstract_printer_client import Alarm, PrinterCapabilities
@@ -158,6 +157,8 @@ async def test_a_client_that_raises_does_not_break_state_handling(client, create
         await _state_change(pid)                                       # logged, not raised
     finally:
         printer_manager._session_factory = None
+    mock.get_alarms.assert_called_once()                               # the failing client really was asked
+    assert (await client.get("/api/v1/alarms")).json() == []           # and its failure recorded nothing
 
 
 async def test_an_alarms_event_published_on_the_bus_is_recorded(client, session_factory, create_printer, monkeypatch):

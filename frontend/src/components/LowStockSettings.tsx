@@ -60,7 +60,7 @@ export function LowStockSettings({ materials }: { materials: InvMaterial[] }) {
 
       {!loaded ? <div className="muted small">Loading…</div> : (
         <div className="col gap-3">
-          <label className="row gap-2" style={{ alignItems: 'center' }}>
+          <label className="row gap-2">
             <span style={{ width: 150, fontSize: 13 }}>Default threshold</span>
             <input className="input" type="number" min="0" step="1" placeholder="Off" aria-label="Default threshold (g)"
                    value={defaultG} onChange={e => setDefaultG(e.target.value)} style={{ width: 110 }} />
@@ -91,7 +91,7 @@ export function LowStockSettings({ materials }: { materials: InvMaterial[] }) {
             </div>
           </div>
 
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             <button className="btn sm primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save thresholds'}</button>
             {msg && <span role={msg.ok ? 'status' : 'alert'} className="small" style={{ color: msg.ok ? 'var(--ok)' : 'var(--err)' }}>{msg.text}</span>}
           </div>
