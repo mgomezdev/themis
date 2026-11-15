@@ -722,7 +722,7 @@ async def update_printer(
         printer.enabled = body.enabled
     if body.queue_on is not None:
         printer.queue_on = body.queue_on
-        pass                # a person decided: Themis' own reason no longer applies
+        printer.queue_paused_reason = None                # a person decided: Themis' own reason no longer applies
     if body.loaded_filaments is not None:
         # whole-list replace from the client: resolve each slot against what is stored (dual-write, see inventory/refs.py)
         printer.loaded_filaments = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)

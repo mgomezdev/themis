@@ -402,6 +402,20 @@ async def test_a_part_assumed_failed_on_two_printers_is_not_held_and_a_later_rep
     assert [e["resolution"] for e in log] == ["requeued", "requeued", "requeued"]
 
 
+async def test_an_assumed_failure_after_a_reported_one_on_another_printer_is_not_held(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A")
+    b = await create_printer(name="B")
+    pid, item, job1 = await waivers._project_job(client, upload_3mf, [a, b], tmp_path, qty=1)
+    reported = await waivers._fail_on(client, session_factory, tmp_path, job1, a, item)        # a person: failed on A
+    assert reported["requeued_job_ids"] and reported["held"] == []
+    second = await _fail_assumed(client, session_factory, tmp_path, reported["requeued_job_ids"][0], b)   # nobody said: on B
+    assert second["requeued_job_ids"]                                                          # a default never holds a part
+    assert await _counts(session_factory, item) == (0, 2, 0)
+    log = (await client.get(f"/api/v1/projects/{pid}/failures")).json()
+    assert [(e["printer_id"], e["resolution"]) for e in log] == [(a, "requeued"), (b, "requeued")]
+
+
 # ---- 9. POST /jobs/{id}/results --------------------------------------------------------------------------------------
 
 async def _report(client, p, job_id, failures: dict[int, int]):
