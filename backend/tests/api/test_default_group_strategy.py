@@ -67,3 +67,51 @@ async def test_out_of_the_box_a_project_is_packed_by_the_printer_that_picks_it_u
         (job,) = (await s.execute(select(Job).where(Job.project_id == pid))).scalars().all()
     assert job.pool_group_id == g["id"] and job.project_item_quantities == f'{{"{item}": 2}}'   # 256 mm bed: two parts
     assert (await _groups(client, pid))[0]["pool"] == {"done": 0, "printing": 2, "left": 3}
+
+
+async def test_printers_picked_at_generate_become_the_pools_targets(client, upload_3mf, create_printer, session_factory, tmp_path):
+    """The Generate dialog sends the eligible printers with the request. A pool is claimed later, by its saved targets: without
+    saving them, a default (pool) project would queue and then never print."""
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid = (await client.post("/api/v1/projects", json={"name": "Picked"})).json()["id"]
+    fid = await upload_3mf(filename="part.stl", data=b"solid part\nendsolid\n")
+    await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid, "quantity": 2})
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=packer):
+        r = await client.post(f"/api/v1/projects/{pid}/generate",
+                              json={"eligible_printer_ids": [a, 99999], "process_preset": "0.2"})
+    assert r.status_code == 200, r.text
+    (g,) = await _groups(client, pid)
+    assert [(t["target_key"], t["process_profile"]) for t in g["targets"]] == [(str(a), "0.2")]      # the unknown id is dropped
+    assert r.json()["groups"] == [{"id": g["id"], "pool": True}]                                    # takeable: no warning
+
+    await _claim(session_factory, _engine(session_factory, [a]), a, tmp_path, packer)
+    async with session_factory() as s:
+        assert len((await s.execute(select(Job).where(Job.project_id == pid))).scalars().all()) == 1
+
+
+async def test_generating_a_pool_nothing_can_take_says_so(client, upload_3mf, tmp_path):
+    pid = (await client.post("/api/v1/projects", json={"name": "Nobody"})).json()["id"]
+    fid = await upload_3mf(filename="part.stl", data=b"solid part\nendsolid\n")
+    await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid, "quantity": 2})
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=PoolPacker()):
+        r = await client.post(f"/api/v1/projects/{pid}/generate", json={})
+    assert r.status_code == 200 and r.json()["jobs"] == []
+    (group,) = r.json()["groups"]
+    assert group["pool"] is True and "no eligible printer" in group["warning"]
+
+
+async def test_saved_targets_are_not_replaced_by_the_requests(client, upload_3mf, create_printer, tmp_path):
+    a = await create_printer(name="A")
+    b = await create_printer(name="B")
+    pid = (await client.post("/api/v1/projects", json={"name": "Saved"})).json()["id"]
+    (g,) = await _groups(client, pid)
+    await client.patch(f"/api/v1/projects/{pid}/groups/{g['id']}", json={"targets": [{"target_key": str(a), "process_profile": "0.2"}]})
+    fid = await upload_3mf(filename="part.stl", data=b"solid part\nendsolid\n")
+    await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid, "quantity": 1})
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=PoolPacker()):
+        await client.post(f"/api/v1/projects/{pid}/generate", json={"eligible_printer_ids": [b], "process_preset": "0.3"})
+    assert [t["target_key"] for t in (await _groups(client, pid))[0]["targets"]] == [str(a)]

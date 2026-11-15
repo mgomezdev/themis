@@ -1,8 +1,11 @@
 // The Builder's Queue project outcome (Review tab): the jobs added (with any group warnings), or the error + Retry.
 import { Icons } from '../icons';
+import { generateHeadline } from '../../api/projects';
 
-export function QueueSuccess({ jobCount, warnings, onOpenQueue, onOpenProject }: {
+export function QueueSuccess({ jobCount, pools = 0, warnings, onOpenQueue, onOpenProject }: {
   jobCount: number;
+  /** Pool groups queued for printers to pack (they add no jobs yet). */
+  pools?: number;
   /** One per group that queued with a warning (BIZ-360). */
   warnings: string[];
   onOpenQueue: () => void;
@@ -16,7 +19,7 @@ export function QueueSuccess({ jobCount, warnings, onOpenQueue, onOpenProject }:
     }}>
       <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
       <span style={{ fontSize: 14, flex: 1 }}>
-        {jobCount} job{jobCount !== 1 ? 's' : ''} added to queue
+        {generateHeadline(jobCount, pools, 'added to queue')}
         {warnings.map(w => <span key={w} className="tiny" style={{ display: 'block', color: 'var(--warn)' }}>{w}</span>)}
       </span>
       <button className="btn sm" onClick={onOpenQueue}>Queue</button>

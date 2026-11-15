@@ -13,6 +13,7 @@ import {
   getProject, getProjectJobs, generateProject, updateProjectPart, addProjectItem, type GenerateOut,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
   patchProject, type Project, type ProjectJob, type ProjectShare,
+  pooledGroups, generateWarnings, generateHeadline,
 } from '../api/projects';
 import { PaymentsCard } from '../components/PaymentsCard';
 import { LinkJobsModal } from '../components/LinkJobsModal';
@@ -44,7 +45,7 @@ export function ProjectDetailScreen() {
   const [linking, setLinking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [generateResult, setGenerateResult] = useState<{ jobCount: number; files: GenerateOut['files'] } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ jobCount: number; pools: number; warnings: string[]; files: GenerateOut['files'] } | null>(null);
   const [allowCached, setAllowCached] = useState(true);
   const [saveSlice, setSaveSlice] = useState(false);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
@@ -166,7 +167,7 @@ export function ProjectDetailScreen() {
       const t = splitTargets(eligibleKeys);
       const result = await generateProject(projectId, t.printerIds, processPreset, { allowCached, saveSlice },
                                            { modelUuids: t.modelUuids, anyPrinter: t.anyPrinter });
-      setGenerateResult({ jobCount: result.jobs.length, files: result.files ?? [] });
+      setGenerateResult({ jobCount: result.jobs.length, pools: pooledGroups(result), warnings: generateWarnings(result), files: result.files ?? [] });
       reload();
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : String(e));
@@ -418,7 +419,8 @@ export function ProjectDetailScreen() {
             }}>
               <span className="text-ok">{Icons.check}</span>
               <span style={{ fontSize: 13, flex: 1 }}>
-                {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
+                {generateHeadline(generateResult.jobCount, generateResult.pools, 'queued')}
+                {generateResult.warnings.map(w => <span key={w} className="tiny" style={{ display: 'block', color: 'var(--warn)' }}>{w}</span>)}
                 {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
                   <span key={f.id} className="tiny muted" data-testid="generate-cache-info" style={{ display: 'block' }}>
                     {f.original_filename}:{f.pack_reused ? ' reused previous pack' : ''}
