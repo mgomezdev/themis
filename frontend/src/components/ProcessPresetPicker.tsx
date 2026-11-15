@@ -3,7 +3,8 @@ import { getPrinterProfiles } from '../api/queue';
 
 /** OrcaSlicer process preset picker for the project generate step. Offers only
  * presets compatible with every selected eligible printer, since generate_project
- * applies a single process_preset across all of them. */
+ * applies a single process_preset across all of them. Empty = each printer's own
+ * default process profile (BIZ-358). */
 export function ProcessPresetPicker({ printerIds, value, onChange }: {
   printerIds: number[];
   value: string | null;
@@ -48,7 +49,7 @@ export function ProcessPresetPicker({ printerIds, value, onChange }: {
         value={value ?? ''}
         onChange={e => onChange(e.target.value || null)}
       >
-        <option value="">— select process —</option>
+        <option value="">Printer default</option>
         {profiles.map(p => <option key={p} value={p}>{p}</option>)}
       </select>
       {profiles.length === 0 && (

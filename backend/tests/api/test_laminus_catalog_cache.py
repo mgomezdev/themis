@@ -1,5 +1,4 @@
 """GET /laminus/catalog, POST /laminus/catalog/rescan, catalog_service.get_cached_catalog and the startup warm-up."""
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 

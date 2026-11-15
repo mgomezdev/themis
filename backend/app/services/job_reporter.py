@@ -11,21 +11,79 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from pydantic import ValidationError
 
 from ..models import Job, Printer
 from . import job_details
+from .filament_usage import UsageReport
 
 KINDS = ("started", "complete", "failed", "blocked")
+REPORT_FIELD = "filament_usage_report"     # the plugin's latest usage report for the current attempt (BIZ-366 v2)
+REPORTS_FIELD = "filament_usage_reports"   # core's copy of each attempt's latest report ({attempt_id: report}): settlement reads it
 
 
 class JobReportError(Exception):
     """The report cannot be accepted: unknown job or kind, a job on another plugin's printer, a disabled plugin, a wrong state."""
 
 
+async def _in_cancel_grace(session, job_id: int, printer_id: int, context, attempt_id: str) -> bool:
+    """A cancelled print's attempt still takes reports until it is settled (its `job.attempt_ended` is delivered after a grace period,
+    so the plugin's final summary, sent once the printer stopped, still counts)."""
+    from ..models import EventOutbox
+    job = await session.get(Job, job_id)
+    if job is None or job.status != "cancelled" or not isinstance(context, dict) or context.get("attempt_id") != attempt_id \
+            or context.get("printer_id") != printer_id:
+        return False
+    accounting = (await job_details.get_details_in(session, job_id, ["filament_accounting"], origin="core"))["filament_accounting"]["value"]
+    if isinstance(accounting, dict) and attempt_id in (accounting.get("attempts") or {}):
+        return False                                  # already settled
+    return (await session.execute(select(EventOutbox.id).where(
+        EventOutbox.dedup_key == f"job.attempt_ended:{attempt_id}").limit(1))).first() is not None
+
+
 class JobReporter:
     def __init__(self, plugin_id: str) -> None:
         self.plugin_id = plugin_id
+
+    async def report_usage(self, job_id: int, report: Mapping[str, Any], *, printer_id: int | None = None) -> bool:
+        """Persist the plugin's cumulative per-slot usage (contract v2, `filament_usage.UsageReport`) for the current physical print.
+
+        Plugins read `filament_usage_context.attempt_id` through ctx.job_details, then send monotonically
+        increasing revisions, and the last one before reporting `complete` / `failed` (Themis settles the attempt when it ends). Duplicates/out-of-order revisions return False; a report after the print ended (the job is no
+        longer printing on this printer) raises JobReportError, so a late final summary is never mistaken for a duplicate.
+        Reports do not deduct by themselves;
+        successful completion freezes the chosen allocation and drives the inventory outbox.
+        """
+        from ..eventing.hub import hub
+        try:
+            parsed = UsageReport.model_validate(report)
+        except ValidationError as exc:
+            raise JobReportError(f"invalid filament usage report: {exc}") from exc
+        _, printer_id = await self._job_and_printer(job_id, printer_id)
+        async with hub.session_factory() as session:
+            # A conditional write serializes this report with completion and other reports on SQLite.
+            # No state/timestamp change: retain the physical attempt's identity.
+            guard = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing",
+                func.coalesce(Job.assigned_printer_id, Job.printed_on_printer_id) == printer_id).values(updated_at=Job.updated_at))
+            context = (await job_details.get_details_in(session, job_id, ["filament_usage_context"], origin="core"))["filament_usage_context"]["value"]
+            if guard.rowcount == 0 and not await _in_cancel_grace(session, job_id, printer_id, context, parsed.attempt_id):
+                job = await session.get(Job, job_id)
+                raise JobReportError(f"job {job_id} is no longer printing on printer {printer_id} "
+                                     f"(status {getattr(job, 'status', None)!r}): its usage was already settled from the estimate "
+                                     "or an earlier report; send reports before completing the job")
+            if context is None or parsed.attempt_id != context["attempt_id"]:
+                raise JobReportError("filament usage report belongs to another or unknown print attempt")
+            saved = (await job_details.get_details_in(session, job_id, [REPORTS_FIELD], origin="core"))[REPORTS_FIELD]["value"]
+            reports = dict(saved) if isinstance(saved, dict) else {}
+            current = reports.get(parsed.attempt_id)
+            if isinstance(current, dict) and current.get("revision", -1) >= parsed.revision:
+                return False
+            reports[parsed.attempt_id] = parsed.model_dump()
+            await job_details.set_details(session, job_id, self.plugin_id, {REPORT_FIELD: parsed.model_dump()})
+            await job_details.set_details(session, job_id, "core", {REPORTS_FIELD: reports})
+            await session.commit()
+        return True
 
     async def _job_and_printer(self, job_id: int, printer_id: int | None = None) -> tuple[Job, int]:
         from ..eventing.hub import hub

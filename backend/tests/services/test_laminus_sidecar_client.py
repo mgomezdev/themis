@@ -183,7 +183,8 @@ def test_pack_stls_returns_bytes(tmp_path):
 
 
 def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
-    import json, re
+    import json
+    import re
     (tmp_path / "x").mkdir()
     (tmp_path / "y").mkdir()
     a1, a2 = tmp_path / "x" / "bracket.stl", tmp_path / "y" / "bracket.stl"   # same basename, different library files
@@ -204,7 +205,8 @@ def test_pack_sends_each_stl_once_with_a_quantity_and_a_unique_name(tmp_path):
 
 
 def test_pack_upload_names_drop_characters_the_sidecar_cannot_match(tmp_path):
-    import json, re
+    import json
+    import re
     from app.services.providers.laminus.sidecar_client import _UNSAFE_UPLOAD_CHARS
     # quotes can't be Windows filenames, so the sanitizer is checked directly with one
     assert _UNSAFE_UPLOAD_CHARS.sub("_", "a" + chr(34) + "b;c" + chr(10) + "d" + chr(13) + "e" + chr(0) + "f" + chr(9) + "g" + chr(127) + "h") == "a_b_c_d_e_f_g_h"

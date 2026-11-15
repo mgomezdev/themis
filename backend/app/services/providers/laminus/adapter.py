@@ -26,6 +26,7 @@ def _preset(raw: dict) -> Preset:
         name=raw.get("name") or "",
         compatible_printers=list(raw.get("compatible_printers") or []),
         raw=raw,
+        height_mm=float(raw["bed_size_z"]) if isinstance(raw.get("bed_size_z"), (int, float)) and raw["bed_size_z"] > 0 else None,
     )
 
 

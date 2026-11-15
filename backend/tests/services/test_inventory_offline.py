@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.webhook_helpers import destination
-from app.models import InventoryPendingWrite
 from app.plugins.host import plugin_host
 from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT, InventoryProviderError
 from app.services.inventory import cache, outbox, read, snapshots, sync, tasks

@@ -1,6 +1,5 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 from tests.waiting import settle_events
 
@@ -39,7 +38,6 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
-    from app.services.inventory import tasks as inventory_tasks
     await settle_events(session_factory)
 
     assert resp.status_code == 200
@@ -286,7 +284,6 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, ses
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
-    from app.services.inventory import tasks as inventory_tasks
     await settle_events(session_factory)
 
     assert resp.status_code == 200
@@ -318,7 +315,6 @@ async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, 
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
-    from app.services.inventory import tasks as inventory_tasks
     await settle_events(session_factory)
 
     assert resp.status_code == 200

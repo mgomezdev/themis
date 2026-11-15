@@ -7,7 +7,6 @@ import pytest
 from tests.slicing_env import slicing_provider
 
 from app.models import JobPrinterConfig
-from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
 from app.services.slicer_service import SlicerService
 from tests.fake_providers import FakeSlicingProvider

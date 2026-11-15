@@ -2,7 +2,6 @@
 direct-start gate shared with upload-and-print. Clients are mocks here; the real FTPS/Moonraker client code runs
 against virtual printers in tests/services/test_printer_file_clients.py."""
 import asyncio
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

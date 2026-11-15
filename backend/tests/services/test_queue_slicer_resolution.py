@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models import Job, Printer
+from app.models import Printer
 from app.services import slice_cache
 from app.services.providers.slicing import SlicingProviderError
 from tests.fake_providers import FakeSlicingProvider

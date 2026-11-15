@@ -1,5 +1,4 @@
 """BIZ-291: the manual slices (verify-slice, complete-manually) use the printer's slicer, like the queue does."""
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.api.routes.jobs import _build_slice_request
@@ -34,3 +33,12 @@ def test_the_manual_slice_carries_the_printer_bed():
     printer.bed_x_mm, printer.bed_y_mm = 220.0, 230.0
     with patch("app.services.providers.slicing.default_provider_id", return_value="a"):
         assert _build_slice_request(job, config, printer, f, "Machine 0.4").bed_mm == (220.0, 230.0, 250.0)
+
+
+def test_the_manual_slice_uses_the_printer_default_process_for_a_printer_default_config():
+    job, config, printer, f = _rows(None)
+    config.print_profile, printer.default_process_profile = "", "P-A"        # BIZ-358: "" = Printer default
+    with patch("app.services.providers.slicing.default_provider_id", return_value="a"):
+        assert _build_slice_request(job, config, printer, f, "Machine 0.4").process_preset == "P-A"
+        config.print_profile = "P-B"
+        assert _build_slice_request(job, config, printer, f, "Machine 0.4").process_preset == "P-B"

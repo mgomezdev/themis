@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
@@ -33,6 +32,18 @@ async def test_broadcast_sends_to_connections():
     call_args = mock_ws.send_json.call_args[0][0]
     assert call_args["type"] == "printer_state"
     assert call_args["data"]["id"] == 1
+
+
+async def test_printer_configured_goes_only_to_fleet_readers():
+    """BIZ-369: the setup result carries connection hints (IPs), so it is scoped like printer telemetry."""
+    from unittest.mock import AsyncMock
+    from app.api.websocket import ConnectionManager
+    mgr = ConnectionManager()
+    reader, other = AsyncMock(), AsyncMock()
+    mgr.active_connections += [(reader, ["fleet:read"]), (other, ["jobs:read"])]
+    await mgr.broadcast("printer_configured", {"printer_id": 1, "configured": False, "config_error": "Couldn't reach 10.0.0.9"})
+    reader.send_json.assert_called_once()
+    other.send_json.assert_not_called()
 
 
 # --- /ws auth (Task 6) -------------------------------------------------------
@@ -108,7 +119,7 @@ def test_ws_accepts_with_valid_key(tmp_path):
     _wire_app_to_db(db_path)
 
     client = TestClient(app)
-    with client.websocket_connect(f"/ws?key={raw}") as ws:
+    with client.websocket_connect(f"/ws?key={raw}"):
         assert len(connection_manager.active_connections) == 1
 
 

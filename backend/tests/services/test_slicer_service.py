@@ -3,7 +3,7 @@ from tests.catalog_helpers import cached_raw, prime_catalog
 import struct
 import zipfile as _zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

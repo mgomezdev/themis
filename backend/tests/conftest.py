@@ -1,5 +1,5 @@
+import asyncio
 import io
-import json
 import os
 import zipfile
 from collections.abc import AsyncGenerator
@@ -139,6 +139,31 @@ def _laminus_unconfigured_by_default(request, monkeypatch):
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _settle_queue_engines(monkeypatch):
+    """A test that makes a QueueEngine claim work leaves slice / upload / notification tasks in flight. The engine keeps
+    them referenced (QueueEngine._spawn) and itself outlives the test (`completion_events.bind_engine`), so a task left
+    pending here would be torn down later, in the middle of some other test's database call. Cancel and await them
+    while this test's event loop is still running."""
+    from app.services.queue_engine import QueueEngine
+    built: list[QueueEngine] = []
+    real_init = QueueEngine.__init__
+
+    def recording_init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    monkeypatch.setattr(QueueEngine, "__init__", recording_init)
+    yield
+    for engine in built:
+        if "_job_tasks" in engine.__dict__:              # the lifespan tests reset the singleton to an empty shell
+            names = sorted(t.get_name() for t in engine._job_tasks if not t.done())
+            try:
+                await asyncio.wait_for(engine.cancel_job_tasks(), timeout=10)
+            except asyncio.TimeoutError:                 # a task that swallows cancellation would otherwise hang the run, unnamed
+                pytest.fail(f"queue engine tasks did not stop when cancelled: {names}")
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def _reset_login_throttle():
     """Failed-login throttle is process-global; don't let one test's failures leak into another."""
     from app.services import login_throttle
@@ -156,6 +181,7 @@ async def _isolate_printer_manager():
     def _clear():
         printer_manager._clients.clear()
         printer_manager._awaiting_plate_clear.clear()
+        printer_manager._unconfigured.clear()
 
     _clear()
     printer_manager.connect_printer = lambda printer_id, client: printer_manager.register_client(printer_id, client)  # type: ignore[method-assign]
@@ -164,6 +190,25 @@ async def _isolate_printer_manager():
     finally:
         printer_manager.__dict__.pop("connect_printer", None)
         _clear()
+
+
+@pytest.fixture
+def scheduled_tests() -> list[int]:
+    """Printer ids whose background connection test (`printer_setup.schedule`) was requested during the test."""
+    return []
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _no_auto_test(request, monkeypatch, scheduled_tests):
+    """Creating or re-configuring a printer schedules a background connection test (BIZ-369). Record the request instead of
+    running it, unless the test opts in with `@pytest.mark.auto_test` (then await `printer_setup.drain()`)."""
+    from app.services import printer_setup
+    printer_setup._reset()
+    if not request.node.get_closest_marker("auto_test"):
+        monkeypatch.setattr(printer_setup, "schedule", lambda printer_id, session_factory: scheduled_tests.append(printer_id))
+    yield
+    await printer_setup.drain()
+    printer_setup._reset()
 
 
 # ---------------------------------------------------------------------------
@@ -250,19 +295,29 @@ async def model_uuid_of(client):
 
 
 @pytest_asyncio.fixture
-async def create_printer(client):
-    """`await create_printer(**overrides)` -> printer id (a Bambu with an active OrcaSlicer preset)."""
-    async def _create(**overrides) -> int:
+async def create_printer(client, session_factory):
+    """`await create_printer(**overrides)` -> printer id (a Bambu with an active OrcaSlicer preset, on its own IP). It is marked
+    configured as a passed connection test would (BIZ-369) unless `configured=False` is given."""
+    seq = iter(range(1, 10_000))
+
+    async def _create(configured: bool = True, **overrides) -> int:
+        from app.models import Printer
         body = {
             "name": "P1S", "printer_type": "bambu",
-            "connection_config": {},
+            "connection_config": {"ip_address": f"192.0.2.{next(seq)}"},
             "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
             "machine_profile_override": "Bambu Lab P1S 0.4",
         }
         body.update(overrides)
         resp = await client.post("/api/v1/printers", json=body)
         assert resp.status_code == 201, resp.text
-        return resp.json()["id"]
+        printer_id = resp.json()["id"]
+        if configured:
+            async with session_factory() as s:
+                (await s.get(Printer, printer_id)).configured = True
+                await s.commit()
+            printer_manager.set_configured(printer_id, True)
+        return printer_id
     return _create
 
 

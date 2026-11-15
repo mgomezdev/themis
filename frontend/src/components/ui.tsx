@@ -8,9 +8,9 @@ const STATUS_MAP: Record<string, [string, string]> = {
   printing:    ['info',   'Printing'],
   queued:      ['idle',   'Queued'],
   waiting:     ['idle',   'Waiting'],
-  claiming:    ['accent', 'Claiming'],
-  slicing:     ['accent', 'Slicing…'],
-  uploading:   ['accent', 'Uploading'],
+  claiming:    ['info',   'Claiming'],
+  slicing:     ['info',   'Slicing…'],
+  uploading:   ['info',   'Uploading'],
   paused:      ['warn',   'Paused'],
   error:       ['err',    'Error'],
   offline:     ['idle',   'Offline'],
@@ -143,11 +143,11 @@ export function SectionHeader({ title, sub, actions }: { title: React.ReactNode;
 export function Empty({ title, sub, icon }: { title: string; sub?: string; icon: React.ReactNode }) {
   return (
     <div className="col" style={{ alignItems: 'center', padding: '60px 20px', color: 'var(--text-3)' }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--bg-3)',
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--bg-2)',
                     display: 'grid', placeItems: 'center', marginBottom: 12, color: 'var(--text-3)' }}>
         {icon}
       </div>
-      <div style={{ fontSize: 14, color: 'var(--text-2)', fontWeight: 500 }}>{title}</div>
+      <div style={{ fontSize: 14, color: 'var(--text-1)', fontWeight: 500 }}>{title}</div>
       {sub && <div className="small muted" style={{ marginTop: 4 }}>{sub}</div>}
     </div>
   );

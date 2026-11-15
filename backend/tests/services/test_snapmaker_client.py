@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from app.plugins.snapmaker.client import SnapmakerExtendedClient, SnapmakerState
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 
 def _client():

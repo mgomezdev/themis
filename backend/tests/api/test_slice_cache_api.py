@@ -2,7 +2,7 @@
 from tests.fake_providers import fake_packer
 import hashlib
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -341,7 +341,6 @@ async def test_a_version_is_printable_now_on_a_printer_whose_model_maps_to_its_m
 def make_3mf_bytes_variant() -> bytes:
     """A different (but valid) model, so it gets its own content hash."""
     import io
-    import json
     import zipfile
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

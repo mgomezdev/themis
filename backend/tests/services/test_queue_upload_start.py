@@ -102,21 +102,22 @@ async def test_upload_or_start_failure_fails_the_job_and_leaves_the_printer_unga
     assert broadcasts.job_updates[-1]["status"] == "failed"
 
 
+@pytest.mark.parametrize("tray_mapping,expected", [(3, [3]), ([18, 0], [18, 0])])
 async def test_successful_start_uploads_the_file_starts_with_plate_and_tray_and_raises_the_gate(
-    engine, mgr, session_factory, tmp_path, broadcasts,
+    engine, mgr, session_factory, tmp_path, broadcasts, tray_mapping, expected,
 ):
     job_id, gcode = await _seed_uploading_job(session_factory, tmp_path)
     client = _client()
     mgr._clients[1] = client
 
-    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, 3)
+    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, tray_mapping)
 
     client.upload_file.assert_called_once_with(b"G28\n", "job.gcode")
     (filename, opts), _ = client.start_print.call_args
     assert filename == "job.gcode"
     assert opts.plate_id == 2
     assert opts.gcode_path == "job.gcode"
-    assert opts.ams_mapping == [3]
+    assert opts.ams_mapping == expected
     job, printer, gcode_rows = await _state(session_factory, job_id)
     assert job.status == "printing"
     assert job.printed_on_printer_id == 1  # survives later failure/cancel, unlike assigned_printer_id

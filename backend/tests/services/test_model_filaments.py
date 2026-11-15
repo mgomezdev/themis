@@ -1,4 +1,5 @@
-import json, zipfile
+import json
+import zipfile
 from app.services.three_mf_parser import parse_model_filaments
 
 

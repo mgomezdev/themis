@@ -2,7 +2,6 @@
 resume / cancel, completion, errors, alarms, optional hardware that is absent, camera discovery and the file browser."""
 import asyncio
 import json
-from unittest.mock import MagicMock
 
 import httpx
 import pytest

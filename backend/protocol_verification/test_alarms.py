@@ -9,7 +9,6 @@ import time
 
 import pytest
 
-from app.plugins.bambu import alarms as alarm_codes   # Bambu HMS decoding (HMS_MODULES, hms_alarms, ...)
 from app.services.abstract_printer_client import SEVERITIES
 
 

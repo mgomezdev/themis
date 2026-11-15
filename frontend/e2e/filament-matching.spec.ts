@@ -83,7 +83,7 @@ export function liveWorld(request: APIRequestContext): World {
     async jobNow(id) {
       const d = await call('get', `/jobs/${id}/details`);
       const cfg = d.printer_configs[0];
-      return { status: d.status, eligible: cfg.filament_match.eligible, ask: cfg, saved: cfg };
+      return { status: d.status, eligible: cfg.filament_match.eligible, ask: cfg, saved: cfg.filament_map?.[0] ?? cfg };
     },
   };
 }
@@ -154,7 +154,7 @@ function mockWorld(): World & { captured: () => { method: string; url: string; b
     async attach(page) {
       const base = await mockApi(page, { printers, fleet: () => printers, modelFilaments: [{ index: 1, color: '#FF0000', type: 'PLA' }], respond: (method, path, body) => {
         const m = path.match(/^\/jobs\/(\d+)\/configs$/);
-        if (method === 'PATCH' && m) { const j = jobs.get(+m[1])!; const c = body.printer_configs[0]; j.ask = { filament_manufacturer: c.filament_manufacturer, filament_type: c.filament_type, filament_subtype: c.filament_subtype, filament_color: c.filament_color }; return detailsOf(+m[1]); }
+        if (method === 'PATCH' && m) { const j = jobs.get(+m[1])!; const cfg = body.printer_configs[0]; const c = cfg.filament_map?.[0] ?? cfg; j.ask = { filament_manufacturer: c.filament_manufacturer, filament_type: c.filament_type, filament_subtype: c.filament_subtype, filament_color: c.filament_color }; return detailsOf(+m[1]); }
         const pm = path.match(/^\/printers\/(\d+)$/);
         if (method === 'PATCH' && pm) { printers.find(p => p.id === +pm[1]).loaded_filaments = body.loaded_filaments; return printers.find(p => p.id === +pm[1]); }
         return undefined;
@@ -176,7 +176,8 @@ function mockWorld(): World & { captured: () => { method: string; url: string; b
     async load(printerId, slots) { printers.find(p => p.id === printerId).loaded_filaments = slots; },
     async jobNow(id) {
       const d = detailsOf(id); const c = d.printer_configs[0];
-      const saved = captured.filter(x => x.method === 'PATCH' && x.url.endsWith('/configs')).pop()?.body.printer_configs[0] ?? null;
+      const config = captured.filter(x => x.method === 'PATCH' && x.url.endsWith('/configs')).pop()?.body.printer_configs[0];
+      const saved = config?.filament_map?.[0] ?? config ?? null;
       return { status: d.status, eligible: c.filament_match.eligible, ask: c, saved };
     },
   };
@@ -229,12 +230,12 @@ test.describe(`Filament matching (${LIVE ? 'live backend' : 'mocked API'})`, () 
 
     await page.goto(`/jobs/${job}/edit`);
 
-    await expect(page.getByTestId('filament-ask-type')).toHaveValue('PLA');
-    await expect(page.getByTestId('filament-ask-subtype')).toHaveValue('silk');
-    await expect(page.getByTestId('filament-match')).toContainText('nothing loaded matches PLA silk');   // the preview agrees with the detail page
+    await expect(page.getByTestId('map-ask-1-type')).toHaveValue('PLA');
+    await expect(page.getByTestId('map-ask-1-subtype')).toHaveValue('silk');
+    await expect(page.getByTestId('map-match-1')).toContainText('nothing loaded matches PLA silk');   // the preview agrees with the detail page
 
-    await page.getByTestId('filament-ask-subtype').selectOption('standard');
-    await expect(page.getByTestId('filament-match')).toContainText('✓ T0');
+    await page.getByTestId('map-ask-1-subtype').selectOption('standard');
+    await expect(page.getByTestId('map-match-1')).toContainText('✓ T0');
     await page.getByRole('button', { name: /Save & re-queue/i }).click();
     await page.waitForURL(new RegExp(`/jobs/${job}$`));
 
@@ -249,9 +250,9 @@ test.describe(`Filament matching (${LIVE ? 'live backend' : 'mocked API'})`, () 
     const job = await world.job(printer, { filament_type: 'PLA', filament_subtype: 'any' });
 
     await page.goto(`/jobs/${job}/edit`);
-    await expect(page.getByTestId('filament-ask-subtype')).toHaveValue('any');
-    await expect(page.getByTestId('filament-ask-manufacturer')).toHaveValue('');
-    await expect(page.getByTestId('filament-match')).toContainText('✓ T0');
+    await expect(page.getByTestId('map-ask-1-subtype')).toHaveValue('any');
+    await expect(page.getByTestId('map-ask-1-manufacturer')).toHaveValue('');
+    await expect(page.getByTestId('map-match-1')).toContainText('✓ T0');
     expect((await world.jobNow(job)).eligible).toBe(true);
   });
 });

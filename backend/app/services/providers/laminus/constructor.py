@@ -5,11 +5,13 @@ STL only: `/pack` drops a 3MF's geometry, modifiers and per-object settings, so 
 "cannot preserve it" rule). `target.model_uuid` is not needed: the pack is geometry-only, slicing profiles apply at dispatch."""
 from __future__ import annotations
 
+import json
+import zipfile
 from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, ConstructRequest, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode,
-    InputKind, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
+    InputKind, ModelObject, NothingFits, PlateManifest, ProjectConstructor, ProviderError, ProviderIdentity, ProviderStatus, Readiness,
 )
 from .sidecar_client import (
     DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady, SidecarTimeout, SidecarUnreachable,
@@ -17,6 +19,7 @@ from .sidecar_client import (
 
 PROVIDER_ID = "laminus"
 OUTPUT_NAME = "project.3mf"
+MANIFEST_ENTRY = "Metadata/laminus_manifest.json"      # written by /pack, /projects/subset, /projects/merge (feature `pack.manifest`)
 
 
 class LaminusProjectConstructor(ProjectConstructor):
@@ -48,11 +51,12 @@ class LaminusProjectConstructor(ProjectConstructor):
             raise ProviderError(ErrorCode.UNSUPPORTED_TARGET, f"bed {request.target.bed_mm} has no positive size")
         if not request.inputs:
             raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, "nothing to pack")
-        others = [i.path.name for i in request.inputs if i.path.suffix.lower() != ".stl"]
-        if others:
-            raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"only STL models can be packed: {', '.join(others)}")
+        # Plain split STLs keep /pack; anything else (3MF objects/plates, together/solo rules) needs /pack/mixed (BIZ-356).
+        mixed = any(i.path.suffix.lower() != ".stl" or i.rule != "split" or i.object_id or i.plate for i in request.inputs)
         try:
-            packed = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s)).pack_stls(list(request.inputs), *request.target.bed_mm)
+            client = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s))
+            packed = (client.pack_mixed(list(request.inputs), *request.target.bed_mm) if mixed
+                      else client.pack_stls(list(request.inputs), *request.target.bed_mm))
         except SidecarTimeout as e:
             raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
         except SidecarUnreachable as e:
@@ -67,3 +71,90 @@ class LaminusProjectConstructor(ProjectConstructor):
         out = Path(output_dir) / OUTPUT_NAME
         out.write_bytes(packed)
         return Artifact(out, ArtifactKind.PROJECT_3MF, self.identity)
+
+    def plate_manifest(self, project_3mf: Path) -> PlateManifest | None:
+        """Read the sidecar's manifest (schema version 1) out of a packed project; None when absent, unreadable or unknown."""
+        try:
+            with zipfile.ZipFile(project_3mf) as zf:
+                raw = json.loads(zf.read(MANIFEST_ENTRY))
+            if raw.get("version") != 1 or not isinstance(raw.get("plates"), list):
+                return None
+            plates: dict[int, dict[int, int]] = {}
+            for plate in raw["plates"]:
+                counts = plates.setdefault(int(plate["plate"]), {})
+                for inst in plate.get("instances", []):
+                    counts[int(inst["item"])] = counts.get(int(inst["item"]), 0) + 1
+            requested = {int(i["item"]): int(i["requested"]) for i in raw.get("items", []) if "requested" in i}
+            return PlateManifest(plates=plates, requested=requested)
+        except (OSError, KeyError, ValueError, TypeError, AttributeError, zipfile.BadZipFile):
+            return None
+
+    def next_plate(self, request: ConstructRequest, output_dir: Path, *, max_parts: int | None = None,
+                   timeout: float = DEFAULT_PRODUCE_TIMEOUT_S, cancel: CancelToken | None = None):
+        """/pack/next for the target's machine profile (resolved to its catalog uuid)."""
+        from ...catalog_service import cached_catalog
+        from .sidecar_client import SidecarNothingFits
+        machine = request.target.machine_profile
+        catalog = cached_catalog()
+        uuid = catalog.ref_for("machine", machine) if catalog is not None and machine else None
+        if not uuid:
+            raise ProviderError(ErrorCode.UNSUPPORTED_TARGET, f"no machine profile uuid for {machine!r}")
+        try:
+            packed, consumed = LaminusSidecarClient(self._url, timeout=min(timeout, self._request_timeout_s)).pack_next(
+                list(request.inputs), uuid, max_parts)
+        except SidecarNothingFits as e:
+            raise NothingFits(str(e)) from e
+        except SidecarTimeout as e:
+            raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
+        except SidecarUnreachable as e:
+            raise ProviderError(ErrorCode.UNREACHABLE, str(e)) from e
+        except SidecarNotReady as e:
+            raise ProviderError(ErrorCode.NOT_READY, str(e)) from e
+        except SidecarError as e:
+            raise ProviderError(ErrorCode.FAILED, str(e)) from e
+        if cancel is not None and cancel.cancelled:
+            raise ProviderError(ErrorCode.CANCELLED)
+        out = Path(output_dir) / "next-plate.3mf"
+        out.write_bytes(packed)
+        return Artifact(out, ArtifactKind.PROJECT_3MF, self.identity), {i: n for i, n in enumerate(consumed) if n}
+
+    def measure(self, path: Path, selection: list[dict]) -> list:
+        """/projects/measure: object and plate entries in one call; whole-file entries (`{}`) in a call with no selection (the
+        sidecar refuses `{}` entries and any selection on an STL)."""
+        picked: list[tuple[int, dict]] = []
+        for i, s in enumerate(selection):
+            if s.get("object_id") is not None:
+                oid = s["object_id"]
+                picked.append((i, {"id": int(oid) if str(oid).isdigit() else oid}))
+            elif s.get("plate") is not None:
+                picked.append((i, {"plate": int(s["plate"])}))
+        whole = [i for i in range(len(selection)) if i not in {j for j, _ in picked}]
+        client = LaminusSidecarClient(self._url, timeout=self._request_timeout_s)
+        sizes: list = [None] * len(selection)
+        try:
+            if picked:
+                got = client.measure(path, [e for _, e in picked])
+                for (i, _), v in zip(picked, got):
+                    sizes[i] = v
+            if whole:
+                (v,) = (client.measure(path, None) or [None])[:1]
+                for i in whole:
+                    sizes[i] = v
+        except SidecarTimeout as e:
+            raise ProviderError(ErrorCode.TIMEOUT, str(e)) from e
+        except SidecarUnreachable as e:
+            raise ProviderError(ErrorCode.UNREACHABLE, str(e)) from e
+        except SidecarNotReady as e:
+            raise ProviderError(ErrorCode.NOT_READY, str(e)) from e
+        except SidecarError as e:
+            raise ProviderError(ErrorCode.FAILED, str(e)) from e
+        return [tuple(float(x) for x in v) if isinstance(v, (list, tuple)) and len(v) == 3 else None for v in sizes]
+
+    def list_objects(self, model_3mf: Path) -> list[ModelObject]:
+        try:
+            raw = LaminusSidecarClient(self._url, timeout=self._request_timeout_s).inspect_objects(model_3mf)
+        except SidecarError as e:
+            code = (ErrorCode.UNREACHABLE if isinstance(e, SidecarUnreachable) else
+                    ErrorCode.NOT_READY if isinstance(e, SidecarNotReady) else ErrorCode.FAILED)
+            raise ProviderError(code, str(e)) from e
+        return [ModelObject(str(o["id"]), str(o.get("name") or f"object {o['id']}"), int(o.get("instances") or 1)) for o in raw]

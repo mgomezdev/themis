@@ -1,9 +1,8 @@
 """The provider-namespaced ref normalizer (BIZ-217): slot dual-write resolution, AMS key preservation, material asks."""
-import pytest
 
 from app.services.inventory import refs
 from tests.fake_providers import FakeInventoryProvider
-from tests.inventory_helpers import enable_spoolman, use_provider
+from tests.inventory_helpers import use_provider
 
 INV = {"provider": "spoolman", "spool_ref": "7"}
 

@@ -3,9 +3,11 @@ import type { ApiPrinter } from '../api/printers';
 import { getPrinterProfiles, type FilamentMapEntry, type ModelFilament } from '../api/queue';
 import { useInventory, useMaterials } from '../api/inventory';
 import { useSlotConflicts } from './useSlotConflicts';
-import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, type FilamentAsk } from '../lib/filamentAsk';
+import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, slotIsLoaded, type FilamentAsk } from '../lib/filamentAsk';
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
+import { UNKNOWN_DOT_COLOR } from '../data/helpers';
+import { typeBadge } from '../api/fleet';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -37,16 +39,14 @@ export const askToCfg = (a: FilamentAsk): Pick<PerPrinterCfg, 'filamentManufactu
   filamentSubtype: a.filament_subtype, filamentColor: a.filament_color,
 });
 
-const BADGE: Record<string, string> = {
-  bambu: 'P1S', elegoo_centauri: 'ECC', snapmaker_extended: 'U1',
-};
-
 /** A model colour pinned to tool `t` (the default: filament N on tool N-1, clamped to the slots there are). */
 const pinned = (modelFilament: number, tool: number): FilamentMapEntry => ({ model_filament: modelFilament, tool_index: tool, ...NO_ASK });
 const entryAsk = (e: FilamentMapEntry): FilamentAsk => ({
   filament_manufacturer: e.filament_manufacturer, filament_type: e.filament_type,
   filament_subtype: e.filament_subtype, filament_color: e.filament_color,
 });
+
+const UNCHOSEN = '__unchosen__';
 
 function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
   const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
@@ -63,27 +63,22 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-const CHIP = {
-  ok: { background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)', color: 'var(--ok)' },
-  warn: { background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)', color: 'var(--warn)' },
-} as const;
-
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
 function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; conflicts: number[]; testId?: string }) {
   const idx = firstMatchingSlot(ask, slots, conflicts);       // a slot in conflict with its bound spool is skipped, as the queue does
   const undefinedAsk = askIsUndefined(ask);
-  const tone = idx !== null || undefinedAsk ? CHIP.ok : CHIP.warn;
+  const tone = idx !== null || undefinedAsk ? 'tone-ok' : 'tone-warn';
   const text = idx !== null
     ? `✓ T${idx} · ${describeAsk({ ...NO_ASK, filament_type: slots[idx].type || null, filament_subtype: slots[idx].subtype ?? null, filament_color: slots[idx].color || null })}`
     : undefinedAsk ? '◉ Any loaded filament' : `⚠ nothing loaded matches ${describeAsk(ask)} — the job waits in the queue`;
   return (
-    <span data-testid={testId} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4, ...tone }}>
+    <span data-testid={testId} className={`tint tone-text ${tone}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 4 }}>
       {text}
     </span>
   );
 }
 
-export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments, gcode }: {
+export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments, gcode, unmatchedFilaments = [] }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
@@ -91,6 +86,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   modelFilaments?: ModelFilament[];
   /** Pre-sliced .gcode job: there is no slicing, so no print profile to choose. */
   gcode?: boolean;
+  unmatchedFilaments?: number[];
 }) {
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
@@ -101,10 +97,10 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const conflicts = useSlotConflicts(pid, printer?.loaded_filaments, undefined, !!printer);
 
   if (!printer) return null;
-  const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
+  const badge = typeBadge(printer.printer_type);
   const slots = printer.loaded_filaments ?? [];
   const ask = cfgAsk(config);
-  const multi = !!(modelFilaments && modelFilaments.length > 1 && slots.length >= 1);
+  const multi = !!(modelFilaments?.length && (modelFilaments.length > 1 || slots.length >= 2));
 
   const profileSelect = !gcode && (
     <div style={{ marginTop: 12 }}>
@@ -119,22 +115,25 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   );
 
   function mapEntries(): FilamentMapEntry[] {
-    return config.filamentMap ?? modelFilaments!.map(mf => pinned(mf.index, Math.min(mf.index - 1, slots.length - 1)));
+    return modelFilaments!.map(mf => config.filamentMap?.find(e => e.model_filament === mf.index)
+      ?? (modelFilaments!.length === 1
+        ? { model_filament: mf.index, tool_index: config.toolIndex, ...ask }
+        : pinned(mf.index, Math.max(0, Math.min(mf.index - 1, slots.length - 1)))));
   }
 
   function setEntry(index: number, entry: FilamentMapEntry) {
     const next = mapEntries().filter(e => e.model_filament !== index);
     next.push(entry);
     next.sort((a, b) => a.model_filament - b.model_filament);
-    onChange({ filamentMap: next });
+    onChange({ filamentMap: next, ...(config.toolIndex !== null ? { toolIndex: null } : {}) });
   }
 
   return (
-    <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
+    <div style={{ padding: 14, background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
         <span className="elig on">{badge}</span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
+        <div className="col grow min-0">
+          <div className="small fw-500">{printer.name}</div>
           <div className="tiny muted">{printer.printer_type}</div>
         </div>
       </div>
@@ -143,9 +142,11 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
         {!gcode && <div>
           <label className="label">Print profile</label>
           <select data-testid="print-profile-select" className="select"
-                  value={config.printProfile ?? ''}
-                  onChange={e => onChange({ printProfile: e.target.value || null })}>
-            <option value="">— select profile —</option>
+                  value={config.printProfile ?? UNCHOSEN}
+                  onChange={e => onChange({ printProfile: e.target.value === UNCHOSEN ? null : e.target.value })}>
+            <option value={UNCHOSEN} disabled>— select profile —</option>
+            {/* "" = the printer's own default process profile (BIZ-358); null = not chosen yet */}
+            <option value="">Printer default</option>
             {printProfiles.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           {printProfiles.length === 0 && (
@@ -160,17 +161,22 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
               {modelFilaments!.map(f => {
                 const entry = mapEntries().find(e => e.model_filament === f.index) ?? pinned(f.index, Math.min(f.index - 1, slots.length - 1));
                 const byAsk = entry.tool_index === null;
+                const noMatch = byAsk
+                  ? firstMatchingSlot(entryAsk(entry), slots, conflicts) === null
+                  : !slots[entry.tool_index!] || !slotIsLoaded(slots[entry.tool_index!]) || conflicts.includes(entry.tool_index!);
+                const unmatched = noMatch || unmatchedFilaments.includes(f.index);
                 return (
                   <div key={f.index}>
-                    <div className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div className="row gap-2">
                       <div style={{
                         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                        background: f.color || '#888', border: '1px solid var(--border-2)',
+                        background: f.color || UNKNOWN_DOT_COLOR, border: '1px solid var(--border-2)',
                       }} />
-                      <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
+                      <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-1)' }}>
                         Filament {f.index}{f.type ? ` · ${f.type}` : ''}
                       </span>
                       <select
+                        aria-label={`Filament ${f.index} matching mode or tool`}
                         data-testid={`map-tool-${f.index}`}
                         className="select"
                         style={{ flex: '0 0 auto', minWidth: 160 }}
@@ -187,6 +193,9 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                         </optgroup>
                       </select>
                     </div>
+                    {unmatched && <div data-testid={`map-unmatched-${f.index}`} className="tiny" style={{ color: 'var(--warn)', marginTop: 4 }}>
+                      Not loaded, will block if no eligible printer matches
+                    </div>}
                     {byAsk && (
                       <div className="col gap-2" style={{ marginLeft: 22, marginTop: 4 }}>
                         <FilamentAskEditor id={`map-ask-${f.index}`} value={entryAsk(entry)} materials={materials} catalogEnabled={catalogActive}

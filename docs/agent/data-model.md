@@ -38,11 +38,14 @@ webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
 notification_config (singleton id=1: ntfy/discord/email — see its own section below)
 projects            ← project_items.project_id, project_links.project_id, project_parts.project_id,
                        jobs.project_id
-project_items       ← job_item_failures.project_item_id
+project_items       ← job_item_failures.project_item_id; group_id (plain int → project_groups.id, no FK; v059); v061 kind (stl | 3mf_object | 3mf_plate | gcode), source_ref (object id / plate), pack_rule (split | together | solo | locked), source_hash (BIZ-356)
+part_sizes          (part_key PK = content hash:kind:source_ref; size_x/y/z_mm; v064, BIZ-363 Review fit check) + printers.bed_z_mm (null = machine profile height)
+part_waivers        (printer_id CASCADE; unique (printer_id, part_key); part_key = file content hash:kind:source_ref — the part, across projects; v062, BIZ-365) + printers.waiver_flag_at / waiver_stop_at (0 = off) / test_print_job_id / test_print_waiver_id, queue_config.waive_after
+project_groups      (project_id CASCADE; one is_default per project; v059) ← project_group_targets (group_id CASCADE; unique (group_id, target_key)); v063 max_parts (pool plate cap), queue_position (pool place in the queue, set at generate) + jobs.pool_group_id (plain int, no FK: the pool a plate was packed from; BIZ-362 — pool remaining = qty − parts on its non-cancelled jobs + failures resolved requeued/reprinted)
 project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)
 project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,
                        created_at — non-3D-printed hardware for the assembly, e.g. magnets/screws)
-job_item_failures
+job_item_failures   (+ v060: printer_id plain int, created_at, resolution printed|requeued|held|reprinted|dropped = the project failure log, BIZ-364; project_items.quantity_held; queue_config.part_retry_limit default 2)
 maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_maintenance_state.maintenance_item_id
 maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
 printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))
@@ -84,8 +87,10 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
+`default_process_profile: str?`, `single_colour_only: bool` (v057, BIZ-358) — the process preset a "Printer default" config slices with (PATCH validates it against the machine profile's compatible presets; null clears), and a flag that keeps multicolour configs (filament_map of 2+) off the printer via `filament_matching.evaluate_for_printer` (skip, never block; the unmatched sweep blocks if no printer can take it).
 `preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
+`configured: bool` + `config_error: str?` (v067, BIZ-369 — set only by a passed connection test or the first live connection; only configured printers claim; a real `connection_config` change via PATCH clears it and re-tests; rows existing at v067 back-filled 1; the ORM default is False and create / fleet import store False then `printer_setup.schedule` the test),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
 `curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`
 (Fleet camera-polling toggle), `bed_x_mm: float=256.0, bed_y_mm: float=256.0` (bed footprint, shown in
@@ -94,7 +99,8 @@ the printer editor and used wherever bed size matters for the UI), `lifetime_job
 (accrued from `job.actual_seconds` in the same handler) — both feed `job_count`/`job_time` maintenance
 trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
-  keys passed to the client ctor). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
+  keys passed to the client ctor). Blank values are never stored (`printer_setup.strip_blank`); `ip_address` is required on create
+  when the plugin's form declares it (the mock declares none) and (IP, model) is unique (409, checked in the route since the IP lives in this JSON). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
 - `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, manufacturer:str|null, type, subtype, color:"#RRGGBB",
   filament_profile?:str|null, spoolman_spool_id?:str|null, inventory?, reported?:bool, ams_tray_id?, ams_unit?}`.
@@ -157,7 +163,7 @@ Library index fields (filesystem is source of truth; these cache it):
 project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`.
 - `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `FormatProvider.curated_settings()` (Laminus: `providers/laminus/overrides.py`).
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
-- `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
+- `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`. Written by project generation from the constructor's `PlateManifest` (BIZ-359: real per-plate counts; items sharing one STL are filled in item order); only a pack with no manifest, or one that disagrees with the request, falls back to the round-robin guess (logged).
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
 - `POST /api/v1/jobs/{id}/complete-manually`: slices for a chosen printer (real slice, isolated
   directory, same pattern as `verify-slice`) then marks the job `complete` without ever printing it -
@@ -202,7 +208,7 @@ with `services/job_details.get_details`. Names and values are not enforced. Stan
 `print_seconds`, `filament_usage`, `blocked_reason`; core also writes `failure_reason` and `last_failure` (`{reason, printer_id, at}`, a dead printer).
 
 ### job_printer_configs  (one row per (job, eligible printer))
-`id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
+`id, job_id FK, printer_id FK, print_profile` (orca process preset; `""` = "Printer default", resolved at slice time to `printers.default_process_profile` by `queue_engine.effective_process_profile`; a printer with neither is skipped at claim like a filament mismatch, and the unmatched sweep blocks the job when no printer can run it), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
 loaded-filament slot), `ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (v053: the job's filament **ask** tuple →
 matched against `printer.loaded_filaments`; NULL = undefined; subtype is required whenever type is set), `tool_index?` (nullable int,
@@ -269,7 +275,7 @@ hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack
   uncacheable sources), so a job flagged "save" after slicing can still be saved.
 
 ### job_model_targets  (v031 — "any printer of this model"; keyed by model since v052)
-`id, job_id FK (CASCADE), model_uuid FK printer_models` (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
+`id, job_id FK (CASCADE), model_uuid? FK printer_models` (NULL = "Any printer", v058 / BIZ-357: covers every printer, including ones with no registry model and ones added later; `model_targets.targets_printer`) (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
 `print_profile, filament_profile?, ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (the ask tuple, as on `job_printer_configs`),
 `filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
 Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
@@ -280,7 +286,7 @@ only for `queued`/`blocked` jobs. An explicit per-printer config wins over a tar
 `slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
 (v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
 on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
-`POST /projects/{id}/generate` (`eligible_model_uuids`). Job responses add `model_label` ("<manufacturer> <model>").
+`POST /projects/{id}/generate` (`eligible_model_uuids`; `eligible_any_printer` adds one Any-printer target per job). Job responses add `model_label` ("<manufacturer> <model>").
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
@@ -574,3 +580,8 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 `idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
 `webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
+
+
+Migration v066 (BIZ-366 v2) makes inventory per print attempt: `job_spool_snapshots.attempt_id` (NOT NULL, `''` for older rows; unique key (job_id, attempt_id, provider, spool_ref), table rebuilt) and nullable `inventory_pending_writes.attempt_id`. Job details: `filament_usage_context` (core, per attempt), `filament_usage_report` (the printer plugin's v2 report), `filament_accounting` (core: `{attempts: {attempt_id: {result, source, grams, slots, uses, notes, provider}}, total_grams}`).
+
+Migration v065 adds nullable JSON `jobs.unmatched_filaments`: a map from printer id to unmatched model filament numbers, captured with a fleet-wide filament block. `NULL` means no stored filament failure; the details API returns `{}`. Requeue, unblock and a successful claim clear this snapshot.

@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.database import get_session
 from app.main import app
 from app.models import Job, UploadedFile
 

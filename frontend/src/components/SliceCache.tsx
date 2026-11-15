@@ -26,19 +26,19 @@ export function SliceCacheMarkers({ job }: { job: MarkerJob }) {
   const chips: { key: string; label: string; tone: string; title?: string }[] = [];
   if (job.sliced_version_id != null) chips.push({ key: 'cached', label: 'Used cached gcode', tone: 'var(--accent-hi)' });
   if (save?.outcome === 'saved' || save?.outcome === 'duplicate') {
-    chips.push({ key: 'saved', label: 'Gcode saved to library', tone: 'var(--ok, #22c55e)' });
+    chips.push({ key: 'saved', label: 'Gcode saved to library', tone: 'var(--ok)' });
   } else if (save?.outcome === 'failed') {
     chips.push({ key: 'save-failed', label: 'Gcode save failed', tone: 'var(--err)', title: save.error ?? undefined });
   } else if (job.save_slice && job.sliced_version_id == null && !TERMINAL.has(job.status)) {
     // only while a fresh slice can still come: a job printing cached gcode, or one that ended unsliced, never saves
-    chips.push({ key: 'saving', label: 'Saving gcode', tone: 'var(--text-2)' });
+    chips.push({ key: 'saving', label: 'Saving gcode', tone: 'var(--text-1)' });
   }
   if (info?.stale) {
     for (const label of staleLabels(info.stale_reasons)) chips.push({ key: label, label, tone: 'var(--warn)' });
   }
   if (chips.length === 0) return null;
   return (
-    <span className="row gap-1" style={{ flexWrap: 'wrap' }} data-testid="slice-cache-markers">
+    <span className="row gap-1 wrap" data-testid="slice-cache-markers">
       {chips.map(c => (
         <span key={c.key} className="pill" title={c.title}
               style={{ color: c.tone, border: '1px solid currentColor', background: 'transparent', fontSize: 10.5 }}>
@@ -90,12 +90,12 @@ export function SaveSliceControl({ job, presliced, onChange }: {
         <span className="tiny">Saved next to the model — <Link to="/files">open the library</Link></span>
       )}
       {save?.outcome === 'failed' && (
-        <span className="tiny" style={{ color: 'var(--err)' }}>
+        <span className="tiny text-err">
           Save failed: {save.error}{' '}
           <button className="btn ghost sm" disabled={busy} onClick={() => apply(true)}>Retry</button>
         </span>
       )}
-      {error && <span className="tiny" style={{ color: 'var(--err)' }}>{error}</span>}
+      {error && <span className="tiny text-err">{error}</span>}
     </div>
   );
 }
@@ -122,7 +122,7 @@ export function SliceCacheDebug({ info }: { info: SliceCacheInfo | null }) {
       <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>Slice cache</summary>
       <div className="col gap-1 tiny" style={{ marginTop: 8, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
         {info.cache_key && (
-          <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <div className="row gap-2">
             <span className="muted">Cache key</span><span>{info.cache_key}</span>
             <button className="btn ghost sm" onClick={copyKey}>{copied ? 'Copied' : 'Copy'}</button>
           </div>

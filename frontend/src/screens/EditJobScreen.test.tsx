@@ -28,6 +28,7 @@ vi.mock('../api/queue', async (importOriginal) => {
   return {
     ...actual,
     getJobDetails: vi.fn(),
+    getModelFilaments: vi.fn().mockResolvedValue([]),
     updateJobConfigs: vi.fn(),
     getPrinterProfiles: vi.fn().mockResolvedValue({
       print_profiles: ['0.20mm Standard @U1'],
@@ -319,4 +320,24 @@ describe('EditJobScreen — pre-sliced .gcode.3mf archive (BIZ-190)', () => {
     expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
     expect(screen.queryByTestId('print-profile-select')).toBeNull();
   });
+});
+
+
+it('shows the stored failing filament row and saves its correction as an unresolved map', async () => {
+  vi.mocked(queueApi.getModelFilaments).mockResolvedValue([{ index: 1, type: 'ABS', color: '#123456' }]);
+  vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+    ...JOB_WITH_TOOL2, unmatched_filaments: { '3': [1] },
+    printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], tool_index: null, filament_profile: null,
+      filament_map: [{ model_filament: 1, tool_index: null, filament_manufacturer: null, filament_type: 'ABS', filament_subtype: 'any', filament_color: null }] }],
+  });
+  const user = userEvent.setup();
+  renderEditJob();
+  expect(await screen.findByTestId('map-unmatched-1')).toBeVisible();
+  await user.selectOptions(screen.getByTestId('map-ask-1-type'), 'PLA');
+  expect(screen.queryByTestId('map-unmatched-1')).toBeNull();
+  await user.click(screen.getByRole('button', { name: /Save & re-queue/i }));
+  await waitFor(() => expect(queueApi.updateJobConfigs).toHaveBeenCalled());
+  expect(vi.mocked(queueApi.updateJobConfigs).mock.calls[0][1][0].filament_map).toEqual([
+    { model_filament: 1, tool_index: null, filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null },
+  ]);
 });

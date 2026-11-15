@@ -33,7 +33,7 @@ PLA_SLOT = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FFFFFF"
 async def _printer(factory, pid: int, model: str | None, loaded=None) -> None:
     await _models(factory)
     async with factory() as s:
-        s.add(Printer(id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, model_uuid=model,
+        s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="bambu", connection_config={}, model_uuid=model,
                       loaded_filaments=loaded or []))
         await s.commit()
 

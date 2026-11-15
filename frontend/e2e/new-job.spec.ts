@@ -18,9 +18,11 @@ import { mockApi } from './mock-api';
  *   4. Click the printer card for `printerName`
  *   5. Wait for print-profile-select to be visible
  */
-// The printer's own card, not the "Any <model>" button for its model (whose label also contains the model name).
-const printerCard = (page: import('@playwright/test').Page, name: string) =>
-  page.getByRole('button', { name: new RegExp(name, 'i') }).filter({ hasNotText: /Any / });
+// Choose a specific printer in the badge picker (BIZ-357): open "+ Printer", then its entry under "Specific printer".
+async function pickPrinter(page: import('@playwright/test').Page, name: string) {
+  await page.getByRole('button', { name: '+ Printer' }).click();
+  await page.getByRole('menuitem', { name: new RegExp(`^${name}`, 'i') }).click();
+}
 
 async function driveToPerPrinter(page: import('@playwright/test').Page, printerName: string) {
   // Step 1: switch to library source
@@ -33,8 +35,8 @@ async function driveToPerPrinter(page: import('@playwright/test').Page, printerN
   await page.waitForLoadState('networkidle');
 
   // Step 4: click the printer card
-  await expect(printerCard(page, printerName)).toBeVisible({ timeout: 5000 });
-  await printerCard(page, printerName).first().click();
+  await expect(page.getByRole('button', { name: '+ Printer' })).toBeVisible({ timeout: 5000 });
+  await pickPrinter(page, printerName);
 
   // Step 5: wait for PerPrinterConfig to render
   await expect(page.getByTestId('print-profile-select')).toBeVisible({ timeout: 5000 });
@@ -59,17 +61,17 @@ test.describe('New Job — filament/tool', () => {
     await page.waitForLoadState('networkidle');
 
     // Wait for printer picker to appear (plates + model-filaments loaded)
-    await expect(printerCard(page, 'U1')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: '+ Printer' })).toBeVisible({ timeout: 5000 });
 
     // Select the U1 printer (multi-tool, 4 slots, 2 model filaments → mapping rows)
-    await printerCard(page, 'U1').first().click();
+    await pickPrinter(page, 'U1');
 
     // PerPrinterConfig should render with mapping rows (f.index is 1-based)
     await expect(page.getByTestId('map-tool-1')).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId('map-tool-2')).toBeVisible();
 
     // Select a print profile
-    await page.getByTestId('print-profile-select').selectOption({ index: 1 });
+    await page.getByTestId('print-profile-select').selectOption({ index: 2 });
 
     // Change mapping for model filament 2: pick tool index 1 (instead of default 1)
     // Default for filament index 2 is min(2-1, 3) = 1. Change it to 2.
@@ -87,9 +89,9 @@ test.describe('New Job — filament/tool', () => {
       await plate2Tab.click();
 
       // Select U1 for plate 2 as well
-      await printerCard(page, 'U1').first().click();
+      await pickPrinter(page, 'U1');
       await expect(page.getByTestId('print-profile-select')).toBeVisible({ timeout: 5000 });
-      await page.getByTestId('print-profile-select').selectOption({ index: 1 });
+      await page.getByTestId('print-profile-select').selectOption({ index: 2 });
 
       // Switch back to plate 1
       await page.getByRole('button', { name: /Plate 1/i }).click();
@@ -121,7 +123,7 @@ test.describe('New Job — filament/tool', () => {
   });
 
   test('single-tool printer defaults to an undefined ask and sends the typed tuple', async ({ page }) => {
-    const mocks = await mockApi(page);
+    const mocks = await mockApi(page, { modelFilaments: [{ index: 1, color: '#F78E0E', type: 'PLA' }] });
     await page.goto('/queue/new');
     await page.waitForLoadState('networkidle');
 

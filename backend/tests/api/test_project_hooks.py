@@ -1,6 +1,6 @@
 """Reliable project hooks for companion apps (BIZ-172): external refs, idempotent create/generate, lifecycle webhooks."""
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import func, select
