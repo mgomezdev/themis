@@ -722,3 +722,19 @@ async def test_a_paused_printer_claims_nothing(client, create_printer, create_jo
         await cancel_background_tasks("slice-")
     async with session_factory() as s:
         assert (await s.get(Job, waiting)).assigned_printer_id == a
+
+
+async def test_a_bookkeeping_error_never_fails_the_plate_clear_itself(client, create_printer, session_factory):
+    """The clear is the QR / home-automation hook: if applying the defaults blows up, the printer is still released, nothing
+    half-recorded is kept, and the plates stay awaiting results."""
+    from unittest.mock import patch
+    from app.models import Printer
+    a = await create_printer(name="A")
+    async with session_factory() as s:
+        (await s.get(Printer, a)).awaiting_plate_clear = True
+        await s.commit()
+    with patch("app.services.print_results.apply_clear_defaults", side_effect=RuntimeError("boom")):
+        r = await client.post(f"/api/v1/printers/{a}/plate-cleared")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    async with session_factory() as s:
+        assert (await s.get(Printer, a)).awaiting_plate_clear is False

@@ -187,7 +187,13 @@ async def plate_cleared(
     # Every other finished plate of this printer that nobody reported (all of them, on a clear without results) gets the
     # Settings default for how its print ended: nothing is left in limbo, and what was assumed is recorded on the job.
     from ...services import print_results as _results
-    assumed = await _results.apply_clear_defaults(session, printer)
+    try:
+        async with session.begin_nested():     # bookkeeping must never fail the clear itself (the QR / home-automation hook)
+            assumed = await _results.apply_clear_defaults(session, printer)
+    except Exception:                          # noqa: BLE001 - the plates stay awaiting results; History can still report them
+        import logging
+        logging.getLogger("app").exception("Applying the plate-clear defaults for printer %s failed", printer_id)
+        assumed = []
     if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
         test_job = await session.get(Job, printer.test_print_job_id)
         if test_job is not None and test_job.status in ("complete", "failed"):
