@@ -510,7 +510,7 @@ tr.dragging td { opacity: 0.35; }
       </div>
       <div class="screen-body">
         <div class="gedit g1">
-          <div class="gedit-head"><div class="row"><h3>Structure</h3><span class="btn ghost sm">Rename</span></div><div class="row"><span class="pill acc">Fill each bed</span><span class="btn ghost sm">Delete group</span></div></div>
+          <div class="gedit-head"><div class="row"><h3>Structure</h3><span class="btn ghost sm">Rename</span></div><div class="row"><span class="pill acc">When a printer picks it up</span><span class="btn ghost sm">Delete group</span></div></div>
           <div class="gedit-body" style="grid-template-columns:minmax(0,1fr);border-bottom:1px solid var(--border-1)">
             <div class="field"><span class="label">Eligible printers</span>
               <div class="ebadges">
@@ -547,7 +547,6 @@ tr.dragging td { opacity: 0.35; }
               </div>
               <span class="dim tiny">Filament comes from each item, so only the process profile is set here.</span>
             </div>
-            </div>
           </div>
           <div class="gedit-body">
             <div class="gcol">
@@ -580,7 +579,7 @@ tr.dragging td { opacity: 0.35; }
       <div class="note new"><span class="eyebrow">Creating a group</span><p>Click "+ New group" (here or on Items): it adds a badge with an editable name and opens its settings. A new group starts with <b>no</b> eligible printers (opt-in), and is packed when a printer picks it up.</p></div>
       <div class="note new"><span class="eyebrow">Eligible printers as badges</span><p>Only the chosen ones show, each with × to remove. "+ Printer" opens the menu shown open here: a group of printers (Any printer, or any printer of a model; yellow) or a specific printer (blue). Entries already added, or covered by a model you picked, are greyed out.</p></div>
       <div class="note new"><span class="eyebrow">Same as New Job</span><p>New Job's printer step switches to this badge picker too, so both flows match. Each badge gets one process profile row.</p></div>
-      <div class="note change"><span class="eyebrow">Change</span><p>"Any printer" is new, and New Job gets it too, so the two flows stay identical. Today New Job offers specific printers and Any &lt;model&gt; only.</p></div>
+      <div class="note change"><span class="eyebrow">Change</span><p>"Any printer" is new, and New Job gets it too, so the two flows stay identical. As of 2026-11-01, New Job offered specific printers and Any &lt;model&gt; only.</p></div>
       <div class="note new"><span class="eyebrow">Queue order</span><p>Badge order is queue order. Drag "Show pieces" ahead of "Structure" and its jobs queue first.</p></div>
       <div class="note new"><span class="eyebrow">No "All" here</span><p>The Groups tab hides the All badge: there is no "all groups" settings view. Default Group stays because it is a real group with its own settings. The banner component just takes a show-All flag.</p></div>
       <div class="note"><span class="eyebrow">Pack at claim vs fixed bed</span><p>"Structure" is a pool (option 4). "Show pieces", collapsed here, packs now for 256 × 256, and any printer whose bed contains that can take it (options 1–3).</p></div>
@@ -775,7 +774,6 @@ tr.dragging td { opacity: 0.35; }
           </div>
         </div>
       </div>
-    </div>
     <aside class="notes">
       <div class="note new"><span class="eyebrow">Retry limit placement</span><p>Moved to the existing Settings → Print defaults page, next to the current slicer-cache setting, saved the same way.</p></div>
       <div class="note"><span class="eyebrow">Per-printer settings</span><p>Only the per-printer items stay in the printer editor: the default process profile (next to the machine profile from the model), "Single colour only", and this printer's part waivers with Clear.</p></div>
@@ -785,7 +783,7 @@ tr.dragging td { opacity: 0.35; }
     </aside>
   </section>
 
-  <p class="footer">Static mockup. Profile names, part sizes and the fleet are examples, not your data. Nothing here has been built.</p>
+  <p class="footer">Static mockup. Profile names, part sizes and the fleet are examples, not your data. It shows the design as agreed on 2026-11-01, before the epic (BIZ-354) was built; the shipped app may differ in detail.</p>
 </div>
 
 </body>

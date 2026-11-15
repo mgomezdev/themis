@@ -6,7 +6,11 @@ Mockup: [`mockups/2026-11-01-print-groups-pooled-packing.html`](mockups/2026-11-
 This is the record of what was agreed while workshopping the idea. It is not a delivery plan: each sub-issue gets
 its own plan in `docs/superpowers/plans/` when work starts. Where this file and the mockup disagree, this file wins.
 
-## Problem (verified in code, 2026-11-01)
+## Problem (as of 2026-11-01, before the epic)
+
+Verified against the code on that date. The sub-issues BIZ-355 … BIZ-365 have since changed most of these points (e.g. a
+printer default process profile, manifest-based plate counts, generation moved to `project_generate.py`); read the
+current code for today's state.
 
 - Laminus production slices run `orcaslicer --slice N --arrange 1` over the **whole** multi-plate 3MF
   (`laminus/app/main.py` `run_orcaslicer_task`). Orca re-packs every plate for the target bed, so "plate N" can contain
@@ -22,7 +26,9 @@ its own plan in `docs/superpowers/plans/` when work starts. Where this file and 
 ### Items
 - An item is **one printable unit × qty** (qty ≥ 1): STL file · 3MF plate (bundle of every object on the source plate) ·
   3MF object · gcode plate (`.gcode` or plate N of a `.gcode.3mf`).
-- Gcode items are never repacked. They are eligible per `file_machine_eligibility` and need no group settings.
+- Gcode items are never repacked. They are eligible per `file_machine_eligibility` and take no group settings
+  (printers/process come from the slice), so they sit outside groups (the mockup shows their group as "—") and queue
+  after the project's groups.
 - Filament: pre-filled from the file, overridable with the existing ask rules. STLs are set by the user.
 - Packing rule per item: **Split** (default) · **Together** (bundle on one plate) · **Solo** (alone on its plate, e.g. vase
   mode / avoiding z-hop marks) · **Locked** (source plate as authored, centred for the bed).
