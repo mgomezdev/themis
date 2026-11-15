@@ -231,8 +231,12 @@ class OverrideInspection:
 
 @dataclass(frozen=True)
 class CuratedSetting:
+    """A setting a job or printer may override. `kind` is a UI hint ("bool" | "enum" | "text"); `options` are the provider's
+    accepted values for "bool"/"enum" (empty = free text)."""
     key: str
     label: str
+    kind: str = "text"
+    options: tuple[str, ...] = ()
 
 
 # ── provider ABCs ─────────────────────────────────────────────────────────────────────────────────────────────────

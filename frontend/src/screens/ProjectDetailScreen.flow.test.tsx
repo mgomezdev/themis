@@ -185,6 +185,31 @@ describe('ProjectDetailScreen - generating jobs', () => {
       'project-x-PLA.3mf: reused previous pack, 2 plates have cached versions');
   });
 
+  it('sends the job setting overrides picked for the generated jobs (enable supports, a brim type)', async () => {
+    const { resetOverrideSettingsCache } = await import('../components/SliceOverridesEditor');
+    resetOverrideSettingsCache();
+    const { api } = open({
+      'POST /api/v1/projects/42/generate': generated(1),
+      'GET /api/v1/jobs/override-settings': [
+        { key: 'enable_support', label: 'Enable supports', kind: 'bool', options: ['0', '1'] },
+        { key: 'brim_type', label: 'Brim type', kind: 'enum', options: ['auto_brim', 'brim_ears'] },
+      ],
+    });
+    await ready();
+
+    await userEvent.click(button('Generate…'));
+    const scope = await screen.findByTestId('project-overrides');
+    fireEvent.change(within(scope).getByLabelText('Add override'), { target: { value: 'enable_support' } });
+    fireEvent.change(within(scope).getByLabelText('Add override'), { target: { value: 'brim_type' } });
+    fireEvent.change(within(scope).getByLabelText('Brim type'), { target: { value: 'brim_ears' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+
+    expect(await screen.findByText('1 job queued')).toBeTruthy();
+    expect(api.to('POST', '/api/v1/projects/42/generate').map(c => (c.body as { overrides?: unknown }).overrides)).toEqual([
+      { enable_support: '1', brim_type: 'brim_ears' },
+    ]);
+  });
+
   it('View Queue jumps to the queue', async () => {
     open({ 'POST /api/v1/projects/42/generate': generated(1) });
     await ready();

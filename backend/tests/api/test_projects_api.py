@@ -627,3 +627,26 @@ def test_parse_plate_nums_uses_the_core_reader(tmp_path):
     bad = tmp_path / "bad.3mf"
     bad.write_bytes(b"nope")
     assert _parse_plate_nums(bad) == []
+
+
+async def test_generate_stores_curated_overrides_on_every_job(client, tmp_path, create_printer):
+    """A project's picks (enable supports, a brim type) become each generated job's overrides; non-curated keys drop."""
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    printer_id = await create_printer()
+    with (
+        patch("app.config.get_library_dir", return_value=tmp_path / "library"),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.jobs.queue_engine"),
+    ):
+        mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
+        resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={
+            "eligible_printer_ids": [printer_id], "process_preset": "0.20mm Standard",
+            "overrides": {"enable_support": "1", "brim_type": "brim_ears", "post_process": "rm -rf /"}})
+
+    assert resp.status_code == 200
+    jobs = resp.json()["jobs"]
+    assert len(jobs) == 2
+    for j in jobs:
+        detail = await client.get(f"/api/v1/jobs/{j['id']}/details")
+        assert detail.json()["overrides"] == {"enable_support": "1", "brim_type": "brim_ears"}

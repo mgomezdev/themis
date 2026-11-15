@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditForm } from './PrintersScreen';
 import type { ApiPrinter, PrinterType } from '../api/printers';
 import { printerType } from '../test/printerTypes';
@@ -18,7 +18,7 @@ const PRINTER: ApiPrinter = {
   bed_x_mm: 256,
   bed_y_mm: 256,
   machine_rate_per_hour: null,
-  preferred_slicer_plugin_id: null,
+  preferred_slicer_plugin_id: null, slice_overrides: {},
   quiet_start: null,
   quiet_end: null,
 };
@@ -39,6 +39,10 @@ beforeEach(() => {
     if (url === '/api/v1/printer-models/model-p1s/slicer-profiles') return new Response(JSON.stringify(ROWS), { status: 200 });
     if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], selections: {} }), { status: 200 });
     if (url.match(/\/printers\/7\/profiles$/)) return new Response(JSON.stringify({ print_profiles: [], filament_profiles: ['Generic PLA @BBL', 'PolyTerra PLA @BBL'] }), { status: 200 });
+    if (url === '/api/v1/jobs/override-settings') return new Response(JSON.stringify([
+      { key: 'enable_support', label: 'Enable supports', kind: 'bool', options: ['0', '1'] },
+      { key: 'brim_type', label: 'Brim type', kind: 'enum', options: ['auto_brim', 'outer_only', 'no_brim'] },
+    ]), { status: 200 });
     if (url.match(/\/printers\/7$/) && init?.method === 'PATCH') return new Response(JSON.stringify(PRINTER), { status: 200 });
     return new Response('[]', { status: 200 });
   }));
@@ -106,5 +110,18 @@ describe('EditForm nozzle variant (BIZ-294)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await waitFor(() => expect(patchBody()).toBeTruthy());
     expect(patchBody().nozzle_variant).toBeNull();
+  });
+});
+
+describe('EditForm printer setting overrides', () => {
+  it('saves a brim type picked for the printer and keeps the ones it already had', async () => {
+    const { resetOverrideSettingsCache } = await import('../components/SliceOverridesEditor');
+    resetOverrideSettingsCache();
+    render(<EditForm printer={{ ...PRINTER, slice_overrides: { enable_support: '0' } }} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const scope = await screen.findByTestId('printer-overrides');
+    fireEvent.change(within(scope).getByLabelText('Add override'), { target: { value: 'brim_type' } });
+    fireEvent.change(within(scope).getByLabelText('Brim type'), { target: { value: 'outer_only' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()?.slice_overrides).toEqual({ enable_support: '0', brim_type: 'outer_only' }));
   });
 });

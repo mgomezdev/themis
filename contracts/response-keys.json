@@ -55,6 +55,7 @@
     "bed_y_mm",
     "machine_rate_per_hour",
     "preferred_slicer_plugin_id",
+    "slice_overrides",
     "quiet_start",
     "quiet_end"
   ],

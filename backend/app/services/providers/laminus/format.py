@@ -18,3 +18,6 @@ class LaminusFormatProvider(FormatProvider):
 
     def inspect_overrides(self, source_project: str, merged_config: dict, slots: int) -> OverrideInspection:
         return overrides.inspect_overrides(source_project, merged_config, slots)
+
+    def embedded_overrides(self, source_project: str) -> dict:
+        return overrides.embedded_process_overrides(source_project)

@@ -134,7 +134,8 @@ def parse_model_filaments(file_path: str) -> list[dict]:
 
 
 def parse_embedded_settings(file_path: str) -> list[dict]:
-    """Return curated print settings baked into the 3MF's project_settings.config."""
+    """Return curated print settings baked into the 3MF's project_settings.config. `carried` marks the ones the file's
+    author changed from its preset (re-applied when slicing on any printer); the rest are just the file's preset values."""
     try:
         with zipfile.ZipFile(file_path) as zf:
             actual = next(
@@ -148,8 +149,10 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
     except (zipfile.BadZipFile, json.JSONDecodeError, OSError):
         return []
 
+    fmt = get_format_provider()
+    carried = fmt.embedded_overrides(file_path)    # what the author changed: re-applied onto the routed printer's preset
     out = []
-    for setting in get_format_provider().curated_settings():
+    for setting in fmt.curated_settings():
         key = setting.key
         if key not in ps:
             continue
@@ -158,7 +161,7 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
             val = ", ".join(str(v) for v in val)
         else:
             val = str(val)
-        out.append({"key": key, "label": setting.label, "value": val})
+        out.append({"key": key, "label": setting.label, "value": val, "carried": key in carried})
     return out
 
 

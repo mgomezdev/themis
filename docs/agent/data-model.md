@@ -84,6 +84,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
+`slice_overrides: JSON?` (v057) — this printer's slicer setting overrides `{curated key: value}` (e.g. `{"brim_type": "outer_only"}`); the job's `overrides` and the 3MF's own preset changes win over them (`services/slice_overrides`); API always returns `{}` for none; `PATCH` replaces the whole dict, non-curated/blank keys dropped.
 `preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
@@ -155,7 +156,7 @@ Library index fields (filesystem is source of truth; these cache it):
 `id, uploaded_file_id FK, plate_number, order_id FK?, assigned_printer_id FK?, queue_position: float?`
 (float → reorder without renumber), `status, project_id FK?, block_reason: text?, overrides: JSON?,
 project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`.
-- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `FormatProvider.curated_settings()` (Laminus: `providers/laminus/overrides.py`).
+- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `FormatProvider.curated_settings()` (Laminus: `providers/laminus/overrides.py`). Highest precedence: job > the 3MF's own preset changes > `printers.slice_overrides` (`services/slice_overrides`). Never stored for pre-sliced files.
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
 - `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
@@ -224,7 +225,7 @@ job: the slots it prints from),
 ### sliced_versions  (v033 — slicing cache, BIZ-189)
 A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCADE) is what model `source_file_id`
 (SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
-process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
+process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + printer/3MF/job overrides, exactly the
 `SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` + the slicing provider's plugin id
 (always hashed since v051/BIZ-291, which rewrote every saved key; the row does not store it — every version came from `laminus` before)
 → `cache_key` = sha256 of their canonical JSON (`services/slice_cache.cache_key` over `CacheKeyInputs`; filament colour is deliberately **not** in it,

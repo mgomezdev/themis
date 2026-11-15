@@ -5,6 +5,7 @@ import { FilamentAskEditor } from '../components/FilamentAskEditor';
 import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
 import { useInventory, useMaterials } from '../api/inventory';
@@ -197,6 +198,7 @@ export function ProjectBuilderScreen() {
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
   const [processPreset, setProcessPreset] = useState<string | null>(null);
+  const [jobOverrides, setJobOverrides] = useState<Record<string, string>>({});
 
   // Undo toast for accidental removals (items, links, non-printed parts)
   const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
@@ -500,7 +502,7 @@ export function ProjectBuilderScreen() {
       // error is shown here and a retry reuses the saved project instead of creating a second one.
       if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
       setGenerating(true);
-      const result = await generateProject(pid, printerIds, processPreset);
+      const result = await generateProject(pid, printerIds, processPreset, {}, jobOverrides);
       setGenerateResult({ jobCount: result.jobs.length });
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
@@ -886,6 +888,15 @@ export function ProjectBuilderScreen() {
             <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
             <div style={{ marginTop: 12 }}>
               <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+              <div style={{ marginTop: 12 }}>
+                <SliceOverridesEditor
+                  title="Job setting overrides"
+                  hint="Applied to every generated job on whichever printer slices it; they win over the printer's overrides."
+                  value={jobOverrides}
+                  onChange={setJobOverrides}
+                  testId="project-overrides"
+                />
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>

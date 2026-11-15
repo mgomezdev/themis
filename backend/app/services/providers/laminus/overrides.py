@@ -17,14 +17,16 @@ from pathlib import Path
 
 from ..contract import CuratedSetting, OverrideInspection, SettingChange, SlotWarning
 
-# High-impact process "intent" settings worth surfacing when they change.
+# High-impact process "intent" settings worth surfacing when they change, and the only keys a job or printer may override.
+_BOOL = ("0", "1")
 CURATED_SETTINGS: tuple[CuratedSetting, ...] = (
-    CuratedSetting("enable_support", "Enable supports"),
-    CuratedSetting("support_type", "Support type"),
+    CuratedSetting("enable_support", "Enable supports", "bool", _BOOL),
+    CuratedSetting("support_type", "Support type", "enum", ("normal(auto)", "tree(auto)", "normal(manual)", "tree(manual)")),
     CuratedSetting("support_threshold_angle", "Support threshold angle"),
-    CuratedSetting("support_on_build_plate_only", "Support on build plate only"),
+    CuratedSetting("support_on_build_plate_only", "Support on build plate only", "bool", _BOOL),
     CuratedSetting("raft_layers", "Raft layers"),
-    CuratedSetting("brim_type", "Brim type"),
+    CuratedSetting("brim_type", "Brim type", "enum",
+                   ("auto_brim", "brim_ears", "painted", "outer_only", "inner_only", "outer_and_inner", "no_brim")),
     CuratedSetting("brim_width", "Brim width"),
     CuratedSetting("sparse_infill_density", "Infill density"),
     CuratedSetting("sparse_infill_pattern", "Infill pattern"),
@@ -32,7 +34,7 @@ CURATED_SETTINGS: tuple[CuratedSetting, ...] = (
     CuratedSetting("top_shell_layers", "Top layers"),
     CuratedSetting("bottom_shell_layers", "Bottom layers"),
     CuratedSetting("layer_height", "Layer height"),
-    CuratedSetting("ironing_type", "Ironing type"),
+    CuratedSetting("ironing_type", "Ironing type", "enum", ("no ironing", "top", "topmost", "solid")),
 )
 CURATED_KEYS: tuple[str, ...] = tuple(c.key for c in CURATED_SETTINGS)
 
@@ -53,6 +55,34 @@ def _read_embedded(source_3mf: Path) -> tuple[dict | None, str | None]:
     except (zipfile.BadZipFile, OSError):
         pass
     return project, model
+
+
+# Preset bookkeeping that names/links the file's own preset: never carried onto another printer's preset.
+_NOT_CARRIED = frozenset({
+    "inherits", "name", "from", "version", "print_settings_id", "setting_id", "base_id", "instantiation", "type",
+    "compatible_printers", "compatible_printers_condition", "print_compatible_printers", "is_custom_defined",
+    "different_settings_to_system", "renamed_from", "description",
+})
+
+
+def embedded_process_overrides(source_3mf: str | Path) -> dict:
+    """The process settings the 3MF's author changed from its system preset, with the file's values.
+
+    Orca/Bambu record what each preset changed in ``different_settings_to_system``: one ``;``-joined key list per
+    preset — index 0 the process (print) preset, then one per filament, the printer last. Only the process entry is
+    carried: filament and printer diffs are specific to the material/machine the file was made for, so they don't
+    belong on another printer's preset. Keys the file doesn't actually store (or preset bookkeeping) are skipped.
+    """
+    embedded, _ = _read_embedded(Path(source_3mf))
+    if not isinstance(embedded, dict):
+        return {}
+    diffs = embedded.get("different_settings_to_system")
+    if isinstance(diffs, str):
+        diffs = [diffs]
+    if not isinstance(diffs, list) or not diffs or not isinstance(diffs[0], str):
+        return {}
+    keys = [k.strip() for k in diffs[0].split(";")]
+    return {k: embedded[k] for k in dict.fromkeys(keys) if k and k not in _NOT_CARRIED and k in embedded}
 
 
 def _max_extruder_index(model_settings_xml: str | None) -> int:

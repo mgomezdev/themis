@@ -6,6 +6,7 @@ import { Progress } from '../components/ui';
 import { useTopbarOverride, type Crumb } from '../components/topbarOverride';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart, type GenerateOut,
@@ -46,6 +47,7 @@ export function ProjectDetailScreen() {
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
   const [processPreset, setProcessPreset] = useState<string | null>(null);
+  const [jobOverrides, setJobOverrides] = useState<Record<string, string>>({});
   const [share, setShare] = useState<ProjectShare | null>(null);
   const [showShare, setShowShare] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
@@ -158,7 +160,7 @@ export function ProjectDetailScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, { allowCached, saveSlice });
+      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, { allowCached, saveSlice }, jobOverrides);
       setGenerateResult({ jobCount: result.jobs.length, files: result.files ?? [] });
       reload();
     } catch (e) {
@@ -374,6 +376,15 @@ export function ProjectDetailScreen() {
             <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
             <div style={{ marginTop: 12 }}>
               <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+              <div style={{ marginTop: 12 }}>
+                <SliceOverridesEditor
+                  title="Job setting overrides"
+                  hint="Applied to every generated job on whichever printer slices it; they win over the printer's overrides."
+                  value={jobOverrides}
+                  onChange={setJobOverrides}
+                  testId="project-overrides"
+                />
+              </div>
             </div>
             <div className="col gap-2" style={{ marginTop: 12 }}>
               <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>

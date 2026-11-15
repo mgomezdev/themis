@@ -4459,6 +4459,33 @@
         }
       }
     },
+    "/api/v1/jobs/override-settings": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Overridable slicer settings",
+        "description": "The settings a job (or a printer) may override, in display order: `key`, `label`, `kind` (\"bool\" | \"enum\" | \"text\")\nand, for bool/enum, the accepted `options`. Precedence when slicing: job > the 3MF's own changes > printer.",
+        "operationId": "override_settings_api_v1_jobs_override_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Override Settings Api V1 Jobs Override Settings Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/check-overrides": {
       "post": {
         "tags": [
@@ -11790,6 +11817,18 @@
             "type": "boolean",
             "title": "Allow Cached",
             "default": true
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
           }
         },
         "type": "object",
@@ -13147,6 +13186,18 @@
               }
             ],
             "title": "Filament Color"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
           }
         },
         "type": "object",
@@ -13632,6 +13683,18 @@
               }
             ],
             "title": "Machine Rate Per Hour"
+          },
+          "slice_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slice Overrides"
           }
         },
         "type": "object",
@@ -13853,6 +13916,18 @@
               }
             ],
             "title": "Preferred Slicer Plugin Id"
+          },
+          "slice_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slice Overrides"
           }
         },
         "type": "object",

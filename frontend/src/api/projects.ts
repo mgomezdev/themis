@@ -179,11 +179,14 @@ export interface GenerateCacheOptions {
 export const generateProject = (
   projectId: number, eligiblePrinterIds: number[] = [], processPreset: string | null = null,
   cache: GenerateCacheOptions = {},
+  /** Slicer setting overrides for every generated job (they win over the printer's own). */
+  overrides: Record<string, string> | null = null,
 ) => request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', {
   eligible_printer_ids: eligiblePrinterIds,
   process_preset: processPreset,
   allow_cached: cache.allowCached ?? true,
   save_slice: cache.saveSlice ?? false,
+  ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
 }));
 
 export interface ProjectJob {

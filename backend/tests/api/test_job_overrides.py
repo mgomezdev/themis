@@ -335,3 +335,49 @@ async def test_check_overrides_serializes_the_providers_inspection_dto_to_the_un
     }
     (call,) = [c for c in provider.fmt.calls if c[0] == "inspect_overrides"]
     assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one
+
+
+async def test_override_settings_lists_curated_keys_with_kinds_and_options(client: AsyncClient):
+    resp = await client.get("/api/v1/jobs/override-settings")
+    assert resp.status_code == 200
+    by_key = {s["key"]: s for s in resp.json()}
+    assert by_key["enable_support"] == {"key": "enable_support", "label": "Enable supports", "kind": "bool", "options": ["0", "1"]}
+    assert by_key["brim_type"]["kind"] == "enum" and {"no_brim", "outer_only", "brim_ears"} <= set(by_key["brim_type"]["options"])
+    assert by_key["layer_height"]["kind"] == "text" and by_key["layer_height"]["options"] == []
+
+
+async def test_printer_slice_overrides_are_cleaned_stored_replaced_and_cleared(client: AsyncClient, create_printer):
+    printer_id = await create_printer(slice_overrides={"brim_type": "outer_only", "post_process": "x"})
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["slice_overrides"] == {"brim_type": "outer_only"}
+
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"slice_overrides": {"enable_support": 1}})
+    assert resp.json()["slice_overrides"] == {"enable_support": "1"}                # whole-dict replace, values as strings
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"name": "renamed"})
+    assert resp.json()["slice_overrides"] == {"enable_support": "1"}                # omitted: unchanged
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"slice_overrides": None})
+    assert resp.json()["slice_overrides"] == {}
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["slice_overrides"] == {}
+
+
+def _orca_3mf(settings: dict, process_diff: list[str]) -> bytes:
+    return _project_3mf({**settings, "different_settings_to_system": [";".join(process_diff), "", ""]})
+
+
+async def test_check_overrides_does_not_flag_3mf_changes_that_carry_over(check):
+    """The file enabled supports; the chosen preset has them off. That change is re-applied when slicing, so nothing is
+    lost. A curated value the author did NOT change (layer height, from the file's own preset) is still flagged."""
+    data = _orca_3mf({"enable_support": "1", "layer_height": "0.2"}, ["enable_support"])
+    resp, _ = await check(data=data, merged={"enable_support": "0", "layer_height": "0.16"})
+    assert resp.json()["setting_changes"] == [{"key": "layer_height", "from": "0.2", "to": "0.16"}]
+
+
+async def test_check_overrides_flags_what_the_job_and_printer_overrides_change(check):
+    """job > 3MF > printer: the job's brim beats the file's; the printer's support type fills in under both."""
+    data = _orca_3mf({"brim_type": "no_brim", "support_type": "normal(auto)"}, ["brim_type"])
+    resp, _ = await check(data=data, merged={"brim_type": "auto_brim", "support_type": "normal(auto)"},
+                          printer={"slice_overrides": {"brim_type": "outer_only", "support_type": "tree(auto)"}},
+                          overrides={"brim_type": "brim_ears"})
+    assert sorted(resp.json()["setting_changes"], key=lambda c: c["key"]) == [
+        {"key": "brim_type", "from": "no_brim", "to": "brim_ears"},
+        {"key": "support_type", "from": "normal(auto)", "to": "tree(auto)"},
+    ]

@@ -34,6 +34,7 @@ from ...services.inventory import read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.contract import OverrideInspection, PlateEstimate
 from ...services.providers.slicing import get_format_provider
+from ...services import slice_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,7 @@ def _inspection_json(i: OverrideInspection) -> dict:
 
 def _clean_overrides(o: dict | None) -> dict | None:
     """Strip any key not in the curated allowlist before storing."""
-    if not o:
-        return None
-    allowed = frozenset(s.key for s in get_format_provider().curated_settings())
-    cleaned = {k: str(v) for k, v in o.items() if k in allowed}
-    return cleaned or None
+    return slice_overrides.clean(o)
 
 
 # Statuses where a printer is physically working on the job and must be told to stop.
@@ -254,6 +251,9 @@ class OverrideCheckRequest(BaseModel):
     print_profile: str
     filament_profile: str | None = None
     filament_color: str | None = None
+    # The job overrides the user has picked so far: the check compares the 3MF against what will really be sliced
+    # (preset < printer overrides < the 3MF's own changes < these).
+    overrides: dict | None = None
 
 
 def _normalise_not_before(v: str | None) -> str | None:
@@ -487,6 +487,14 @@ async def create_job(
     return _to_dict(job)
 
 
+@router.get("/override-settings", summary="Overridable slicer settings", dependencies=[Depends(require_scope("jobs:read"))])
+async def override_settings() -> list[dict]:
+    """The settings a job (or a printer) may override, in display order: `key`, `label`, `kind` ("bool" | "enum" | "text")
+    and, for bool/enum, the accepted `options`. Precedence when slicing: job > the 3MF's own changes > printer."""
+    return [{"key": c.key, "label": c.label, "kind": c.kind, "options": list(c.options)}
+            for c in get_format_provider().curated_settings()]
+
+
 @router.post(
     "/check-overrides",
     summary="Check embedded settings vs presets",
@@ -554,6 +562,10 @@ async def check_overrides(
     except SlicingProviderError as e:
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
+    # What is really sliced: the preset with the printer's overrides, the 3MF's own changes (carried onto this preset) and
+    # the job's overrides on top - so only settings that are actually lost or changed are flagged.
+    config = {**config, **slice_overrides.effective(
+        printer.slice_overrides, await slice_overrides.embedded_for(uploaded_file), _clean_overrides(body.overrides))}
     slots = len(printer.loaded_filaments or []) or 1
     inspection = await asyncio.to_thread(
         with_local_path, get_library_store(), uploaded_file.relative_path,
@@ -1053,6 +1065,7 @@ class CompleteManuallyBody(BaseModel):
 
 def _build_slice_request(
     job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile, machine_preset: str | None,
+    embedded: dict | None = None,
 ) -> SliceRequest:
     """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
     matched `config` - shared by verify-slice and complete-manually, both of which
@@ -1080,8 +1093,7 @@ def _build_slice_request(
     else:
         filament_presets = [filament_profile] if filament_profile else []
 
-    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
-    plate_config.update(job.overrides or {})
+    plate_config = slice_overrides.extra_config(printer.build_plate_type, printer.slice_overrides, embedded, job.overrides)
     return SliceRequest(
         job_id=job.id,
         source_3mf="",
@@ -1140,7 +1152,8 @@ async def verify_slice(
     if not resolution.profile:
         return {"ok": False, "error": resolution.reason or "Printer has no slicer machine profile"}
 
-    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile,
+                               await slice_overrides.embedded_for(uploaded_file))
 
     # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
@@ -1226,7 +1239,8 @@ async def complete_job_manually(
         raise HTTPException(409, f"Job {job_id} is already being manually completed")
     _manual_complete_in_flight.add(job_id)
 
-    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile,
+                               await slice_overrides.embedded_for(uploaded_file))
     output_dir = queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
     try:
         gcode_path = await queue_engine.run_verify_slice(req, output_dir)

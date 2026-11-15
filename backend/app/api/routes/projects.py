@@ -24,7 +24,7 @@ from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
+from ...services import idempotency, job_costs, model_targets, project_events, slice_cache, slice_overrides
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
@@ -210,6 +210,9 @@ class GenerateRequest(BaseModel):
     # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
     # instead of slicing when a printer claims it.
     allow_cached: bool = True
+    # Slicer setting overrides for every generated job ({curated key: value}, e.g. enable supports); they win over the
+    # printer's own overrides.
+    overrides: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1422,6 +1425,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             plate_item_qtys.append(plate_q)
 
         next_pos = await _max_queue_position(session) + 1.0
+        job_overrides = slice_overrides.clean(body.overrides)
         new_jobs: list[Job] = []
         for plate_idx, plate_num in enumerate(effective_plates):
             job = Job(
@@ -1436,6 +1440,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
                 save_slice=body.save_slice,
                 allow_cached_slice=body.allow_cached,
+                overrides=job_overrides,
             )
             session.add(job)
             new_jobs.append(job)

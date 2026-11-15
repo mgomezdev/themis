@@ -21,6 +21,7 @@ import type { ModelSlicerProfile } from '../api/slicerProfiles';
 import { getPrinterProfiles } from '../api/queue';
 import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
 
@@ -135,6 +136,7 @@ export function EditForm({
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
   const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
+  const [sliceOverrides, setSliceOverrides] = useState<Record<string, string>>(printer.slice_overrides ?? {});
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +173,7 @@ export function EditForm({
         nozzle_variant: nozzle,
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
+        slice_overrides: sliceOverrides,
       });
       onSave();
     } catch (e) {
@@ -220,6 +223,14 @@ export function EditForm({
             <option value="Supertack Plate">Supertack Plate</option>
           </select>
         </div>
+
+        <SliceOverridesEditor
+          title="Printer setting overrides"
+          hint="Applied to every job this printer slices (e.g. always add a brim). A job's own overrides and the 3MF's own settings win over these."
+          value={sliceOverrides}
+          onChange={setSliceOverrides}
+          testId="printer-overrides"
+        />
 
         <div>
           <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>

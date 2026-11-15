@@ -11,6 +11,7 @@ import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey } from '../components/ModelTargets';
 import { OverridePanel } from '../components/OverridePanel';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { fileKindOf, isPreslicedKind, type FileKind } from '../lib/fileKind';
 import { staleLabels } from '../components/SliceCache';
@@ -581,6 +582,16 @@ function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelF
                 onChange={onSetOverrides}
               />
             </>
+          )}
+
+          {!gcode && (
+            <SliceOverridesEditor
+              title="Job setting overrides"
+              hint="Applied to this job on whichever printer slices it; they win over the 3MF's settings and the printer's overrides."
+              value={config.confirmedOverrides}
+              onChange={onSetOverrides}
+              testId="job-overrides"
+            />
           )}
         </div>
       </div>

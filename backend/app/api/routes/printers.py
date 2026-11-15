@@ -27,7 +27,7 @@ from ...services.printer_client_factory import (
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
-from ...services import filament_matching, scheduling, slicer_profiles
+from ...services import filament_matching, scheduling, slice_overrides, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -62,6 +62,8 @@ class PrinterCreate(BaseModel):
     bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
     bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
+    # Slicer setting overrides for every job this printer slices ({curated key: value}); job + project-file overrides win.
+    slice_overrides: dict | None = None
 
 
 class PrinterUpdate(BaseModel):
@@ -84,6 +86,8 @@ class PrinterUpdate(BaseModel):
     quiet_end: str | None = None
     # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
     preferred_slicer_plugin_id: str | None = None
+    # Whole-dict replace; non-curated keys are dropped; null / {} clears.
+    slice_overrides: dict | None = None
 
     @model_validator(mode="after")
     def _quiet_hours_pair(self):
@@ -176,6 +180,7 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
         "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
+        "slice_overrides": p.slice_overrides or {},
         "connected": live_client.connected if live_client else False,
     }
 
@@ -337,6 +342,7 @@ async def create_printer(
         bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
         bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
         machine_rate_per_hour=body.machine_rate_per_hour,
+        slice_overrides=slice_overrides.clean(body.slice_overrides),
     )
     session.add(printer)
     await session.commit()
@@ -678,6 +684,8 @@ async def update_printer(
         if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
             raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
         printer.preferred_slicer_plugin_id = wanted
+    if "slice_overrides" in body.model_fields_set:
+        printer.slice_overrides = slice_overrides.clean(body.slice_overrides)
     await session.commit()
     await session.refresh(printer)
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too

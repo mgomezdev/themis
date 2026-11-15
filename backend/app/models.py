@@ -40,6 +40,9 @@ class Printer(Base):
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # The `gcode.produce` plugin this printer slices with (BIZ-291); NULL = the capability default. Not a FK: a plugin may go dormant.
     preferred_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # This printer's slicer setting overrides ({curated key: value}, e.g. brim type); the job's overrides and the project file's own
+    # preset changes win over them (services/slice_overrides). NULL = none.
+    slice_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class PrinterModelRecord(Base):

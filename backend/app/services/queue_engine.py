@@ -34,7 +34,7 @@ from .printer_manager import PrinterManager
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
-from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
+from . import gcode_eligibility, model_targets, slice_cache, slice_overrides, slice_saver, slicer_profiles
 from . import completion_events, job_details
 from .notify import notify
 from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
@@ -72,7 +72,8 @@ def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
     return None
 
 
-def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
+def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None,
+                  embedded: dict | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
     loaded = (printer.loaded_filaments if printer else None) or []
@@ -94,7 +95,9 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
         "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
         "slot_plan": plan,
-        "overrides": (job.overrides or {}) if job else {},
+        # Slicer setting overrides, job > the project file's own preset changes (`embedded`, see slice_overrides) > printer.
+        "overrides": slice_overrides.effective(printer.slice_overrides if printer else None, embedded,
+                                               job.overrides if job else None),
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
     }
 
@@ -225,6 +228,7 @@ class QueueEngine:
         print_profile: str | None = None
         printer_name: str | None = None
         preset_label: dict | None = None
+        estimate_config: dict = {}
 
         async with self._factory() as session:
             job = await session.get(Job, job_id)
@@ -256,6 +260,11 @@ class QueueEngine:
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
+            # The estimate slices with the same setting overrides a real slice on this printer would (supports, brim, ...).
+            if printer is not None:
+                estimate_config = slice_overrides.extra_config(
+                    printer.build_plate_type, printer.slice_overrides, await slice_overrides.embedded_for(uploaded_file),
+                    job.overrides)
 
             # Resolve filament profiles
             fmap = config.filament_map if config else None
@@ -300,6 +309,7 @@ class QueueEngine:
             filament_colours=[],
             export_args=[],
             prepare_hook=None,
+            extra_config=estimate_config,
         )
 
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -912,7 +922,8 @@ class QueueEngine:
                 return None
             if await refresh_content_hash(source_file, get_library_store()):   # the key hashes the model's bytes
                 await session.commit()
-            params = _slice_params(job, config, printer, source_file, machine_preset, plan)
+            params = _slice_params(job, config, printer, source_file, machine_preset, plan,
+                                   await slice_overrides.embedded_for(source_file))
             try:
                 req, fmap = self._slice_request(job.id, printer.id, job.plate_number, params, provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
@@ -1020,7 +1031,8 @@ class QueueEngine:
                 printer.preferred_slicer_plugin_id))) if printer else None
             machine_preset = resolution.profile if resolution else None
             printer_view = PrinterView.of(printer, resolution) if printer else None
-            params = _slice_params(job, config, printer, uploaded_file, machine_preset, plan)
+            params = _slice_params(job, config, printer, uploaded_file, machine_preset, plan,
+                                   await slice_overrides.embedded_for(uploaded_file))
             cfg_tool_index = params["tool_index"]
             is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
@@ -1189,8 +1201,7 @@ class QueueEngine:
         if filament_map:
             ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
             multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-        plate_config = {"curr_bed_type": p["build_plate_type"]} if p["build_plate_type"] else {}
-        plate_config.update(p["overrides"])  # job-level overrides win over printer default
+        plate_config = slice_overrides.extra_config(p["build_plate_type"], None, None, p["overrides"])   # already merged
         filament_profile, filament_color = p["filament_profile"], p["filament_color"]
         req = SliceRequest(
             job_id=job_id,
