@@ -310,6 +310,8 @@ export interface QueueConfig {
   waiver_flag_at: number;
   /** Fleet-wide: a printer waived for at least this many parts takes no more work (0 = off). A printer's own non-zero limit wins. */
   waiver_stop_at: number;
+  /** How a NEW print group packs: 'pool' = each printer packs its own next plate when it picks the group up; 'fixed' = once, at generate, for one bed size. */
+  default_group_strategy: 'pool' | 'fixed';
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

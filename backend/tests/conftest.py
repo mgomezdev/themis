@@ -414,3 +414,17 @@ def _fresh_camera_hub():
     from app.services import camera_hub
     camera_hub.hub = camera_hub.CameraHub()
     yield
+
+
+@pytest.fixture
+async def fixed_groups(session_factory):
+    """New print groups pack at generate ("fixed") for the tests of that path: the shipped default is "pool" (each printer packs its
+    own plate at claim time), under which generate queues no jobs. Use via `pytestmark = pytest.mark.usefixtures("fixed_groups")`."""
+    from app.models import QueueConfig
+    async with session_factory() as s:
+        cfg = await s.get(QueueConfig, 1)
+        if cfg is None:
+            cfg = QueueConfig(id=1, check_interval_minutes=5)
+            s.add(cfg)
+        cfg.default_group_strategy = "fixed"
+        await s.commit()

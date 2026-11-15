@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Literal
 
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -41,6 +42,8 @@ class QueueConfigOut(BaseModel):
     # printer's own threshold, when set, wins.
     waiver_flag_at: int
     waiver_stop_at: int
+    # How a new print group packs: "pool" (each printer packs its own next plate) or "fixed" (once, at generate).
+    default_group_strategy: Literal["pool", "fixed"]
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -55,6 +58,7 @@ class QueueConfigIn(BaseModel):
     waive_after: int | None = Field(default=None, ge=1, le=20)
     waiver_flag_at: int | None = Field(default=None, ge=0, le=1000)
     waiver_stop_at: int | None = Field(default=None, ge=0, le=1000)
+    default_group_strategy: Literal["pool", "fixed"] | None = None
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -93,7 +97,7 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
         row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2, waive_after=2,
-                          waiver_flag_at=0, waiver_stop_at=0,
+                          waiver_flag_at=0, waiver_stop_at=0, default_group_strategy="pool",
                           snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
@@ -129,6 +133,8 @@ async def update_queue_config(
         row.waiver_flag_at = body.waiver_flag_at
     if body.waiver_stop_at is not None:
         row.waiver_stop_at = body.waiver_stop_at
+    if body.default_group_strategy is not None:
+        row.default_group_strategy = body.default_group_strategy
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:

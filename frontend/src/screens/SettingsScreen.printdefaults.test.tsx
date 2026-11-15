@@ -340,6 +340,36 @@ describe('Print defaults - printer offline limit', () => {
 });
 
 
+describe('Print defaults - how new print groups pack', () => {
+  const pack = () => screen.getByLabelText('Pack new print groups') as HTMLSelectElement;
+
+  it('shows the stored choice, and pool for a server that does not say', async () => {
+    open({ 'GET /api/v1/settings/queue': { ...CONFIG, default_group_strategy: 'fixed' } });
+    await waitFor(() => expect(pack().value).toBe('fixed'));
+  });
+
+  it('defaults to packing when a printer picks the group up', async () => {
+    open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+    expect(pack().value).toBe('pool');
+  });
+
+  it('saves the choice alone when it changes', async () => {
+    const api = open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+    fireEvent.change(pack(), { target: { value: 'fixed' } });
+    await waitFor(() => expect(puts(api)).toEqual([{ default_group_strategy: 'fixed' }]));
+    expect(pack().value).toBe('fixed');
+  });
+
+  it('puts the choice back when the save is refused', async () => {
+    open({ [QUEUE]: () => new Reply(500, 'no') });
+    await waitFor(() => expect(interval().value).toBe('5'));
+    fireEvent.change(pack(), { target: { value: 'fixed' } });
+    await waitFor(() => expect(pack().value).toBe('pool'));
+  });
+});
+
 describe('Print defaults - fleet waiver thresholds', () => {
   const flag = () => screen.getByLabelText('Flag a printer after it is waived for') as HTMLInputElement;
   const stop = () => screen.getByLabelText('Take a printer out of the queue after it is waived for') as HTMLInputElement;

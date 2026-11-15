@@ -12,6 +12,10 @@ from tests.fake_providers import FakeProjectConstructor, FakeSlicingProvider
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager
 from tests.slicing_env import slicing_provider
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 
 class PoolPacker(FakeProjectConstructor):
     """`next_plate` fits bed_x // 100 parts (nothing below 100 mm), taken from the inputs in order."""

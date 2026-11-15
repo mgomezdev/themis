@@ -8,11 +8,21 @@ from dataclasses import dataclass
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Printer, PrinterModelRecord, ProjectGroup, ProjectGroupTarget, ProjectItem
+from ..models import Printer, PrinterModelRecord, ProjectGroup, ProjectGroupTarget, ProjectItem, QueueConfig
 
 DEFAULT_GROUP_NAME = "Default Group"
 ANY_KEY = "any"
 MODEL_PREFIX = "model:"
+
+
+DEFAULT_STRATEGY = "pool"
+
+
+async def default_strategy(session: AsyncSession) -> str:
+    """How a new print group packs: Settings -> Print defaults (`queue_config.default_group_strategy`), "pool" when unset."""
+    cfg = await session.get(QueueConfig, 1)
+    value = cfg.default_group_strategy if cfg is not None else None
+    return value if value in ("pool", "fixed") else DEFAULT_STRATEGY
 
 
 async def ensure_default_group(session: AsyncSession, project_id: int) -> ProjectGroup:
@@ -20,7 +30,8 @@ async def ensure_default_group(session: AsyncSession, project_id: int) -> Projec
     group = (await session.execute(select(ProjectGroup).where(
         ProjectGroup.project_id == project_id, ProjectGroup.is_default.is_(True)))).scalar_one_or_none()
     if group is None:
-        group = ProjectGroup(project_id=project_id, name=DEFAULT_GROUP_NAME, sort_order=0, is_default=True)
+        group = ProjectGroup(project_id=project_id, name=DEFAULT_GROUP_NAME, sort_order=0, is_default=True,
+                             strategy=await default_strategy(session))
         session.add(group)
         await session.flush()
     own = select(ProjectGroup.id).where(ProjectGroup.project_id == project_id)

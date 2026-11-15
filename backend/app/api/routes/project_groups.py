@@ -119,7 +119,8 @@ async def list_groups(project_id: int, session: AsyncSession = Depends(get_sessi
 async def create_group(project_id: int, body: GroupCreate, session: AsyncSession = Depends(get_session)) -> dict:
     await _project(session, project_id)
     await pg.ensure_default_group(session, project_id)
-    g = ProjectGroup(project_id=project_id, name=body.name, sort_order=await pg.next_sort_order(session, project_id))
+    g = ProjectGroup(project_id=project_id, name=body.name, sort_order=await pg.next_sort_order(session, project_id),
+                     strategy=await pg.default_strategy(session))
     session.add(g)
     await session.commit()
     return await _full(session, g)

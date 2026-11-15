@@ -18,7 +18,7 @@ import { FieldRow, PageHeader, Toggle } from '../../components/settingsUi';
 export function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, flagAt: 0, stopAt: 0, snapshot: 2, name: '', estimates: false, useLatest: true });
+  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, flagAt: 0, stopAt: 0, strategy: 'pool' as 'pool' | 'fixed', snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -80,6 +80,21 @@ export function PrintDefaultsPage() {
     setWaiveAfter(v);
     await persist('the printer waiver limit', { waive_after: v },
       () => setWaiveAfter(saved.current.waive), () => { saved.current.waive = v; }, setSavingWaive);
+  }
+
+  // How a new print group packs (a group's own choice on the project page overrides it)
+  const [strategy, setStrategy] = useState<'pool' | 'fixed'>('pool');
+  const [savingStrategy, setSavingStrategy] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => {
+      const v = c.default_group_strategy === 'fixed' ? 'fixed' : 'pool';
+      saved.current.strategy = v; setStrategy(v);
+    }).catch(console.error);
+  }, []);
+  async function commitStrategy(v: 'pool' | 'fixed') {
+    setStrategy(v);
+    await persist('how new print groups pack', { default_group_strategy: v },
+      () => setStrategy(saved.current.strategy), () => { saved.current.strategy = v; }, setSavingStrategy);
   }
 
   // Fleet-wide waiver thresholds: flag / take out of the queue a printer waived for this many parts (0 = off)
@@ -337,6 +352,18 @@ export function PrintDefaultsPage() {
                  onBlur={e => commitStopAt(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">parts{savingStopAt ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Pack new print groups"
+                hint="When a printer picks it up: each free printer packs the fullest plate for its own bed from the parts still to print. Now, for one bed size: plates are fixed when the project is generated. Applies to new groups; change any group on its project page.">
+        <div className="row gap-2">
+          <select className="select" aria-label="Pack new print groups" value={strategy}
+                  onChange={e => commitStrategy(e.target.value === 'fixed' ? 'fixed' : 'pool')} style={{ maxWidth: 260 }}>
+            <option value="pool">When a printer picks it up</option>
+            <option value="fixed">Now, for one bed size</option>
+          </select>
+          {savingStrategy && <span className="muted small">saving…</span>}
         </div>
       </FieldRow>
 

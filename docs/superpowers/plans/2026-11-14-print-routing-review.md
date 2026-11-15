@@ -15,7 +15,7 @@ caught (print results on plate clear BIZ-364, printer part waivers BIZ-365). Rev
 ## Decisions (owner, 2026-11-14) and where they stand
 | Decision | Status |
 |---|---|
-| Late packing, plates optimised per printer | exists (pool groups); `fixed` is still the default strategy for a new group |
+| Late packing, plates optimised per printer | exists (pool groups); new groups now default to `pool` — a setting (`queue_config.default_group_strategy`, Settings -> Print defaults); existing groups and slicer-import groups keep `fixed` |
 | Global setting to pull a failing printer out of the queue | was per-printer only -> added fleet-wide `queue_config.waiver_flag_at` / `waiver_stop_at` (a printer's own value wins) |
 | Printer rejects specific parts | exists (waivers; automatic after `waive_after` failures, cleared by a person or a good test print) |
 | Global setting to flag a part by the number of printers rejecting it | exists (`part_retry_limit`: held after failing on N different printers) |
@@ -38,7 +38,8 @@ caught (print results on plate clear BIZ-364, printer part waivers BIZ-365). Rev
 - A printer's own threshold of 0 now means "use the fleet's": one printer cannot be exempted from a fleet stop except by
   giving it a higher limit of its own.
 - `pools.warning` and the unmatched sweep still count a waiver-stopped printer as able to take work.
-- New groups default to `fixed`; pooling is opt-in per group.
+- With `pool` as the default, generate queues no jobs and does not need the project builder to be up: a builder that is down or
+  lacks `next_plate` shows only as a pool that never packs (60 s backoff, log warning).
 - A `fixed`-group plate whose print failed and was cleared without results is not requeued (it stays a failed job in the
   project); only reported results requeue.
 - A completed plate cleared without results credits nothing to `quantity_completed` (pool "done" under-counts until someone

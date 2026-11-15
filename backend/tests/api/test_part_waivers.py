@@ -9,6 +9,11 @@ from app.services.queue_engine import QueueEngine
 from tests.fake_providers import FakeProjectConstructor
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager
 from tests.waiting import cancel_background_tasks
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 STL = b"solid part\nendsolid\n"
 

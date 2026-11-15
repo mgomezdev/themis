@@ -6,6 +6,11 @@ from sqlalchemy import select
 
 from app.models import JobModelTarget, JobPrinterConfig, Printer
 from app.services import model_targets
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 OTHER = {"printer_type": "elegoo_centauri"}
 ANY = {"model_uuid": None, "print_profile": "0.20mm", "filament_type": "PLA", "filament_subtype": "any"}

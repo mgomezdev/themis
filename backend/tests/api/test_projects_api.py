@@ -5,6 +5,10 @@ import zipfile
 import pytest
 from unittest.mock import MagicMock, patch
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 
 def _make_stl_bytes() -> bytes:
     return b"solid part\nendsolid"

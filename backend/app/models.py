@@ -391,6 +391,9 @@ class QueueConfig(Base):
     # A printer's own `waiver_flag_at` / `waiver_stop_at`, when set, wins.
     waiver_flag_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     waiver_stop_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # How a NEW print group packs: "pool" (each printer packs its own next plate when it picks the group up) or "fixed" (packed
+    # once at generate, for one bed size). A group's own strategy can be changed on the project page.
+    default_group_strategy: Mapped[str] = mapped_column(String(20), default="pool", server_default="pool")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
