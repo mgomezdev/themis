@@ -15,6 +15,7 @@ from ...models import (
     Job,
     JobPrinterConfig,
     Printer,
+    QueueConfig,
 )
 from .. import completion_events, job_details
 from ...eventing.hub import hub as event_hub
@@ -324,12 +325,41 @@ class PrintingMixin:
             await session.commit()
         event_hub.wake()
         _qe.logger.warning("Job %s → failed on printer %s: %s", job_id, printer_id, reason)
+        await self._pause_failing_printer(printer_id)
         await self._broadcast_job(job_id)
         await self._publish_job_event("job.failed", job_id, printer_id, origin, {"reason": reason, "phase": "print"}, dedup=f"job.failed:{job_id}:{now}")
         if fire_notices:
             await self._fire_webhooks(job_id, "job.failed")
             await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason, origin=origin)
         return True
+
+    async def _pause_failing_printer(self, printer_id: int) -> bool:
+        """After `queue_config.pause_after_failed_prints` failed prints in a row (0 = never) the printer's queue is switched off,
+        with the reason on the printer and a notification: the brake for plates cleared without results, where no part is ever
+        named. A good print in between starts the count again; switching the queue back on is the person's all-clear. Never
+        raises (it runs inside failure handling)."""
+        try:
+            async with self._factory() as session:
+                cfg = await session.get(QueueConfig, 1)
+                limit = int(cfg.pause_after_failed_prints) if cfg is not None and cfg.pause_after_failed_prints is not None else 3
+                printer = await session.get(Printer, printer_id)
+                if limit <= 0 or printer is None or not printer.queue_on:
+                    return False
+                last = (await session.execute(
+                    select(Job.status).where(Job.printed_on_printer_id == printer_id, Job.status.in_(["complete", "failed"]))
+                    .order_by(Job.completed_at.desc(), Job.id.desc()).limit(limit))).scalars().all()
+                if len(last) < limit or any(s != "failed" for s in last):
+                    return False
+                reason = f"{limit} prints failed in a row"
+                printer.queue_on, printer.queue_paused_reason, name = False, reason, printer.name
+                await session.commit()
+            _qe.logger.warning("Printer %s paused: %s", printer_id, reason)
+            await _qe.notify("printer.paused", None, f"{name} paused", f"{name}: {reason}. Its queue is off until you switch it "
+                             "back on (Fleet).", message_id=f"printer.paused:{printer_id}:{_qe._now()}")
+            return True
+        except Exception:                              # noqa: BLE001
+            _qe.logger.exception("Could not check printer %s for repeated failures", printer_id)
+            return False
 
     async def note_print_blocked(self, job_id: int, printer_id: int, *, origin: str | None, reason: str,
                                  details: Mapping[str, Any] | None = None) -> bool:

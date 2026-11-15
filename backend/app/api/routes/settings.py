@@ -44,6 +44,12 @@ class QueueConfigOut(BaseModel):
     waiver_stop_at: int
     # How a new print group packs: "pool" (each printer packs its own next plate) or "fixed" (once, at generate).
     default_group_strategy: Literal["pool", "fixed"]
+    # A plate cleared without results: a completed print counts as all good / is left awaiting results; a failed print counts as
+    # all failed (printed again) / is left awaiting results.
+    plate_clear_complete: Literal["assume_good", "ask"]
+    plate_clear_failed: Literal["assume_failed", "ask"]
+    # Switch a printer's queue off after this many failed prints in a row (0 = never).
+    pause_after_failed_prints: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -59,6 +65,9 @@ class QueueConfigIn(BaseModel):
     waiver_flag_at: int | None = Field(default=None, ge=0, le=1000)
     waiver_stop_at: int | None = Field(default=None, ge=0, le=1000)
     default_group_strategy: Literal["pool", "fixed"] | None = None
+    plate_clear_complete: Literal["assume_good", "ask"] | None = None
+    plate_clear_failed: Literal["assume_failed", "ask"] | None = None
+    pause_after_failed_prints: int | None = Field(default=None, ge=0, le=20)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -97,7 +106,8 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
         row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, part_retry_limit=2, waive_after=2,
-                          waiver_flag_at=0, waiver_stop_at=0, default_group_strategy="pool",
+                          waiver_flag_at=0, waiver_stop_at=0, default_group_strategy="pool", plate_clear_complete="assume_good",
+                          plate_clear_failed="assume_failed", pause_after_failed_prints=3,
                           snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
@@ -135,6 +145,12 @@ async def update_queue_config(
         row.waiver_stop_at = body.waiver_stop_at
     if body.default_group_strategy is not None:
         row.default_group_strategy = body.default_group_strategy
+    if body.plate_clear_complete is not None:
+        row.plate_clear_complete = body.plate_clear_complete
+    if body.plate_clear_failed is not None:
+        row.plate_clear_failed = body.plate_clear_failed
+    if body.pause_after_failed_prints is not None:
+        row.pause_after_failed_prints = body.pause_after_failed_prints
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:

@@ -8,13 +8,26 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, QueueConfig, UploadedFile
 from . import project_groups
 
 DEFAULT_RETRY_LIMIT = 2
+
+# jobs.outcome: who said what came off the plate. A person ("reviewed") always wins; a plate cleared without results gets the
+# Settings default — and says so. `None` = awaiting results.
+REVIEWED = "reviewed"
+ASSUMED_GOOD = "assumed_good"          # cleared without results after a completed print: every part credited (can be corrected)
+ASSUMED_FAILED = "assumed_failed"      # cleared without results after a failed print: every part printed again (final)
+CLEAR_COMPLETE = ("assume_good", "ask")
+CLEAR_FAILED = ("assume_failed", "ask")
+
+
+def final(job: Job) -> bool:
+    """Whether this plate's result can no longer be changed: its parts are already being printed again."""
+    return job.outcome == ASSUMED_FAILED
 
 
 def _now() -> str:
@@ -26,17 +39,21 @@ async def _retry_limit(session: AsyncSession) -> int:
     return int(cfg.part_retry_limit) if cfg is not None and cfg.part_retry_limit else DEFAULT_RETRY_LIMIT
 
 
-async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, failures: dict[int, int]) -> dict:
+async def record_and_restore(session: AsyncSession, job: Job, printer_id: int | None, failures: dict[int, int],
+                             assumed: str | None = None) -> dict:
     """Record `job`'s per-part results (failures = {project_item_id: quantity_failed}; everything else on the plate succeeded),
     and decide per failed part: requeue or hold. Caller commits, then calls `requeue_reported` (so the results and the plate
-    clear are never lost to a packing error). Returns {"held": [...], "requeue": {project_item_id: quantity}}."""
+    clear are never lost to a packing error). Returns {"held": [...], "requeue": {project_item_id: quantity}}.
+
+    `assumed` (ASSUMED_GOOD / ASSUMED_FAILED) records a default instead of a person's report: the parts move the same way, but
+    nobody said which part failed, so an assumed failure never holds a part and never counts toward a printer's waivers.
+    A person may still correct an ASSUMED_GOOD plate (its assumed rows are replaced); an ASSUMED_FAILED one is final."""
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to report")
-    from . import pools
-    if pools.released(job):
-        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
-    if (await session.execute(select(JobItemFailure.id).where(JobItemFailure.job_id == job.id,
-                                                              JobItemFailure.resolution.is_not(None)).limit(1))).first():
+    if final(job):
+        raise HTTPException(409, "This plate was cleared without results and counted as failed: its parts are already being printed again")
+    if job.outcome != ASSUMED_GOOD and (await session.execute(select(JobItemFailure.id).where(
+            JobItemFailure.job_id == job.id, JobItemFailure.resolution.is_not(None)).limit(1))).first():
         raise HTTPException(409, "This job's print results were already reported")
     on_plate: dict[str, int] = json.loads(job.project_item_quantities)
     unknown = set(failures) - {int(k) for k in on_plate}
@@ -67,12 +84,13 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
         pi.quantity_completed += qty - failed
         resolution = None
         if failed:
-            # Distinct printers it failed on since a person last Reprinted or Dropped it (those reset the count).
-            printers = set((await session.execute(select(JobItemFailure.printer_id).where(
+            # Distinct printers it failed on since a person last Reprinted or Dropped it (those reset the count). Assumed
+            # failures (a plate cleared without results) are not evidence against a part: they neither count nor hold.
+            printers = set((await session.execute(select(JobItemFailure.printer_id).join(Job, Job.id == JobItemFailure.job_id).where(
                 JobItemFailure.project_item_id == item_id, JobItemFailure.quantity_failed > 0,
-                JobItemFailure.printer_id.is_not(None),
+                JobItemFailure.printer_id.is_not(None), or_(Job.outcome.is_(None), Job.outcome != ASSUMED_FAILED),
                 JobItemFailure.resolution.in_(["requeued", "held"])))).scalars()) | {printer_id}
-            if len(printers) >= limit:
+            if assumed is None and len(printers) >= limit:
                 resolution = "held"
                 pi.quantity_held += failed
                 held.append({"project_item_id": item_id, "quantity": failed})
@@ -81,11 +99,11 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int, f
                 requeue[item_id] = failed
         session.add(JobItemFailure(job_id=job.id, project_item_id=item_id, quantity_failed=failed, quantity_on_plate=qty,
                                    printer_id=printer_id, created_at=now, resolution=resolution or "printed"))
-    job.outcome = "reviewed"
+    job.outcome = assumed or REVIEWED
     job.updated_at = now
     await session.flush()
     from . import part_waivers           # BIZ-365: a printer that keeps failing a part is waived for it
-    for item_id in {**requeue, **{h["project_item_id"]: h["quantity"] for h in held}}:
+    for item_id in ({} if assumed else {**requeue, **{h["project_item_id"]: h["quantity"] for h in held}}):
         pi = await session.get(ProjectItem, item_id)
         if pi is not None:
             await part_waivers.after_failure(session, printer_id, pi)
@@ -199,3 +217,38 @@ async def resolve_held(session: AsyncSession, project_id: int, item_id: int, act
             await session.flush()
             job_ids = await requeue_parts(session, source, {item_id: qty})
     return {"requeued_job_ids": job_ids}
+
+
+async def clear_defaults(session: AsyncSession) -> tuple[str, str]:
+    """(completed print, failed print): what a plate cleared without results is taken to mean (Settings -> Print defaults)."""
+    cfg = await session.get(QueueConfig, 1)
+    done = cfg.plate_clear_complete if cfg is not None else None
+    failed = cfg.plate_clear_failed if cfg is not None else None
+    return (done if done in CLEAR_COMPLETE else CLEAR_COMPLETE[0], failed if failed in CLEAR_FAILED else CLEAR_FAILED[0])
+
+
+async def awaiting_results(session: AsyncSession, printer_id: int) -> list[Job]:
+    """Finished project plates this printer ran that nobody has given a result for, oldest first."""
+    seen = select(JobItemFailure.job_id)
+    return list((await session.execute(select(Job).where(
+        Job.assigned_printer_id == printer_id, Job.project_id.is_not(None), Job.project_item_quantities.is_not(None),
+        Job.status.in_(["complete", "failed"]), Job.outcome.is_(None), Job.id.not_in(seen)).order_by(Job.id))).scalars().all())
+
+
+async def apply_clear_defaults(session: AsyncSession, printer: Printer) -> list[dict]:
+    """The plate was cleared WITHOUT results: give every finished, unreported project plate of this printer the Settings default
+    for how its print ended (a test print is not a project result and is skipped). Returns [{job_id, result, requeue}] for the
+    plates a default was applied to; the caller commits and then requeues (`requeue_reported`) each `requeue`."""
+    on_complete, on_failed = await clear_defaults(session)
+    applied: list[dict] = []
+    for job in await awaiting_results(session, printer.id):
+        if job.id == printer.test_print_job_id:
+            continue
+        on_plate = {int(k): int(n) for k, n in json.loads(job.project_item_quantities).items() if int(n) > 0}
+        if job.status == "complete" and on_complete == "assume_good":
+            await record_and_restore(session, job, printer.id, {}, assumed=ASSUMED_GOOD)
+            applied.append({"job_id": job.id, "result": ASSUMED_GOOD, "requeue": {}})
+        elif job.status == "failed" and on_failed == "assume_failed":
+            recorded = await record_and_restore(session, job, printer.id, on_plate, assumed=ASSUMED_FAILED)
+            applied.append({"job_id": job.id, "result": ASSUMED_FAILED, "requeue": recorded["requeue"]})
+    return applied

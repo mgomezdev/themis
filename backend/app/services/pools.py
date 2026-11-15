@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, UploadedFile
@@ -24,7 +24,6 @@ from .library_store import get_library_store
 from .providers.contract import ConstructInput, ConstructRequest, NothingFits, TargetPrinter
 
 POOL = "pool"
-UNREPORTED = "unreported"      # jobs.outcome of a failed pool plate cleared without results: its parts went back to the pool
 
 
 def poolable(item) -> bool:
@@ -41,33 +40,11 @@ async def _reserved(session: AsyncSession, group_id: int, live_only: bool) -> di
     stmt = select(Job).where(Job.pool_group_id == group_id, Job.status != "cancelled")
     if live_only:
         stmt = stmt.where(Job.status.not_in(["complete", "failed"]))
-    else:
-        # A plate whose print FAILED and whose plate was then cleared WITHOUT results (`outcome = "unreported"`, set by the
-        # plate-cleared route) made nothing we know of: its parts are to print again, never silently missing from the project.
-        # Until that clear it keeps them, so nothing is repacked while someone may still report what came off the plate.
-        stmt = stmt.where(or_(Job.status != "failed", Job.outcome.is_(None), Job.outcome != UNREPORTED))
     out: dict[int, int] = {}
     for j in (await session.execute(stmt)).scalars():
         for k, n in json.loads(j.project_item_quantities or "{}").items():
             out[int(k)] = out.get(int(k), 0) + int(n)
     return out
-
-
-async def release_unreported(session: AsyncSession, printer_id: int) -> int:
-    """The plate of `printer_id` was cleared without results: every failed pool plate it ran that nobody reported gives its
-    parts back to the pool. Returns how many plates were released. Caller commits."""
-    reported = select(JobItemFailure.job_id)
-    jobs = (await session.execute(select(Job).where(
-        Job.assigned_printer_id == printer_id, Job.pool_group_id.is_not(None), Job.status == "failed",
-        Job.outcome.is_(None), Job.id.not_in(reported)))).scalars().all()
-    for job in jobs:
-        job.outcome = UNREPORTED
-    return len(jobs)
-
-
-def released(job: Job) -> bool:
-    """Whether this plate's parts already went back to the pool (so it can no longer be reported or requeued)."""
-    return job.pool_group_id is not None and job.outcome == UNREPORTED
 
 
 async def remaining(session: AsyncSession, group: ProjectGroup) -> dict[int, int]:

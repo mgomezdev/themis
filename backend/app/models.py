@@ -35,6 +35,8 @@ class Printer(Base):
     nozzle_variant: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Why Themis switched this printer's queue off by itself (failed prints in a row); cleared when the queue is switched on.
+    queue_paused_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
     build_plate_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -394,6 +396,13 @@ class QueueConfig(Base):
     # How a NEW print group packs: "pool" (each printer packs its own next plate when it picks the group up) or "fixed" (packed
     # once at generate, for one bed size). A group's own strategy can be changed on the project page.
     default_group_strategy: Mapped[str] = mapped_column(String(20), default="pool", server_default="pool")
+    # What a finished project plate cleared WITHOUT results is taken to mean (services/print_results.py): a completed print
+    # "assume_good" (every part credited) or "ask" (left awaiting results); a failed print "assume_failed" (every part printed
+    # again) or "ask". A person's report always wins over the default.
+    plate_clear_complete: Mapped[str] = mapped_column(String(20), default="assume_good", server_default="assume_good")
+    plate_clear_failed: Mapped[str] = mapped_column(String(20), default="assume_failed", server_default="assume_failed")
+    # A printer's queue is switched off after this many failed prints in a row (0 = never); `printers.queue_paused_reason` says why.
+    pause_after_failed_prints: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
