@@ -6,14 +6,17 @@ import { markPlateCleared, type PlateResults } from '../api/printers';
  * Failed parts go back into their print group's queue on their own; one that keeps failing on different printers is held on
  * its project. Submitting clears the plate.
  */
-export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
-  printerId: string;
+export function PrintResultsModal({ printerId, pending, onClose, onDone, onSubmit }: {
+  printerId?: string;
   pending: PlateResults;
   onClose: () => void;
   onDone: () => void;
+  /** Late-report mode (History): save the counts here instead of clearing the printer's plate. */
+  onSubmit?: (results: { project_item_id: number; quantity_failed: number }[]) => Promise<void>;
 }) {
+  // A failed print opens on "whole plate failed": the person adjusts down if some parts are usable.
   const [failed, setFailed] = useState<Record<number, number>>(
-    Object.fromEntries(pending.parts.map(p => [p.project_item_id, 0])));
+    Object.fromEntries(pending.parts.map(p => [p.project_item_id, pending.print_failed ? p.quantity : 0])));
   const [saving, setSaving] = useState(false);
   const isTest = pending.test_print_waiver_id != null;        // BIZ-365: a test print of a waived part
   const [clearIt, setClearIt] = useState(true);
@@ -26,11 +29,13 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
     setSaving(true);
     setError(null);
     try {
-      await markPlateCleared(printerId, {
+      const results = pending.parts.filter(p => failed[p.project_item_id] > 0)
+        .map(p => ({ project_item_id: p.project_item_id, quantity_failed: failed[p.project_item_id] }));
+      if (onSubmit) await onSubmit(results);
+      else await markPlateCleared(printerId as string, {
         job_id: pending.job_id,
         ...(isTest ? { clear_waiver: clearIt && pending.parts.every(p => (failed[p.project_item_id] ?? 0) === 0) } : {}),
-        results: pending.parts.filter(p => failed[p.project_item_id] > 0)
-          .map(p => ({ project_item_id: p.project_item_id, quantity_failed: failed[p.project_item_id] })),
+        results,
       });
       onDone();
     } catch (e) {
@@ -65,11 +70,16 @@ export function PrintResultsModal({ printerId, pending, onClose, onDone }: {
             This was a test print: clear the waiver if nothing failed
           </label>
         )}
+        {pending.print_failed && (
+          <div className="notice warn small" role="note" style={{ marginTop: 12 }}>
+            This print ended in a failure — adjust if some parts are usable.
+          </div>
+        )}
         {error && <div style={{ color: 'var(--err)', fontSize: 13, marginTop: 10 }}>{error}</div>}
         <div className="row gap-2" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
           <button className="btn ghost sm" onClick={onClose}>Cancel</button>
           <button className="btn primary sm" disabled={saving} onClick={submit}>
-            {saving ? 'Saving…' : 'Clear plate'}
+            {saving ? 'Saving…' : onSubmit ? 'Save results' : 'Clear plate'}
           </button>
         </div>
       </div>

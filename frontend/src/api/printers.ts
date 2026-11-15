@@ -112,6 +112,7 @@ export interface ApiPrinter {
   model_label: string | null;                // "<manufacturer> <model>" of the printer's registry model
   enabled: boolean;
   queue_on: boolean;
+  queue_paused_reason?: string | null;   // why Themis switched the queue off by itself; cleared when a person switches it on
   configured: boolean;            // BIZ-369: a connection confirmed its setup; only configured printers take work
   config_error: string | null;    // last test failure / missing-field reason
   connected: boolean;
@@ -373,6 +374,8 @@ export interface PlateResultsIn {
 export interface PlateClearedOut {
   ok: boolean;
   requeued_job_ids?: number[];                                  // failed parts packed again (reported results only)
+  /** Finished plates cleared without results: the default applied to each (see Settings → Print defaults). */
+  assumed?: { job_id: number; result: 'assumed_good' | 'assumed_failed'; requeued_job_ids?: number[] }[];
   held?: { project_item_id: number; quantity: number }[];       // failed on too many printers: a person decides
 }
 
@@ -382,6 +385,7 @@ export interface PlateResults {
   project_id: number | null;
   parts: { project_item_id: number; file_name: string; quantity: number }[];
   test_print_waiver_id: number | null;    // BIZ-365: this job is the printer's test print for that waiver
+  print_failed?: boolean;                 // the print ended in a failure: the dialog opens on "whole plate failed"
 }
 
 /** A part this printer keeps failing and no longer gets (BIZ-365). */

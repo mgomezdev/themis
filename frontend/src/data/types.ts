@@ -38,6 +38,8 @@ export interface Printer {
   fanBox: number;
   bedTempTarget: number;
   queueOn: boolean;
+  /** Why Themis switched the queue off by itself (e.g. failed prints in a row); null when a person did or it is on. */
+  queuePausedReason?: string | null;
   /** BIZ-369: false until a connection confirms its setup; such a printer takes no work. Absent = configured. */
   configured?: boolean;
   /** Why setup is incomplete (last test failure / missing field). */

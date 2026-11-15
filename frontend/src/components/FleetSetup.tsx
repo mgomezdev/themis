@@ -15,7 +15,10 @@ export function QueueStateBadges({ printer: p }: { printer: Printer }) {
         color: 'var(--warn)', border: '1px solid var(--warn)',
       }}>SETUP INCOMPLETE</span>
     )}
-    {!p.queueOn && (
+    {!p.queueOn && p.queuePausedReason ? (
+      <span className="tiny tone-warn tint tone-text" data-testid="queue-off-badge" title="Switch the queue back on to resume"
+            style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', fontWeight: 600 }}>Paused: {p.queuePausedReason}</span>
+    ) : !p.queueOn && (
       <span className="tiny tone-idle tint-bg" data-testid="queue-off-badge" style={{ padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--text-3)' }}>QUEUE OFF</span>
     )}
   </>;

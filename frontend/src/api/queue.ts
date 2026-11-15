@@ -315,6 +315,12 @@ export interface QueueConfig {
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;
+  /** A finished print whose plate is cleared without results (QR code, automation, no answer): 'assume_good' credits every part, 'ask' leaves it awaiting a report. */
+  plate_clear_complete: 'assume_good' | 'ask';
+  /** A failed print cleared without results: 'assume_failed' reprints the whole plate, 'ask' leaves it awaiting a report. */
+  plate_clear_failed: 'assume_failed' | 'ask';
+  /** A printer's queue is switched off after this many failed prints in a row (0 = off). */
+  pause_after_failed_prints: number;
 }
 
 export async function getQueueConfig(): Promise<QueueConfig> {
@@ -437,6 +443,25 @@ export async function markJobOutcome(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ failures }),
   });
+}
+
+export interface JobResultsOut { ok: boolean; requeued_job_ids: number[]; held: { project_item_id: number; quantity: number }[] }
+
+/** Report (or correct) what came off a finished project plate after it was cleared; failed parts are requeued. A 409 carries the reason in `detail`. */
+export async function reportJobResults(
+  jobId: number,
+  results: { project_item_id: number; quantity_failed: number }[],
+): Promise<JobResultsOut> {
+  const resp = await apiFetch(`/api/v1/jobs/${jobId}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(typeof body?.detail === 'string' ? body.detail : `${resp.status} ${resp.statusText}`);
+  }
+  return resp.json();
 }
 
 export async function reorderQueue(

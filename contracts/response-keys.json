@@ -9,6 +9,7 @@
     "dormant_reason",
     "enabled",
     "queue_on",
+    "queue_paused_reason",
     "configured",
     "config_error",
     "connected",
@@ -52,6 +53,7 @@
     "model_label",
     "enabled",
     "queue_on",
+    "queue_paused_reason",
     "configured",
     "config_error",
     "connected",
@@ -187,7 +189,7 @@
     "source_ref",
     "pack_rule"
   ],
-  "plate_results": ["job_id", "project_id", "parts", "test_print_waiver_id"],
+  "plate_results": ["job_id", "project_id", "parts", "test_print_waiver_id", "print_failed"],
   "part_waiver": ["id", "part_key", "file_name", "failures", "last_failure_at", "projects"],
   "project_failure": ["id", "project_item_id", "file_name", "job_id", "printer_id", "printer_name", "quantity_failed", "created_at", "resolution"],
   "project_group": [
