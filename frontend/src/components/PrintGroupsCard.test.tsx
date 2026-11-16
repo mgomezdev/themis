@@ -26,11 +26,29 @@ function open(groups: ProjectGroup[]) {
     'GET /api/v1/jobs/override-settings': [
       { key: 'enable_support', label: 'Enable supports', kind: 'bool', options: ['0', '1'] },
       { key: 'brim_type', label: 'Brim type', kind: 'enum', options: ['auto_brim', 'brim_ears', 'no_brim'] },
+      { key: 'brim_width', label: 'Brim width', kind: 'text', options: [] },
     ],
   });
 }
 
 describe('PrintGroupsCard (BIZ-360)', () => {
+  it('saves a typed override once, on blur, not on every keystroke', async () => {
+    const { resetOverrideSettingsCache } = await import('./overrideSettings');
+    resetOverrideSettingsCache();
+    const api = open([group(1, 'Default Group'), group(2, 'Fine', { overrides: { brim_width: '5' } })]);
+    render(<PrintGroupsCard projectId={7} items={[]} />);
+    const scope = await screen.findByTestId('group-overrides-2');
+    const width = within(scope).getByLabelText('Brim width');
+    fireEvent.change(width, { target: { value: '1' } });
+    fireEvent.change(width, { target: { value: '10' } });
+    expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(0);
+    fireEvent.blur(width);
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2').map(c => c.body)).toEqual([
+      { overrides: { brim_width: '10' } }]));
+    fireEvent.blur(width);                                                  // nothing changed since: no second save
+    expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(1);
+  });
+
   it("saves a group's setting overrides (enable supports, a brim type) and clears them when the last is removed", async () => {
     const { resetOverrideSettingsCache } = await import('./overrideSettings');
     resetOverrideSettingsCache();

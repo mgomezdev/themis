@@ -60,13 +60,15 @@ def test_a_bare_or_broken_file_carries_nothing(tmp_path):
 
 def test_unsafe_carried_keys_are_dropped(tmp_path):
     """A post-processing script would make the Orca CLI refuse the slice on every printer; wipe-tower positions belong to
-    the original bed; a per-extruder (multi-value) setting doesn't fit another printer's extruder count."""
+    the original bed; a per-extruder (multi-value) setting doesn't fit another printer's extruder count; a filament index
+    (support interface on filament 2) isn't rewritten by a tool remap and may not exist on the target."""
     path = tmp_path / "m.3mf"
     path.write_bytes(_orca_3mf(
         {"post_process": "/usr/bin/script.py", "filename_format": "{input_filename_base}.gcode", "gcode_substitutions": ["a"],
-         "wipe_tower_x": ["165"], "wipe_tower_y": ["250"], "outer_wall_speed": ["200", "180"], "enable_support": "1"},
+         "wipe_tower_x": ["165"], "wipe_tower_y": ["250"], "outer_wall_speed": ["200", "180"], "enable_support": "1",
+         "support_interface_filament": "2", "wall_filament": "3"},
         process_diff=["post_process", "filename_format", "gcode_substitutions", "wipe_tower_x", "wipe_tower_y",
-                      "outer_wall_speed", "enable_support"]))
+                      "outer_wall_speed", "enable_support", "support_interface_filament", "wall_filament"]))
     assert embedded_process_overrides(path) == {"enable_support": "1"}
 
 

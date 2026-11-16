@@ -418,3 +418,20 @@ async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpo
         resp = await client.post(f"/api/v1/jobs/{job_id}/{endpoint}", json={"printer_id": printer_id})
 
     return resp, seen
+
+
+async def test_blank_job_and_target_override_values_are_dropped(client: AsyncClient, upload_3mf, create_printer):
+    """An override added but left empty in the editor would reach the slicer as "" and fail the slice."""
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "overrides": {"layer_height": "", "brim_type": "outer_only"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P", "filament_type": "any", "filament_color": "any",
+                                 "overrides": {"wall_loops": " ", "enable_support": "1"}}],
+        })
+    assert resp.status_code == 201, resp.text
+    detail = (await client.get(f"/api/v1/jobs/{resp.json()['id']}/details")).json()
+    assert detail["overrides"] == {"brim_type": "outer_only"}
+    assert detail["printer_configs"][0]["overrides"] == {"enable_support": "1"}

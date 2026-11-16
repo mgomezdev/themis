@@ -44,12 +44,8 @@ def _inspection_json(i: OverrideInspection) -> dict:
 
 
 def _clean_overrides(o: dict | None) -> dict | None:
-    """Strip any key not in the curated allowlist before storing."""
-    if not o:
-        return None
-    allowed = frozenset(s.key for s in get_format_provider().curated_settings())
-    cleaned = {k: str(v) for k, v in o.items() if k in allowed}
-    return cleaned or None
+    """Strip any key not in the curated allowlist, and any blank value (it would reach the slicer as ""), before storing."""
+    return slice_overrides.clean(o)
 
 
 # Statuses where a printer is physically working on the job and must be told to stop.

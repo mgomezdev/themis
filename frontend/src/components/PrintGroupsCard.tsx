@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createProjectGroup, deleteProjectGroup, listProjectGroups, orderProjectGroups, patchProjectGroup, updateProjectItem,
   type ProjectGroup, type ProjectGroupPatch, type ProjectItem,
@@ -102,6 +102,9 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
   // BIZ-362: a pool packs each claimed plate for the claiming printer's own bed, so it has no envelope.
   const pool = group.strategy === 'pool';
   const [overrides, setOverrides] = useState<Record<string, string>>(group.overrides ?? {});
+  const savedOverrides = JSON.stringify(group.overrides ?? {});
+  const lastSent = useRef(savedOverrides);
+  useEffect(() => { setOverrides(JSON.parse(savedOverrides)); lastSent.current = savedOverrides; }, [savedOverrides]);   // the server wins
   const [maxParts, setMaxParts] = useState(group.max_parts?.toString() ?? '');
   useEffect(() => { setMaxParts(group.max_parts?.toString() ?? ''); }, [group.max_parts]);
   const saveMaxParts = () => {
@@ -206,7 +209,12 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
           title="Setting overrides"
           hint="Copied onto this group's jobs (not pre-sliced G-code). They win over the 3MF's own settings and the printer's overrides."
           value={overrides}
-          onChange={v => { setOverrides(v); onPatch({ overrides: Object.keys(v).length > 0 ? v : null }); }}
+          onChange={setOverrides}
+          onCommit={v => {
+            if (JSON.stringify(v) === lastSent.current) return;               // e.g. a blur with nothing typed
+            lastSent.current = JSON.stringify(v);
+            onPatch({ overrides: Object.keys(v).length > 0 ? v : null });
+          }}
           testId={`group-overrides-${group.id}`}
         />
       </div>

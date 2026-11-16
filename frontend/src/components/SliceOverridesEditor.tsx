@@ -19,13 +19,15 @@ interface Props {
   hint?: string;
   /** Prefix for data-testids (several editors can share a page). */
   testId?: string;
+  /** Called with the value to SAVE: right away for a pick/remove, on blur for typed text (`onChange` sees every keystroke). */
+  onCommit?: (v: Record<string, string>) => void;
 }
 
 /**
  * Pick slicer setting overrides (supports, brim type, ...) from the provider's curated list. Used for a job, a project's
  * generated jobs and a printer. When slicing: job > the 3MF's own changes > printer.
  */
-export function SliceOverridesEditor({ value, onChange, title, hint, testId = 'slice-overrides' }: Props) {
+export function SliceOverridesEditor({ value, onChange, title, hint, testId = 'slice-overrides', onCommit }: Props) {
   const [settings, setSettings] = useState<OverrideSetting[] | null>(null);
 
   useEffect(() => {
@@ -39,11 +41,16 @@ export function SliceOverridesEditor({ value, onChange, title, hint, testId = 's
   const chosen = Object.keys(value).filter(k => byKey.has(k));
   const available = settings.filter(s => !(s.key in value));
 
-  function set(key: string, v: string) { onChange({ ...value, [key]: v }); }
+  function set(key: string, v: string, commit = true) {
+    const next = { ...value, [key]: v };
+    onChange(next);
+    if (commit) onCommit?.(next);
+  }
   function remove(key: string) {
     const next = { ...value };
     delete next[key];
     onChange(next);
+    onCommit?.(next);
   }
 
   return (
@@ -67,7 +74,8 @@ export function SliceOverridesEditor({ value, onChange, title, hint, testId = 's
                 </select>
               ) : (
                 <input className="input mono" style={{ width: 140 }} aria-label={s.label}
-                       data-testid={`${testId}-value-${key}`} value={v} onChange={e => set(key, e.target.value)} />
+                       data-testid={`${testId}-value-${key}`} value={v} onChange={e => set(key, e.target.value, false)}
+                       onBlur={() => onCommit?.(value)} />
               )}
               <button type="button" className="btn ghost sm" aria-label={`Remove ${s.label}`}
                       data-testid={`${testId}-remove-${key}`} onClick={() => remove(key)}>×</button>

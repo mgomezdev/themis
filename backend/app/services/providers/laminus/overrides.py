@@ -68,6 +68,10 @@ _NOT_CARRIED = frozenset({
     "post_process", "filename_format", "gcode_substitutions",
     # positions on the original printer's bed
     "wipe_tower_x", "wipe_tower_y",
+    # 1-based filament/extruder indices: a tool remap rewrites the model's assignments but not these, and the target may
+    # have fewer extruders
+    "support_filament", "support_interface_filament", "wall_filament", "sparse_infill_filament", "solid_infill_filament",
+    "wipe_tower_filament",
 })
 
 

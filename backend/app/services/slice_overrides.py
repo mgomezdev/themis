@@ -49,8 +49,8 @@ def _read_embedded(uploaded_file):
 
 async def embedded_for(uploaded_file) -> dict:
     """The project file's own preset changes (see module doc); {} for G-code, a missing file or none recorded. Read in a
-    worker thread (never on the queue loop); a read error is logged and yields {}. Used by the New Job check — at slice time
-    the provider reads the file it slices itself."""
+    worker thread (never on the queue loop); a read error is logged and yields {}. Used by `POST /jobs/check-overrides` — at
+    slice time the provider reads the file it slices itself."""
     if uploaded_file is None or not uploaded_file.relative_path or is_presliced_file(uploaded_file):
         return {}
     try:
