@@ -41,7 +41,7 @@ export function WaivedPartsCard({ printerId, flagAt, stopAt, onThresholds }: {
           <input className="input" type="number" min={0} aria-label="Stop at waived parts" value={stopAt} style={{ width: 70 }}
                  onChange={e => onThresholds({ waiver_flag_at: flagAt, waiver_stop_at: Math.max(0, Math.trunc(Number(e.target.value)) || 0) })} />
         </label>
-        <span className="tiny muted">waived parts (0 = off)</span>
+        <span className="tiny muted">waived parts (0 = use the fleet setting from Settings)</span>
       </div>
       {error && <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 6 }}>{error}</div>}
       {note && <div className="tiny" style={{ color: 'var(--ok)', marginBottom: 6 }}>{note}</div>}

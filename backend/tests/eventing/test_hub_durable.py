@@ -14,6 +14,10 @@ from app.plugins.host import plugin_host
 from tests.eventing.fakes import definer_manifest, enable, register, subscriber_manifest
 from tests.waiting import wait_until
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 
 def complete(job_id: int = 1) -> EventEnvelope:
     return EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": job_id}, dedup_key=f"job.complete:{job_id}", payload={"source": "queue"})

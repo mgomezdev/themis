@@ -14,6 +14,10 @@ from app.services import slice_cache
 from app.services.library_scanner import library_abs_path
 from tests.conftest import make_sliced_archive, slice_info_xml
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 
 async def test_job_details_carry_the_cache_flags_and_the_last_decision(client, create_job, session_factory):
     job_id = await create_job()

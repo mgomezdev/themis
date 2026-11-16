@@ -13,6 +13,11 @@ from app.models import Job, Printer, ProjectItem, UploadedFile
 from app.services.providers.contract import PlateManifest
 from tests.conftest import slice_info_xml
 from tests.fake_providers import FakeProjectConstructor
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 
 def _two_plate_3mf(tag: str = "a") -> bytes:

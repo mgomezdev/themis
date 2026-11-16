@@ -28,6 +28,7 @@ import type { LibraryFile } from '../data/types';
 import {
   listProjectGroups, createProjectGroup, orderProjectGroups, getProjectReview, generateProject,
   type ProjectGroup, type ProjectReview,
+  pooledGroups, generateWarnings,
 } from '../api/projects';
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ export function ProjectBuilderScreen() {
   const [saveError, setSaveError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [generateResult, setGenerateResult] = useState<{ jobCount: number; warnings: string[] } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ jobCount: number; pools: number; warnings: string[] } | null>(null);
   // Review (BIZ-363)
   const [review, setReview] = useState<ProjectReview | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -172,7 +173,7 @@ export function ProjectBuilderScreen() {
       const pid = await save();
       setGenerating(true);
       const result = await generateProject(pid);
-      setGenerateResult({ jobCount: result.jobs.length, warnings: (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w) });
+      setGenerateResult({ jobCount: result.jobs.length, pools: pooledGroups(result), warnings: generateWarnings(result) });
       loadReview(pid, currentSnap);
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
@@ -309,7 +310,7 @@ export function ProjectBuilderScreen() {
       <ReviewPanel review={review} loading={reviewLoading || saving} error={reviewError}
                    onGo={(t, ch) => { if (ch.group_id != null) setBannerSel(ch.group_id); setTab(t); }} />
       {generateResult && (
-        <QueueSuccess jobCount={generateResult.jobCount} warnings={generateResult.warnings}
+        <QueueSuccess jobCount={generateResult.jobCount} pools={generateResult.pools} warnings={generateResult.warnings}
                       onOpenQueue={() => navigate('/queue')} onOpenProject={() => navigate(`/projects/${projectId}`)} />
       )}
       {generateError && (

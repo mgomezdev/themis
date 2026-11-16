@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import itertools
+import json
 import logging
 import os
 import re
@@ -50,6 +51,7 @@ from .queue import preference
 _PATCH_POINTS = (get_library_store, notify, webhook_service, slicing_provider_for, get_format_provider, resolve_slicing, plugin_host)
 
 logger = logging.getLogger(__name__)
+POOL_RETRY_DROPPED_S = 900.0     # a pool plate dropped before printing: its parts are not re-packed for that printer this long
 POOL_BACKOFF_S = 60.0            # BIZ-362: after a pool pack error, the pool is skipped this long
 _monotonic = time.monotonic
 
@@ -288,6 +290,8 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         self._pool_busy: dict[int, int] = {}
         self._pool_backoff: dict[int, float] = {}
         self._pool_nofit: dict[tuple[int, int], tuple] = {}
+        # (group id, printer id) -> (item ids of plates that could not be sliced / started there, monotonic time they may be tried again)
+        self._pool_dropped: dict[tuple[int, int], tuple[frozenset, float]] = {}
         self._pool_tasks: set[asyncio.Task] = set()
         # Slice-and-print, upload-and-print and notification tasks in flight (see _spawn). stop() cancels and awaits them.
         self._job_tasks: set[asyncio.Task] = set()
@@ -522,7 +526,7 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
             await part_waivers.end_stale_test_print(session, printer)
             await session.commit()
         only_job = printer.test_print_job_id
-        if only_job is None and part_waivers.stopped(printer, len(waived)):
+        if only_job is None and part_waivers.stopped(printer, len(waived), await part_waivers.fleet_limits(session)):
             return
         job = config = fit = None
         rows = (await session.execute(stmt)).all()
@@ -632,6 +636,8 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         if gid in self._pool_busy or self._pool_backoff.get(gid, 0) > _monotonic():
             return False
         take = await pools.takeable(session, group, printer, conflicts)
+        skip = self._pool_skip(gid, printer.id)
+        take = {k: v for k, v in take.items() if k not in skip}
         snapshot = tuple(sorted(take.items()))
         if not take or self._pool_nofit.get((gid, printer.id)) == snapshot:
             return False
@@ -640,15 +646,44 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         if constructor is None:
             return False
         self._pool_busy[gid] = printer.id
-        task = asyncio.create_task(self._pack_pool_plate(gid, printer.id, constructor, snapshot), name=f"pool-{gid}-{printer.id}")
+        task = asyncio.create_task(self._pack_pool_plate(gid, printer.id, constructor, snapshot, skip), name=f"pool-{gid}-{printer.id}")
         self._pool_tasks.add(task)
         task.add_done_callback(self._pool_tasks.discard)
         return True
 
-    async def _pack_pool_plate(self, gid: int, printer_id: int, constructor, snapshot: tuple) -> None:
+    def _pool_skip(self, gid: int, printer_id: int) -> frozenset:
+        """Item ids of pool `gid` that `printer_id` must not be packed again for now (a plate of them was just dropped there)."""
+        items, until = self._pool_dropped.get((gid, printer_id), (frozenset(), 0.0))
+        if until <= _monotonic():
+            self._pool_dropped.pop((gid, printer_id), None)
+            return frozenset()
+        return items
+
+    async def _pool_plate_dropped(self, job_id: int, printer_id: int | None = None) -> None:
+        """A pool plate was cancelled before it printed (slicing failed, it was blocked, the upload or start failed). Its parts
+        are back in the pool; without this the same printer would pack, slice and drop the same plate again every cycle — a new
+        file, a cancelled job and a notification each time. The parts are kept from THAT printer for `POOL_RETRY_DROPPED_S`
+        (other printers, and this printer's other parts, carry on); after it, or a restart, they are tried again."""
+        try:
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+                if job is None or job.pool_group_id is None:
+                    return
+                if printer_id is None:
+                    printer_id = (await session.execute(select(JobPrinterConfig.printer_id).where(
+                        JobPrinterConfig.job_id == job_id).limit(1))).scalar()
+                if printer_id is None:
+                    return
+                items = frozenset(int(k) for k, n in json.loads(job.project_item_quantities or "{}").items() if int(n) > 0)
+                key = (job.pool_group_id, printer_id)
+            self._pool_dropped[key] = (self._pool_skip(*key) | items, _monotonic() + POOL_RETRY_DROPPED_S)
+        except Exception:                              # noqa: BLE001 - bookkeeping never breaks the caller's failure handling
+            logger.warning("pool plate %s: could not note the drop", job_id, exc_info=True)
+
+    async def _pack_pool_plate(self, gid: int, printer_id: int, constructor, snapshot: tuple, skip: frozenset = frozenset()) -> None:
         job_id = None
         try:
-            job_id = await pools.pack_plate(self._factory, gid, printer_id, constructor)
+            job_id = await pools.pack_plate(self._factory, gid, printer_id, constructor, skip_items=skip)
         except NothingFits:
             self._pool_nofit[(gid, printer_id)] = snapshot   # the printer claims the next job now
         except Exception:                              # noqa: BLE001 - a pack problem is a skip with a backoff, never a failure
@@ -689,6 +724,8 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         if result.rowcount == 0:
             return  # no longer blockable — don't resurrect a cancelled job
         await session.commit()
+        if job.pool_group_id is not None:
+            await self._pool_plate_dropped(job_id)
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
             await self._publish_job_event("job.blocked", job_id, None, "core", {"reason": reason, "phase": "queue"},

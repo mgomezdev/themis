@@ -13,6 +13,10 @@ from tests.api.test_projects_api import _make_3mf_bytes, _setup_project_with_stl
 from tests.fake_providers import fake_packer
 from tests.webhook_helpers import destination, install_wire, verify_signature
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 SRC = {"name": "Order 1001", "source_app": "shopconnector", "external_ref": "order-1001"}
 
 

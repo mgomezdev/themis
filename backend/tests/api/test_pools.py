@@ -7,10 +7,14 @@ from sqlalchemy import select
 
 from app.models import Job, JobPrinterConfig, Printer
 from app.services.providers import contract as c
-from app.services.queue_engine import QueueEngine
+from app.services.queue_engine import QueueEngine, _monotonic as qe_monotonic
 from tests.fake_providers import FakeProjectConstructor, FakeSlicingProvider
 from tests.services.test_queue_engine import _install_fake_put, _make_mock_printer_manager
 from tests.slicing_env import slicing_provider
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 
 class PoolPacker(FakeProjectConstructor):
@@ -352,3 +356,252 @@ async def test_pools_generated_back_to_back_take_distinct_places_in_the_queue(
     _, g2, _ = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=1)
     positions = [p["queue_position"] for p in (await client.get("/api/v1/queue/pools")).json()]
     assert len(set(positions)) == 2 and [p["group_id"] for p in (await client.get("/api/v1/queue/pools")).json()] == [g1, g2]
+
+
+# ---- hardening: a failed plate never loses parts, a plate that cannot be sliced is not re-packed in a loop ----
+
+async def _finish(session_factory, job_id, printer_id, status):
+    async with session_factory() as s:
+        j = await s.get(Job, job_id)
+        j.status, j.assigned_printer_id = status, printer_id
+        (await s.get(Printer, printer_id)).awaiting_plate_clear = True
+        await s.commit()
+
+
+async def test_a_failed_plate_cleared_without_results_puts_its_parts_back(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """A plain plate clear (QR code / home automation) after a FAILED print reports nothing: the plate's parts must still be
+    printed, not vanish from the project."""
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "failed")
+
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"]["left"] == 0   # kept until the plate is cleared
+    assert (await client.post(f"/api/v1/printers/{a}/plate-cleared")).status_code == 200
+
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"] == {"done": 0, "printing": 0, "left": 2}
+    assert (await _pool_jobs(session_factory, gid))[0].outcome == "unreported"
+    await _claim(session_factory, qe, a, tmp_path, packer)                       # and the printer packs them again
+    jobs = await _pool_jobs(session_factory, gid)
+    assert [(j.status, json.loads(j.project_item_quantities)) for j in jobs] == [
+        ("failed", {str(item): 2}), ("queued", {str(item): 2})]
+
+
+async def test_a_completed_plate_cleared_without_results_keeps_its_parts_reserved(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, _ = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "complete")
+
+    assert (await client.post(f"/api/v1/printers/{a}/plate-cleared")).status_code == 200
+
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"]["left"] == 0
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    assert len(await _pool_jobs(session_factory, gid)) == 1                      # nothing is printed twice
+
+
+async def test_a_failed_plate_reported_later_counts_only_its_failed_parts(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """Reporting a failed plate (1 of 2 parts was fine) settles it: one part is done, one is left — not two, not zero."""
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "failed")
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=packer):
+        r = await client.post(f"/api/v1/printers/{a}/plate-cleared", json={
+            "job_id": job.id, "results": [{"project_item_id": item, "quantity_failed": 1}]})
+    assert r.status_code == 200, r.text
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"] == {"done": 1, "printing": 0, "left": 1}
+
+
+@pytest.mark.parametrize("how", ["slice_failure", "block", "fail_before_start"])
+async def test_a_plate_that_cannot_be_sliced_is_not_packed_again_for_that_printer_at_once(
+        client, upload_3mf, create_printer, session_factory, tmp_path, how):
+    """Without a memory of the drop the printer would pack, slice and cancel the same plate every queue cycle: a new library
+    file, a cancelled job and a notification each time."""
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    b = await create_printer(name="B", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a, b], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a, b])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    if how == "slice_failure":
+        await qe._handle_slice_failure(job.id, a, "orca exit -51")
+    elif how == "block":
+        async with session_factory() as s:
+            await qe._block_job(s, await s.get(Job, job.id), "no machine profile")
+    else:
+        await qe._fail_job_post_slice(job.id, a, "upload failed")
+
+    for _ in range(3):                                                           # later cycles: A leaves those parts alone
+        await _claim(session_factory, qe, a, tmp_path, packer)
+    jobs = await _pool_jobs(session_factory, gid)
+    assert [j.status for j in jobs] == ["cancelled"] and len(packer.next_calls) == 1
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"]["left"] == 2   # still to print
+
+    await _claim(session_factory, qe, b, tmp_path, packer)                       # another printer takes them
+    jobs = await _pool_jobs(session_factory, gid)
+    assert [j.status for j in jobs] == ["cancelled", "queued"]
+    async with session_factory() as s:
+        cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == jobs[1].id))).scalar_one()
+        assert cfg.printer_id == b
+
+
+async def test_a_dropped_plate_is_tried_again_on_that_printer_after_the_wait(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, _ = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await qe._handle_slice_failure(job.id, a, "orca exit -51")
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    assert len(await _pool_jobs(session_factory, gid)) == 1
+
+    from app.services import queue_engine as qe_module
+    with patch.object(qe_module, "_monotonic", return_value=qe_module._monotonic() + qe_module.POOL_RETRY_DROPPED_S + 1):
+        await _claim(session_factory, qe, a, tmp_path, packer)
+    assert [j.status for j in await _pool_jobs(session_factory, gid)] == ["cancelled", "queued"]
+
+
+async def test_a_dropped_part_does_not_keep_the_printer_from_the_pools_other_parts(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A", bed_x_mm=100.0, bed_y_mm=100.0)           # one part per plate
+    packer = PoolPacker()
+    pid, gid, first = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=1)
+    fid = await upload_3mf(filename="other.stl", data=b"solid other\nendsolid\n")
+    second = (await client.post(f"/api/v1/projects/{pid}/items", json={"file_id": fid, "quantity": 1})).json()["id"]
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    assert json.loads(job.project_item_quantities) == {str(first): 1}
+    await qe._handle_slice_failure(job.id, a, "orca exit -51")
+
+    await _claim(session_factory, qe, a, tmp_path, packer)
+
+    jobs = await _pool_jobs(session_factory, gid)
+    assert [(j.status, json.loads(j.project_item_quantities)) for j in jobs] == [
+        ("cancelled", {str(first): 1}), ("queued", {str(second): 1})]
+
+
+async def test_a_failed_plate_is_not_repacked_elsewhere_before_its_plate_is_cleared(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """While the failed plate still sits on printer A someone may report what came off it; another printer repacking its parts
+    in the meantime would print the good ones twice."""
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    b = await create_printer(name="B", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a, b], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a, b])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "failed")
+
+    await _claim(session_factory, qe, b, tmp_path, packer)
+    assert len(await _pool_jobs(session_factory, gid)) == 1                      # B takes nothing yet
+
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=packer):
+        r = await client.post(f"/api/v1/printers/{a}/plate-cleared", json={
+            "job_id": job.id, "results": [{"project_item_id": item, "quantity_failed": 1}]})
+    assert r.status_code == 200, r.text
+    await _claim(session_factory, qe, b, tmp_path, packer)                       # now exactly the failed part is printed again
+    jobs = await _pool_jobs(session_factory, gid)
+    assert [json.loads(j.project_item_quantities) for j in jobs] == [{str(item): 2}, {str(item): 1}]
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"] == {"done": 1, "printing": 1, "left": 0}
+
+
+async def test_a_plate_whose_parts_went_back_can_no_longer_be_reported_reviewed_or_requeued(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "failed")
+    assert (await client.post(f"/api/v1/printers/{a}/plate-cleared")).status_code == 200
+
+    assert (await client.get(f"/api/v1/printers/{a}/plate-results")).json()["job_id"] is None
+    late = await client.post(f"/api/v1/printers/{a}/plate-cleared", json={
+        "job_id": job.id, "results": [{"project_item_id": item, "quantity_failed": 0}]})
+    review = await client.put(f"/api/v1/jobs/{job.id}/outcome", json={"failures": []})
+    requeue = await client.patch(f"/api/v1/jobs/{job.id}/configs", json={
+        "printer_configs": [{"printer_id": a, "print_profile": "0.2"}]})
+    assert (late.status_code, review.status_code, requeue.status_code) == (409, 409, 409)
+
+    async with session_factory() as s:
+        assert (await s.get(Job, job.id)).status == "failed"
+    stats = (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"]
+    assert stats == {"done": 0, "printing": 0, "left": 2}                        # counted once: still to print
+
+
+async def test_a_plain_clear_leaves_a_reported_or_unfinished_plate_alone(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    a = await create_printer(name="A", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [a], tmp_path, packer, qty=2)
+    qe = _engine(session_factory, [a])
+    await _claim(session_factory, qe, a, tmp_path, packer)
+    (job,) = await _pool_jobs(session_factory, gid)
+    await _finish(session_factory, job.id, a, "failed")
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=packer):
+        await client.post(f"/api/v1/printers/{a}/plate-cleared", json={
+            "job_id": job.id, "results": [{"project_item_id": item, "quantity_failed": 1}]})
+
+    assert (await client.post(f"/api/v1/printers/{a}/plate-cleared")).status_code == 200     # a later plain clear
+
+    assert (await _pool_jobs(session_factory, gid))[0].outcome == "reviewed"
+    assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"] == {"done": 1, "printing": 0, "left": 1}
+
+
+async def test_nobody_waits_for_a_preferred_printer_that_is_out_of_the_queue_or_was_just_dropped(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """A lower-ranked printer defers to a preferred one that could take the parts — but not to one its waivers stopped, nor to
+    one the pool's parts are being kept from after a dropped plate: either would stall the pool."""
+    from app.models import PartWaiver
+    preferred = await create_printer(name="Preferred", bed_x_mm=256.0, bed_y_mm=256.0)
+    fallback = await create_printer(name="Fallback", bed_x_mm=256.0, bed_y_mm=256.0)
+    packer = PoolPacker()
+    pid, gid, item = await _pool_project(client, upload_3mf, [preferred, fallback], tmp_path, packer, qty=4)
+    r = await client.patch(f"/api/v1/projects/{pid}/groups/{gid}", json={
+        "printer_preference": {"entries": [preferred], "strict": False}})
+    assert r.status_code == 200, r.text
+    qe = _engine(session_factory, [preferred, fallback])
+
+    await _claim(session_factory, qe, fallback, tmp_path, packer)
+    assert await _pool_jobs(session_factory, gid) == []                          # the preferred printer is free: wait for it
+
+    async with session_factory() as s:                                           # a fleet stop takes the preferred printer out
+        s.add(PartWaiver(printer_id=preferred, part_key="some-other-part", failures=2, created_at="2026-01-01T00:00:00+00:00"))
+        await s.commit()
+    await client.put("/api/v1/settings/queue", json={"waiver_stop_at": 1})
+    await _claim(session_factory, qe, fallback, tmp_path, packer)
+    (first,) = await _pool_jobs(session_factory, gid)
+    async with session_factory() as s:
+        assert (await s.execute(select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == first.id))).scalar_one() == fallback
+
+    await client.put("/api/v1/settings/queue", json={"waiver_stop_at": 0})        # back in the queue: preferred again
+    async with session_factory() as s:
+        (await s.get(Job, first.id)).status = "printing"
+        await s.commit()
+    await _claim(session_factory, qe, fallback, tmp_path, packer)
+    assert len(await _pool_jobs(session_factory, gid)) == 1
+    qe._pool_dropped[(gid, preferred)] = (frozenset({item}), qe_monotonic() + 600)   # a plate of this part was just dropped there
+    await _claim(session_factory, qe, fallback, tmp_path, packer)
+    assert len(await _pool_jobs(session_factory, gid)) == 2

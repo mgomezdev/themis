@@ -16192,6 +16192,47 @@
             ],
             "title": "Waive After"
           },
+          "waiver_flag_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiver Stop At"
+          },
+          "default_group_strategy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pool",
+                  "fixed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Group Strategy"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16258,6 +16299,22 @@
             "type": "integer",
             "title": "Waive After"
           },
+          "waiver_flag_at": {
+            "type": "integer",
+            "title": "Waiver Flag At"
+          },
+          "waiver_stop_at": {
+            "type": "integer",
+            "title": "Waiver Stop At"
+          },
+          "default_group_strategy": {
+            "type": "string",
+            "enum": [
+              "pool",
+              "fixed"
+            ],
+            "title": "Default Group Strategy"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16288,6 +16345,9 @@
           "printer_dead_after_minutes",
           "part_retry_limit",
           "waive_after",
+          "waiver_flag_at",
+          "waiver_stop_at",
+          "default_group_strategy",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

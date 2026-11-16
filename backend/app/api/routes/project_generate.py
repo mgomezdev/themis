@@ -628,11 +628,20 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             # BIZ-362: Split / Together items wait in the pool for printers to claim; the pool takes its place in the queue.
             from ...services import pools
             if any(pools.poolable(i) for i in pg_items):
+                if not saved and targets:
+                    # The request's eligibility (the printers picked in the Generate dialog) becomes the pool's targets: a pool
+                    # is claimed later, by its saved targets, so without this nothing could ever take it.
+                    from ...models import ProjectGroupTarget
+                    kept = [(key, profile) for key, profile in targets if not await project_groups.check_target_key(session, key)]
+                    for n, (key, profile) in enumerate(kept):
+                        session.add(ProjectGroupTarget(group_id=pgroup.id, target_key=key, process_profile=profile, sort_order=n))
                 pgroup.queue_position = await _max_queue_position(session) + 1.0
                 await session.commit()
+            pooled = any(pools.poolable(i) for i in pg_items)
             pg_items = [i for i in pg_items if not pools.poolable(i)]
             if not pg_items:
-                groups_out.append({"id": pgroup.id, "pool": True})
+                warning = await pools.warning(session, pgroup) if pooled else None
+                groups_out.append({"id": pgroup.id, "pool": True, **({"warning": warning} if warning else {})})
                 continue
         group_packs, out, explicit = await _plan_group_packs(session, pgroup, pg_items, targets, library)
         packs.extend(group_packs)

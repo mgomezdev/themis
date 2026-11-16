@@ -7,6 +7,10 @@ from sqlalchemy import func, select
 
 from app.models import Job, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
+
 _ITEM_KEYS = {"id", "project_id", "file_id", "file_name", "quantity", "quantity_completed", "quantity_failed",
               "filament_manufacturer", "filament_type", "filament_subtype", "filament_color", "sort_order", "group_id", "quantity_held", "kind", "source_ref", "pack_rule", "min_bed_mm", "source_app", "send_id"}  # src/api/projects.ts ProjectItem
 _LINK_KEYS = {"id", "project_id", "url", "label", "sort_order", "created_at"}

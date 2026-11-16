@@ -145,6 +145,9 @@ async def update_job_configs(
     job = await _get_or_404(job_id, session)
     if job.status not in _EDITABLE:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
+    from ...services import pools
+    if pools.released(job):                # requeueing it would print parts the pool is already printing again
+        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
     if not body.printer_configs and not body.model_targets:
         raise HTTPException(422, "printer_configs or model_targets must not be empty")
     _validate_targets(body.model_targets)
@@ -778,6 +781,9 @@ async def mark_job_outcome(
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to mark")
 
+    from ...services import pools
+    if pools.released(job):
+        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
     plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
     reported = (await session.execute(select(JobItemFailure.id).where(
         JobItemFailure.job_id == job_id, JobItemFailure.resolution.is_not(None)).limit(1))).first()

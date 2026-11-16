@@ -364,3 +364,19 @@ export function useProjects() {
   }, [tick]);
   return { projects, refetch };
 }
+
+/** What a generate queued besides jobs: pool groups wait for printers to pack their own plates (so "0 jobs" is not "nothing"). */
+export function pooledGroups(result: Pick<GenerateOut, 'groups'>): number {
+  return (result.groups ?? []).filter(g => g.pool).length;
+}
+
+/** The one-line outcome of a generate: jobs, pooled groups, or both. */
+export function generateHeadline(jobCount: number, pools: number, verb: 'queued' | 'added to queue'): string {
+  const jobs = `${jobCount} job${jobCount !== 1 ? 's' : ''} ${verb}`;
+  const pooled = `${pools} print group${pools !== 1 ? 's' : ''} queued: each free printer packs its own plate`;
+  if (pools === 0) return jobs;
+  return jobCount === 0 ? pooled : `${jobs} · ${pooled}`;
+}
+
+export const generateWarnings = (result: Pick<GenerateOut, 'groups'>): string[] =>
+  (result.groups ?? []).map(g => g.warning).filter((w): w is string => !!w);

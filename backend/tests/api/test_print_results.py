@@ -8,6 +8,11 @@ from sqlalchemy import select
 
 from app.models import Job, JobPrinterConfig, Printer, ProjectItem
 from tests.fake_providers import FakeProjectConstructor
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 
 async def _setup(client, upload_3mf, create_printer, tmp_path, qty=3):

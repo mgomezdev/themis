@@ -203,7 +203,7 @@ async def _send(body,request,response,session,cleanup):
             if await session.get(Project,project_id) is None:
                 raise HTTPException(404,"Project not found")
             await project_groups.ensure_default_group(session,project_id)
-            group = ProjectGroup(project_id=project_id,name=body.group.name or "Orca import",
+            group = ProjectGroup(project_id=project_id,name=body.group.name or "Orca import",strategy="fixed",   # a slicer sends plates it already laid out
                                  sort_order=await project_groups.next_sort_order(session,project_id))
             session.add(group)
             await session.flush()

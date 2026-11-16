@@ -51,7 +51,7 @@ async def defer(engine, session, job, printer):
         if candidate.test_print_job_id not in (None,job.id):
             continue
         waived = await qe.part_waivers.waived_keys(session,candidate.id)
-        if qe.part_waivers.stopped(candidate,len(waived)) or await qe.part_waivers.keys_of_job(session,job) & waived:
+        if qe.part_waivers.stopped(candidate,len(waived),await qe.part_waivers.fleet_limits(session)) or await qe.part_waivers.keys_of_job(session,job) & waived:
             continue
         if not is_presliced_file(source):
             resolution = await qe.slicer_profiles.resolve_for_printer(session,candidate)
@@ -63,6 +63,7 @@ async def defer(engine, session, job, printer):
 
 
 async def defer_pool(engine,session,group,printer):
+    import app.services.queue_engine as qe
     from .. import pools
     preference = group.printer_preference
     if not allowed(preference,printer):
@@ -76,11 +77,16 @@ async def defer_pool(engine,session,group,printer):
             continue
         if candidate.id in engine._pool_busy.values() or scheduling.in_quiet_hours(candidate.quiet_start,candidate.quiet_end):
             continue
+        # A printer taken out of the queue by its waivers packs nothing: nobody waits for it.
+        waived = await qe.part_waivers.waived_keys(session,candidate.id)
+        if candidate.test_print_job_id is not None or qe.part_waivers.stopped(candidate,len(waived),await qe.part_waivers.fleet_limits(session)):
+            continue
         if not await pools.eligible_on(session,group,candidate):
             continue
         if not await pools.process_for(session,group,candidate) and not candidate.default_process_profile:
             continue
         conflicts = await filament_matching.conflicts_for(candidate.loaded_filaments or [])
-        if await pools.takeable(session,group,candidate,conflicts):
+        skip = engine._pool_skip(group.id,candidate.id)        # parts a dropped plate keeps from that printer for now
+        if any(item not in skip for item in await pools.takeable(session,group,candidate,conflicts)):
             return True
     return False

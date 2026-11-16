@@ -12,6 +12,11 @@ from app.models import UploadedFile
 from tests.api.test_projects_api import _make_3mf_bytes, _make_stl_bytes, _setup_project_with_stl
 from tests.fake_artifact_store import InMemoryArtifactStore
 from tests.fake_providers import FakeProjectConstructor, fake_packer
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 
 TARGET = c.TargetPrinter((1.0, 2.0, 3.0))

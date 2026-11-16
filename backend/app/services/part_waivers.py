@@ -52,12 +52,21 @@ async def counts(session: AsyncSession) -> dict[int, int]:
     return {pid: int(n) for pid, n in rows.all()}
 
 
-def stopped(printer: Printer, waived: int) -> bool:
-    return bool(printer.waiver_stop_at) and waived >= int(printer.waiver_stop_at)
+async def fleet_limits(session: AsyncSession) -> tuple[int, int]:
+    """The fleet-wide (flag, stop) thresholds from Settings (0 = off): what a printer with none of its own uses."""
+    cfg = await session.get(QueueConfig, 1)
+    return (int(cfg.waiver_flag_at or 0), int(cfg.waiver_stop_at or 0)) if cfg is not None else (0, 0)
 
 
-def flagged(printer: Printer, waived: int) -> bool:
-    return bool(printer.waiver_flag_at) and waived >= int(printer.waiver_flag_at)
+def stopped(printer: Printer, waived: int, fleet: tuple[int, int] = (0, 0)) -> bool:
+    """Out of the queue: waived for at least its stop threshold of parts (its own, else the fleet's; 0 = never)."""
+    limit = int(printer.waiver_stop_at or 0) or fleet[1]
+    return bool(limit) and waived >= limit
+
+
+def flagged(printer: Printer, waived: int, fleet: tuple[int, int] = (0, 0)) -> bool:
+    limit = int(printer.waiver_flag_at or 0) or fleet[0]
+    return bool(limit) and waived >= limit
 
 
 async def after_failure(session: AsyncSession, printer_id: int, item: ProjectItem) -> PartWaiver | None:

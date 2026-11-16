@@ -80,13 +80,14 @@ async def list_fleet(session: AsyncSession = Depends(get_session)) -> list[dict]
         badge[pid] = (count + n, sev if rank(sev) > rank(worst) else worst)
     from ...services import part_waivers
     waived = await part_waivers.counts(session)
+    fleet = await part_waivers.fleet_limits(session)
     out = []
     for p in result.scalars().all():
         count, worst = badge.get(p.id, (0, None))
         n = waived.get(p.id, 0)
         out.append({**_fleet_dict(p), "alarm_count": count, "alarm_severity": worst,
                     # BIZ-365: waived parts, and whether that reached the printer's flag (wash/maintain) or stop threshold
-                    "waived_parts": n, "waiver_flag": part_waivers.flagged(p, n), "waiver_stopped": part_waivers.stopped(p, n)})
+                    "waived_parts": n, "waiver_flag": part_waivers.flagged(p, n, fleet), "waiver_stopped": part_waivers.stopped(p, n, fleet)})
     return out
 
 

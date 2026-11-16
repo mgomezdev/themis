@@ -55,6 +55,11 @@ from unittest.mock import patch
 
 from app.models import Job
 from tests.fake_providers import FakeProjectConstructor
+import pytest
+
+# These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
+pytestmark = pytest.mark.usefixtures("fixed_groups")
+
 
 _STL = b"solid x\nendsolid x\n"
 
