@@ -336,8 +336,9 @@ class PrintingMixin:
     async def _pause_failing_printer(self, printer_id: int) -> bool:
         """After `queue_config.pause_after_failed_prints` failed prints in a row (0 = never) the printer's queue is switched off,
         with the reason on the printer and a notification: the brake for plates cleared without results, where no part is ever
-        named. A good print in between starts the count again; switching the queue back on is the person's all-clear. Never
-        raises (it runs inside failure handling)."""
+        named. A good print in between starts the count again. Switching the queue back on resumes the printer but does not
+        forget the run: one more failed print pauses it again, until a print succeeds. Never raises (it runs inside failure
+        handling)."""
         try:
             async with self._factory() as session:
                 cfg = await session.get(QueueConfig, 1)
@@ -345,8 +346,12 @@ class PrintingMixin:
                 printer = await session.get(Printer, printer_id)
                 if limit <= 0 or printer is None or not printer.queue_on:
                     return False
+                # Only prints that STARTED count (they carry the print-start detail): an upload or start error is a failed job,
+                # not a failed print.
+                started = select(JobDetail.job_id).where(JobDetail.field == "print_start_time")
                 last = (await session.execute(
-                    select(Job.status).where(Job.printed_on_printer_id == printer_id, Job.status.in_(["complete", "failed"]))
+                    select(Job.status).where(Job.printed_on_printer_id == printer_id, Job.status.in_(["complete", "failed"]),
+                                             Job.id.in_(started))
                     .order_by(Job.completed_at.desc(), Job.id.desc()).limit(limit))).scalars().all()
                 if len(last) < limit or any(s != "failed" for s in last):
                     return False

@@ -228,11 +228,16 @@ async def clear_defaults(session: AsyncSession) -> tuple[str, str]:
 
 
 async def awaiting_results(session: AsyncSession, printer_id: int) -> list[Job]:
-    """Finished project plates this printer ran that nobody has given a result for, oldest first."""
+    """Finished project plates this printer ran that nobody has given a result for, oldest first. Plates that finished before
+    the defaults existed (`queue_config.plate_clear_since`) are left to a person: they are reported from History, never assumed."""
     seen = select(JobItemFailure.job_id)
-    return list((await session.execute(select(Job).where(
+    stmt = select(Job).where(
         Job.assigned_printer_id == printer_id, Job.project_id.is_not(None), Job.project_item_quantities.is_not(None),
-        Job.status.in_(["complete", "failed"]), Job.outcome.is_(None), Job.id.not_in(seen)).order_by(Job.id))).scalars().all())
+        Job.status.in_(["complete", "failed"]), Job.outcome.is_(None), Job.id.not_in(seen))
+    cfg = await session.get(QueueConfig, 1)
+    if cfg is not None and cfg.plate_clear_since:
+        stmt = stmt.where(Job.completed_at >= cfg.plate_clear_since)
+    return list((await session.execute(stmt.order_by(Job.id))).scalars().all())
 
 
 async def apply_clear_defaults(session: AsyncSession, printer: Printer) -> list[dict]:

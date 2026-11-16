@@ -403,6 +403,8 @@ class QueueConfig(Base):
     plate_clear_failed: Mapped[str] = mapped_column(String(20), default="assume_failed", server_default="assume_failed")
     # A printer's queue is switched off after this many failed prints in a row (0 = never); `printers.queue_paused_reason` says why.
     pause_after_failed_prints: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    # Set by the upgrade that introduced the defaults: plates finished before it never get one (None = no such history).
+    plate_clear_since: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

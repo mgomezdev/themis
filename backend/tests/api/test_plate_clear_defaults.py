@@ -574,8 +574,9 @@ async def _end_print(client, session_factory, create_job, qe, printer_id, how):
     job_id = await create_job(printer_id=printer_id)
     async with session_factory() as s:
         job = await s.get(Job, job_id)
-        job.status, job.assigned_printer_id, job.printed_on_printer_id = "printing", printer_id, printer_id
+        job.status, job.assigned_printer_id = "uploading", printer_id
         await s.commit()
+    assert await qe.mark_printing(job_id, printer_id, origin="core")      # the real start: status, plate gate, print-start detail
     if how == "failed":
         assert await qe.fail_started_job(job_id, printer_id, reason="spaghetti", origin="core")
     else:
@@ -738,3 +739,128 @@ async def test_a_bookkeeping_error_never_fails_the_plate_clear_itself(client, cr
     assert r.status_code == 200 and r.json() == {"ok": True}
     async with session_factory() as s:
         assert (await s.get(Printer, a)).awaiting_plate_clear is False
+
+
+# ---- review hardening ----
+
+async def test_upload_or_start_errors_are_not_failed_prints(client, create_printer, create_job, session_factory, notify):
+    """A job that failed before its print started (upload / start error) is a failed job, not a failed print: it never counts
+    toward the pause."""
+    a = await create_printer(name="A")
+    qe = await _engine_for(session_factory, a)
+    for _ in range(3):
+        job_id = await create_job(printer_id=a)
+        async with session_factory() as s:
+            job = await s.get(Job, job_id)
+            job.status, job.assigned_printer_id, job.printed_on_printer_id = "uploading", a, a
+            await s.commit()
+        await qe._fail_job_post_slice(job_id, a, "upload failed")
+        async with session_factory() as s:
+            assert (await s.get(Job, job_id)).status == "failed"
+    await _end_print(client, session_factory, create_job, qe, a, "failed")        # one real failed print
+    assert await _printer_state(client, a) == (True, None)
+    for _ in range(2):
+        await _end_print(client, session_factory, create_job, qe, a, "failed")
+    assert await _printer_state(client, a) == (False, "3 prints failed in a row")
+
+
+def test_a_channel_can_subscribe_to_the_pause_notification():
+    from app.plugins.capabilities.notify_channel import NOTIFY_EVENTS
+    assert "printer.paused" in NOTIFY_EVENTS
+
+
+async def test_plates_finished_before_the_upgrade_are_never_given_a_default(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """`queue_config.plate_clear_since` (set by the upgrade): the first clear afterwards must not settle months of old
+    unreported plates. They stay awaiting results, and a person can still report them from History."""
+    from app.models import QueueConfig
+    pl = await _plate("fixed", client, upload_3mf, create_printer, session_factory, tmp_path, qty=2)
+    item, job_id, a = pl.item, pl.job, pl.a
+    await _finish(session_factory, job_id, a, "complete")
+    await client.get("/api/v1/settings/queue")                                   # makes sure the settings row exists
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        cfg = await s.get(QueueConfig, 1)
+        cfg.plate_clear_since = "2999-01-01T00:00:00+00:00"                        # the upgrade happened after this plate
+        completed_at = job.completed_at
+        await s.commit()
+    assert completed_at is not None
+
+    r = await _plain_clear(pl)
+    assert "assumed" not in r.json()
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).outcome is None
+        assert (await s.get(ProjectItem, item)).quantity_completed == 0
+
+    with _builder(tmp_path):
+        late = await client.post(f"/api/v1/jobs/{job_id}/results", json={"results": []})
+    assert late.status_code == 200
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).outcome == "reviewed"
+        assert (await s.get(ProjectItem, item)).quantity_completed == 2
+
+
+async def test_a_reported_plate_or_a_test_print_cannot_be_reported_again_from_history(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    pl = await _plate("fixed", client, upload_3mf, create_printer, session_factory, tmp_path, qty=2)
+    item, job_id, a = pl.item, pl.job, pl.a
+    await _finish(session_factory, job_id, a, "complete")
+    async with session_factory() as s:                                            # what a cleared test print looks like
+        (await s.get(Job, job_id)).outcome = "reviewed"
+        await s.commit()
+    r = await client.post(f"/api/v1/jobs/{job_id}/results", json={"results": []})
+    assert r.status_code == 409
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_completed == 0            # an extra copy credits nothing
+
+
+async def test_the_pause_reason_survives_a_fleet_backup_and_restore(client, create_printer, session_factory):
+    from app.models import Printer
+    a = await create_printer(name="Paused")
+    async with session_factory() as s:
+        p = await s.get(Printer, a)
+        p.queue_on, p.queue_paused_reason = False, "3 prints failed in a row"
+        await s.commit()
+    backup = (await client.get("/api/v1/settings/fleet-backup")).json()
+    (entry,) = [p for p in backup["printers"] if p["name"] == "Paused"]
+    assert (entry["queue_on"], entry["queue_paused_reason"]) == (False, "3 prints failed in a row")
+
+
+async def test_a_bookkeeping_error_after_a_write_leaves_nothing_half_recorded(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """The defaults blow up AFTER settling the plate: the savepoint undoes it, the plate still awaits results (History can
+    report it) and the printer is released all the same."""
+    from app.services import print_results as pr
+    pl = await _plate("fixed", client, upload_3mf, create_printer, session_factory, tmp_path, qty=2)
+    await _finish(session_factory, pl.job, pl.a, "complete")
+    real = pr.apply_clear_defaults
+
+    async def settle_then_fail(session, printer):
+        await real(session, printer)
+        await session.flush()
+        raise RuntimeError("boom")
+
+    with patch("app.services.print_results.apply_clear_defaults", side_effect=settle_then_fail):
+        r = await _plain_clear(pl)
+    assert r.json() == {"ok": True}
+    async with session_factory() as s:
+        assert (await s.get(Job, pl.job)).outcome is None
+        assert (await s.get(ProjectItem, pl.item)).quantity_completed == 0
+        assert (await s.get(Printer, pl.a)).awaiting_plate_clear is False
+    assert (await _pending(client, pl.a))["job_id"] == pl.job                    # still offered for a report
+
+
+async def test_an_assumed_failed_plate_that_cannot_be_repacked_holds_its_parts_and_says_so(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    pl = await _plate("fixed", client, upload_3mf, create_printer, session_factory, tmp_path, qty=2)
+    await _finish(session_factory, pl.job, pl.a, "failed")
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=None):       # no builder: the repack fails
+        r = await client.post(f"/api/v1/printers/{pl.a}/plate-cleared")
+    assert r.status_code == 200, r.text
+    (assumed,) = r.json()["assumed"]
+    assert assumed["result"] == "assumed_failed" and assumed["requeued_job_ids"] == []
+    assert assumed["held"] == [{"project_item_id": pl.item, "quantity": 2}] and assumed["requeue_errors"]
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, pl.item)).quantity_held == 2             # a person decides: Reprint or Drop
+        assert (await s.get(Printer, pl.a)).awaiting_plate_clear is False

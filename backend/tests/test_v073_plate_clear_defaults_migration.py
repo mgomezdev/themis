@@ -21,11 +21,16 @@ async def test_v073_adds_the_defaults_keeps_existing_values_is_idempotent_and_re
             assert (await conn.execute(text("SELECT id, name, queue_paused_reason FROM printers ORDER BY id"))).all() == [
                 (1, "A", None), (2, "B", None)]
 
+            # The upgrade time is stamped once: plates finished before it are never settled by a default.
+            since = (await conn.execute(text("SELECT plate_clear_since FROM queue_config"))).scalar_one()
+            assert since and since.startswith("20")
+
             await conn.execute(text("UPDATE queue_config SET plate_clear_complete = 'ask', plate_clear_failed = 'ask', "
                                     "pause_after_failed_prints = 0"))
             await conn.execute(text("UPDATE printers SET queue_paused_reason = '3 prints failed in a row' WHERE id = 1"))
             await migration.up(conn)                                   # idempotent: a second run changes nothing
             assert (await conn.execute(text(_QUEUE))).one() == (4, "ask", "ask", 0)
+            assert (await conn.execute(text("SELECT plate_clear_since FROM queue_config"))).scalar_one() == since   # not re-stamped
             assert (await conn.execute(text("SELECT queue_paused_reason FROM printers ORDER BY id"))).all() == [
                 ("3 prints failed in a row",), (None,)]
 

@@ -294,6 +294,7 @@ async def fleet_backup(
                 "build_plate_type": p.build_plate_type,
                 "enabled": p.enabled,
                 "queue_on": p.queue_on,
+                "queue_paused_reason": p.queue_paused_reason,
             }
             for p in printers
         ],
@@ -454,6 +455,7 @@ async def fleet_import(
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),
             queue_on=pr.get("queue_on", True),
+            queue_paused_reason=pr.get("queue_paused_reason") if not pr.get("queue_on", True) else None,
             configured=False,                   # BIZ-369: re-tested here, never trusted from the backup
         )
         session.add(printer)

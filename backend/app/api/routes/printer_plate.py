@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 from fastapi import Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
@@ -187,6 +188,9 @@ async def plate_cleared(
     # Every other finished plate of this printer that nobody reported (all of them, on a clear without results) gets the
     # Settings default for how its print ended: nothing is left in limbo, and what was assumed is recorded on the job.
     from ...services import print_results as _results
+    # A write first, so the transaction is open before the savepoint: with SQLite a SAVEPOINT that opens the transaction is
+    # committed for good by its RELEASE, and assumed results could then outlive a failed clear.
+    await session.execute(sa_update(Printer).where(Printer.id == printer_id).values(awaiting_plate_clear=Printer.awaiting_plate_clear))
     try:
         async with session.begin_nested():     # bookkeeping must never fail the clear itself (the QR / home-automation hook)
             assumed = await _results.apply_clear_defaults(session, printer)
@@ -214,6 +218,9 @@ async def plate_cleared(
         if a["requeue"]:
             again = await _results.requeue_reported(session, await session.get(Job, a["job_id"]), a["requeue"])
             a["requeued_job_ids"] = again["requeued_job_ids"]
+            for key in ("held", "requeue_errors"):          # a repack that could not be built holds the parts for a person
+                if again.get(key):
+                    a[key] = again[key]
     if assumed:
         outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
     _printers.queue_engine.wake()

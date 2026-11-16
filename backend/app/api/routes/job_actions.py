@@ -779,6 +779,8 @@ async def report_job_results(job_id: int, body: JobResultsBody, session: AsyncSe
     job = await _get_or_404(job_id, session)
     if job.project_id is None or job.status not in ("complete", "failed"):
         raise HTTPException(409, f"Job {job_id} is not a finished project job")
+    if job.outcome == print_results.REVIEWED:       # reported already — or a test print, which is not a project result
+        raise HTTPException(409, "This job's print results were already reported")
     printer_id = job.assigned_printer_id or job.printed_on_printer_id
     recorded = await print_results.record_and_restore(
         session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
