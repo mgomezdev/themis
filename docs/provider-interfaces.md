@@ -150,8 +150,9 @@ Offline **`FormatProvider`** (`providers/format_provider.py`; Laminus: `provider
 
 | Method | Notes |
 |---|---|
-| `curated_settings() -> tuple[CuratedSetting(key, label), ...]` | Keys job overrides / embedded-settings view may touch, with display labels (replaces `curated_override_keys` + core `_SETTING_LABELS`). `curated_keys()` is the key tuple. |
+| `curated_settings() -> tuple[CuratedSetting(key, label, kind, options), ...]` | Keys job/printer overrides / embedded-settings view may touch, with display labels and a UI hint (`kind` bool/enum/text, accepted `options`) (replaces `curated_override_keys` + core `_SETTING_LABELS`). `curated_keys()` is the key tuple. |
 | `parse_estimates(artifact, plate) -> PlateEstimate(grams, seconds, per_extruder_grams)` | Each field `None` independently when unreadable. |
+| `embedded_overrides(project) -> dict` | The settings the project file's author changed from its own preset, with the file's values; re-applied onto the routed printer's preset (job > these > printer). Default `{}`. Laminus: process entry of `different_settings_to_system`. |
 | `inspect_overrides(project, merged_config, slots) -> OverrideInspection` | `has_embedded_settings`, `setting_changes: (SettingChange(key, from_value, to_value),)`, `slot_warning: SlotWarning|None`, `has_findings`. |
 
 DTOs live in `providers/contract.py`; routes serialize them to the unchanged JSON (`from`/`to`, `slot_warning`).

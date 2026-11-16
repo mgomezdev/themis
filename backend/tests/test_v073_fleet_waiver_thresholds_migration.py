@@ -1,9 +1,9 @@
-"""v072: queue_config.waiver_flag_at / waiver_stop_at (fleet-wide waiver thresholds, off for an existing install) and
+"""v073: queue_config.waiver_flag_at / waiver_stop_at (fleet-wide waiver thresholds, off for an existing install) and
 default_group_strategy ("pool": how a NEW print group packs)."""
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v072_fleet_waiver_thresholds as migration
+from app.migrations import v073_fleet_waiver_thresholds as migration
 
 
 async def test_v072_adds_the_thresholds_off_and_keeps_a_value_already_set(tmp_path):

@@ -3,7 +3,7 @@
 switched off after that many failed prints in a row, with printers.queue_paused_reason saying why. Idempotent."""
 from sqlalchemy import text
 
-version = 73
+version = 74
 name = "plate_clear_defaults"
 
 _COLUMNS = (

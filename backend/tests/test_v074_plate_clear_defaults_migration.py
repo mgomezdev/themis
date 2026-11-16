@@ -1,14 +1,14 @@
-"""v073: queue_config.plate_clear_complete / plate_clear_failed / pause_after_failed_prints (defaults for an existing install) and
+"""v074: queue_config.plate_clear_complete / plate_clear_failed / pause_after_failed_prints (defaults for an existing install) and
 printers.queue_paused_reason (NULL)."""
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v073_plate_clear_defaults as migration
+from app.migrations import v074_plate_clear_defaults as migration
 
 _QUEUE = "SELECT waive_after, plate_clear_complete, plate_clear_failed, pause_after_failed_prints FROM queue_config"
 
 
-async def test_v073_adds_the_defaults_keeps_existing_values_is_idempotent_and_reverses(tmp_path):
+async def test_v074_adds_the_defaults_keeps_existing_values_is_idempotent_and_reverses(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'old.db'}")
     try:
         async with engine.begin() as conn:
@@ -42,7 +42,7 @@ async def test_v073_adds_the_defaults_keeps_existing_values_is_idempotent_and_re
         await engine.dispose()
 
 
-def test_v073_is_registered_with_the_runner():
+def test_v074_is_registered_with_the_runner():
     from app.migrations import runner
-    assert (migration.version, migration.name) == (73, "plate_clear_defaults")
-    assert runner.v073_plate_clear_defaults is migration
+    assert (migration.version, migration.name) == (74, "plate_clear_defaults")
+    assert runner.v074_plate_clear_defaults is migration

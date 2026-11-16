@@ -48,7 +48,7 @@ applies. The default is named in Settings, shown on the job, and can be changed.
 
 ## Data
 - `queue_config.plate_clear_complete` (`assume_good` | `ask`), `plate_clear_failed` (`assume_failed` | `ask`),
-  `pause_after_failed_prints` (int); `printers.queue_paused_reason` (text, cleared when the queue is switched on). v073.
+  `pause_after_failed_prints` (int); `printers.queue_paused_reason` (text, cleared when the queue is switched on). v074.
 - `jobs.outcome`: `reviewed` (reported) | `assumed_good` | `assumed_failed` | null (awaiting). Replaces the pool-only
   `unreported` marker from the review branch.
 - `POST /jobs/{id}/results` `{results: [{project_item_id, quantity_failed}]}`: report or correct from History (same

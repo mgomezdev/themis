@@ -405,7 +405,7 @@ async def test_embedded_settings_returns_only_curated_keys_with_labels(client, l
     resp = await client.get(f"/api/v1/files/{file_id}/embedded-settings")
 
     assert resp.status_code == 200
-    assert resp.json() == [{"key": "wall_loops", "label": "Wall loops", "value": "3"},
-                           {"key": "layer_height", "label": "Layer height", "value": "0.2"}]
+    assert resp.json() == [{"key": "wall_loops", "label": "Wall loops", "value": "3", "carried": False},
+                           {"key": "layer_height", "label": "Layer height", "value": "0.2", "carried": False}]
     assert (await client.get("/api/v1/files/999/embedded-settings")).status_code == 404
 

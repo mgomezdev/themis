@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..contract import (
     Artifact, ArtifactKind, CancelToken, CuratedSetting, DEFAULT_HEALTH_TIMEOUT_S, DEFAULT_PRODUCE_TIMEOUT_S, ErrorCode, GcodeProducer,
-    ProduceRequest, Profile, ProviderError, ProviderIdentity, ProviderStatus, Readiness, TargetPrinter,
+    InputKind, ProduceRequest, Profile, ProviderError, ProviderIdentity, ProviderStatus, Readiness, TargetPrinter,
 )
 from ..slicing import SliceSpec, SlicingProviderNotReady, SlicingProviderError, default_compatible_presets
 from . import overrides
@@ -93,7 +93,7 @@ class LaminusGcodeProducer(GcodeProducer):
         if not machine:
             raise ProviderError(ErrorCode.UNSUPPORTED_TARGET, "no machine profile is mapped for this printer")
         settings = request.settings
-        unknown = sorted(set(settings.overrides) - {c.key for c in self.curated_settings()})
+        unknown = sorted((set(settings.overrides) | set(settings.printer_overrides)) - {c.key for c in self.curated_settings()})
         if unknown:
             raise ProviderError(ErrorCode.INVALID_SETTINGS, f"not a curated setting: {', '.join(unknown)}")
 
@@ -107,6 +107,8 @@ class LaminusGcodeProducer(GcodeProducer):
             raise ProviderError(ErrorCode.INVALID_SETTINGS, str(e)) from e
 
         source = Path(request.source)
+        # The project file's own process changes, re-applied onto THIS target's preset (read before any tool remap copy).
+        carried = overrides.embedded_process_overrides(source) if request.input_kind is InputKind.MODEL_3MF else {}
         if settings.tool_index is not None or settings.filament_map:
             # Never remap the shared library file: one printer's tool routing would corrupt it for everyone else.
             prepared = Path(output_dir) / "prepared.3mf"
@@ -119,7 +121,9 @@ class LaminusGcodeProducer(GcodeProducer):
             source = prepared
         _check(cancel)
 
-        extra = {**({"curr_bed_type": settings.plate_type} if settings.plate_type else {}), **dict(settings.overrides)}
+        # bed type < printer overrides < the project file's own changes < the job's overrides
+        extra = {**({"curr_bed_type": settings.plate_type} if settings.plate_type else {}), **dict(settings.printer_overrides),
+                 **carried, **dict(settings.overrides)}
         spec = SliceSpec(source_file=source, plate=request.plate, machine_ref=machine_ref, process_ref=process_ref,
                          filament_refs=filament_refs, export_3mf=request.want is ArtifactKind.GCODE_3MF, extra_config=extra)
         try:

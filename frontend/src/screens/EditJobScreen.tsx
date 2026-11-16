@@ -6,6 +6,7 @@ import type { ApiPrinter } from '../api/printers';
 import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { isPresliced } from '../lib/fileKind';
 import { buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
@@ -248,11 +249,23 @@ export function EditJobScreen() {
           {!gcode && embeddedSettings.length > 0 && (
             <div className="card" style={{ padding: 20 }}>
               <SectionHeader title="3MF Embedded Settings"
-                             sub="Settings baked into the file. Check the ones you want to apply — unchecked ones use the profile default." />
+                             sub="Settings baked into the file. Carried ones are re-applied on any printer; check others to keep them." />
               <OverridePanel
                 settings={embeddedSettings}
                 value={confirmedOverrides}
                 onChange={setConfirmedOverrides}
+              />
+            </div>
+          )}
+
+          {!gcode && (
+            <div className="card" style={{ padding: 20 }}>
+              <SliceOverridesEditor
+                title="Job setting overrides"
+                hint="Applied to this job on whichever printer slices it; they win over the 3MF's settings and the printer's overrides."
+                value={confirmedOverrides}
+                onChange={setConfirmedOverrides}
+                testId="job-overrides"
               />
             </div>
           )}

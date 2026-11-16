@@ -65,6 +65,7 @@
     "bed_z_mm",
     "machine_rate_per_hour",
     "preferred_slicer_plugin_id",
+    "slice_overrides",
     "default_process_profile",
     "single_colour_only",
     "waiver_flag_at",
@@ -205,7 +206,8 @@
     "targets",
     "max_parts",
     "pool",
-    "pool_warning"
+    "pool_warning",
+    "overrides"
   ],
   "project_link": [
     "id",

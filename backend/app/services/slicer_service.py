@@ -75,6 +75,9 @@ class SliceRequest:
     tool_index: "int | None" = None
     filament_map: "list[dict] | None" = None
     bed_mm: "tuple[float, float, float]" = DEFAULT_BED_MM
+    # The printer's own curated overrides (lowest precedence; the provider puts the project file's changes and then
+    # `extra_config`'s job overrides over them).
+    printer_overrides: dict = field(default_factory=dict)
 
 
 def slice_side_mapping(client, tool_index, filament_map) -> "tuple[int | None, list | None]":
@@ -158,6 +161,7 @@ def _settings_of(req: SliceRequest) -> SliceSettings:
         tool_index=req.tool_index,
         filament_map=tuple((int(m["model_filament"]), int(m["tool_index"])) for m in req.filament_map) if req.filament_map else None,
         plate_type=plate_type,
+        printer_overrides=dict(req.printer_overrides or {}),
     )
 
 

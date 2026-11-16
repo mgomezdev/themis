@@ -124,6 +124,8 @@ export interface ApiPrinter {
   bed_z_mm: number | null;               // BIZ-363: build height; null = the machine profile's (Review fit check)
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
   preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
+  /** Slicer setting overrides for every job this printer slices; the job's and the 3MF's own changes win over them. */
+  slice_overrides: Record<string, string>;
   default_process_profile: string | null;   // what a "Printer default" job config slices with; null = none set
   single_colour_only: boolean;              // never takes multicolour work
   waiver_flag_at: number;                   // BIZ-365: flag at this many waived parts (0 = off)
@@ -165,6 +167,7 @@ export interface UpdatePrinterBody {
   bed_z_mm?: number | null;                     // null clears (use the machine profile's height)
   machine_rate_per_hour?: number | null;
   preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
+  slice_overrides?: Record<string, string> | null;   // whole-dict replace; null/{} clears; omit to leave unchanged
   default_process_profile?: string | null;     // null clears; must be compatible with the printer's machine profile
   single_colour_only?: boolean;
   waiver_flag_at?: number;

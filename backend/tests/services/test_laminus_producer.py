@@ -273,3 +273,55 @@ def test_the_plugin_instance_satisfies_the_gcode_produce_protocol():
     from app.plugins.capabilities.gcode_produce import SlicingPlugin
     assert isinstance(LaminusConnection(LaminusSettings(url=URL)), SlicingPlugin)
     assert not isinstance(object(), SlicingPlugin)
+
+
+# ---- preset overrides: printer < the 3MF's own changes < the job's (BIZ: preset overrides for sliced jobs) ---------------
+
+def _orca_3mf_bytes(settings: dict, process_diff: list[str]) -> bytes:
+    import io
+    import json
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Metadata/project_settings.config",
+                    json.dumps({**settings, "different_settings_to_system": [";".join(process_diff), "", ""]}))
+    return buf.getvalue()
+
+
+def _sent_extra_config(sidecar) -> dict:  # noqa: F811
+    import json
+    import re
+    body = next(r for r in sidecar.requests if r.url.path == "/api/v1/jobs").content.decode(errors="ignore")
+    m = re.search(r'name="extra_config"\r\n\r\n(.*?)\r\n--', body, re.S)
+    return json.loads(m.group(1)) if m else {}
+
+
+@pytest.mark.parametrize("job, printer, expected", [
+    # the examples: the job turns supports on and picks a brim; the printer always wants an outer brim; the 3MF has its own
+    ({"enable_support": "1", "brim_type": "brim_ears"}, {"brim_type": "outer_only"},
+     {"enable_support": "1", "brim_type": "brim_ears", "wall_loops": "4"}),                     # job beats the 3MF and the printer
+    ({"enable_support": "1"}, {"brim_type": "outer_only"},
+     {"enable_support": "1", "brim_type": "no_brim", "wall_loops": "4"}),                       # the 3MF beats the printer
+    ({}, {"support_type": "tree(auto)"},
+     {"enable_support": "0", "brim_type": "no_brim", "wall_loops": "4", "support_type": "tree(auto)"}),   # printer fills the rest
+])
+def test_produce_carries_the_3mfs_own_changes_between_the_printer_and_the_job(sidecar, primed, tmp_path, job, printer,  # noqa: F811
+                                                                              expected):
+    """The 3MF was made for another preset; its author's changes are re-applied onto THIS target's preset."""
+    src = tmp_path / "m.3mf"
+    src.write_bytes(_orca_3mf_bytes({"enable_support": "0", "brim_type": "no_brim", "wall_loops": "4",
+                                     "print_settings_id": "0.20mm Standard @BBL X1C", "post_process": "/x.py"},
+                                    ["enable_support", "brim_type", "wall_loops", "print_settings_id", "post_process"]))
+    out = tmp_path / "out"
+    out.mkdir()
+    settings = c.SliceSettings(process_profile="0.20mm Standard", filaments=(c.FilamentChoice(1, "PLA", "PLA @A"),),
+                               overrides=job, printer_overrides=printer, plate_type="Textured PEI Plate")
+    producer().produce(c.ProduceRequest(src, c.InputKind.MODEL_3MF, 1, MAPPED, settings), out)
+    assert _sent_extra_config(sidecar) == {"curr_bed_type": "Textured PEI Plate", **expected}
+
+
+def test_produce_a_non_curated_printer_override_is_invalid_settings(sidecar, primed, tmp_path):  # noqa: F811
+    bad = c.SliceSettings(process_profile="0.20mm Standard", filaments=(c.FilamentChoice(1, "PLA", "PLA @A"),),
+                          printer_overrides={"post_process": "x"})
+    assert _code(lambda: _produce(tmp_path, settings=bad)) is c.ErrorCode.INVALID_SETTINGS
+    assert sidecar.requests == []

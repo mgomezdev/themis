@@ -139,7 +139,10 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
         "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
         "slot_plan": plan,
+        # The job's input (the job's overrides, then its per-target config's) wins over the project file's own preset changes, which
+        # win over the printer's overrides; the provider does that merge (SliceSettings.printer_overrides < file < overrides).
         "overrides": {**((job.overrides or {}) if job else {}), **(getattr(config,"overrides",None) or {})},
+        "printer_overrides": dict((printer.slice_overrides or {}) if printer else {}),
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
         "bed_mm": (float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2])
                   if printer else None,
@@ -195,7 +198,7 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
                 raise ValueError("Filament mapping must include every model filament in order")
             multi_presets = [by_model.get(e["model_filament"]) or override or loaded[e["tool_index"]].get("filament_profile") for e in ordered]
     plate_config = {"curr_bed_type": p["build_plate_type"]} if p["build_plate_type"] else {}
-    plate_config.update(p["overrides"])  # job-level overrides win over printer default
+    plate_config.update(p["overrides"])  # the job's overrides; the printer's travel separately (lowest precedence)
     filament_profile, filament_color = p["filament_profile"], p["filament_color"]
     req = SliceRequest(
         job_id=job_id,
@@ -208,6 +211,7 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
         filament_colours=[filament_color] if filament_color else [],
         export_args=export_args,
         extra_config=plate_config,
+        printer_overrides=dict(p.get("printer_overrides") or {}),
         provider_id=provider_id,
         tool_index=slice_tool,
         filament_map=slice_map,

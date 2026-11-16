@@ -34,7 +34,7 @@ const FLEET = {
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, queue_paused_reason: 1, configured: 1, config_error: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, slice_overrides: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -79,7 +79,7 @@ const PART_WAIVER = { id: 1, part_key: 1, file_name: 1, failures: 1, last_failur
 
 const PROJECT_GROUP = {
   id: 1, project_id: 1, name: 1, sort_order: 1, is_default: 1, strategy: 1, envelope_x: 1, envelope_y: 1, mix_colours: 1, targets: 1,
-  max_parts: 1, pool: 1, pool_warning: 1,
+  max_parts: 1, pool: 1, pool_warning: 1, overrides: 1,
 } satisfies Record<keyof ProjectGroup, 1>;
 
 const PROJECT_ITEM = {
