@@ -168,9 +168,14 @@ class SliceSettings:
     tool_index: int | None = None
     filament_map: tuple[tuple[int, int], ...] | None = None   # (model_filament 1-based, tool_index 0-based)
     plate_type: str | None = None    # the printer's build-plate type (neutral; not an override); None = machine default
+    # The printer's own curated overrides: the LOWEST precedence. The provider merges, highest first: `overrides` (the job's) >
+    # the project file's own preset changes (re-applied onto this target's preset, when the provider can read them) >
+    # `printer_overrides`. Pre-sliced input never carries either.
+    printer_overrides: Mapping[str, str] = field(default_factory=dict)
 
     def fingerprint(self) -> str:
         return _sha({
+            **({"printer_overrides": dict(self.printer_overrides)} if self.printer_overrides else {}),
             "process_profile": self.process_profile,
             "plate_type": self.plate_type,
             "filaments": [[f.slot, f.material, f.profile] for f in self.filaments],   # colour excluded
@@ -275,8 +280,12 @@ class OverrideInspection:
 
 @dataclass(frozen=True)
 class CuratedSetting:
+    """A setting a job or printer may override. `kind` is a UI hint ("bool" | "enum" | "text"); `options` are the provider's
+    accepted values for "bool"/"enum" (empty = free text)."""
     key: str
     label: str
+    kind: str = "text"
+    options: tuple[str, ...] = ()
 
 
 # ── provider ABCs ─────────────────────────────────────────────────────────────────────────────────────────────────

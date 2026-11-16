@@ -223,6 +223,20 @@ export interface EmbeddedSetting {
   key: string;
   label: string;
   value: string;
+  /** The 3MF's author changed this from its preset: it is re-applied onto whichever printer's preset slices the job. */
+  carried?: boolean;
+}
+
+/** A slicer setting a job or printer may override. Precedence when slicing: job > the 3MF's own changes > printer. */
+export interface OverrideSetting {
+  key: string;
+  label: string;
+  kind: 'bool' | 'enum' | 'text';
+  options: string[];
+}
+
+export async function getOverrideSettings(): Promise<OverrideSetting[]> {
+  return request('/api/v1/jobs/override-settings');
 }
 
 export async function getEmbeddedSettings(fileId: number): Promise<EmbeddedSetting[]> {
@@ -290,6 +304,8 @@ export async function checkOverrides(body: {
   print_profile: string;
   filament_profile?: string | null;
   filament_color?: string | null;
+  /** The job overrides picked so far, so the check compares against what will really be sliced. */
+  overrides?: Record<string, string> | null;
 }): Promise<OverrideCheck> {
   return request('/api/v1/jobs/check-overrides', {
     method: 'POST',

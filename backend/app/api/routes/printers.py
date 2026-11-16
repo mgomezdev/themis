@@ -24,7 +24,7 @@ from ...services.printer_client_factory import (
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
-from ...services import filament_matching, printer_setup, scheduling, slicer_profiles
+from ...services import filament_matching, printer_setup, scheduling, slice_overrides, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.printer_client_factory import create_client
 from ...services.queue_engine import queue_engine
@@ -68,6 +68,8 @@ class PrinterCreate(BaseModel):
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
     default_process_profile: str | None = None      # BIZ-358: what a "Printer default" job config slices with
     single_colour_only: bool = False
+    # Slicer setting overrides for every job this printer slices ({curated key: value}); job + project-file overrides win.
+    slice_overrides: dict | None = None
 
 
 class PrinterUpdate(BaseModel):
@@ -92,6 +94,8 @@ class PrinterUpdate(BaseModel):
     # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
     preferred_slicer_plugin_id: str | None = None
     default_process_profile: str | None = None      # explicit null (or "") clears it
+    # Whole-dict replace; non-curated/blank keys are dropped; null / {} clears.
+    slice_overrides: dict | None = None
     single_colour_only: bool | None = None
     # BIZ-365: flag / stop the printer at this many waived parts (0 = off)
     waiver_flag_at: int | None = Field(default=None, ge=0, le=1000)
@@ -220,6 +224,7 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
         "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
+        "slice_overrides": p.slice_overrides or {},
         "default_process_profile": p.default_process_profile,
         "single_colour_only": bool(p.single_colour_only),
         "waiver_flag_at": p.waiver_flag_at or 0,
@@ -422,6 +427,7 @@ async def create_printer(
         bed_z_mm=body.bed_z_mm,
         machine_rate_per_hour=body.machine_rate_per_hour,
         single_colour_only=body.single_colour_only,
+        slice_overrides=slice_overrides.clean(body.slice_overrides),
     )
     printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     session.add(printer)
@@ -743,6 +749,8 @@ async def update_printer(
         if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
             raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
         printer.preferred_slicer_plugin_id = wanted
+    if "slice_overrides" in body.model_fields_set:
+        printer.slice_overrides = slice_overrides.clean(body.slice_overrides)
     if "default_process_profile" in body.model_fields_set and (body.default_process_profile or None) != printer.default_process_profile:
         # re-validated only when it changes: an unrelated edit must not 422 because the catalog is down or the profile went stale
         printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)

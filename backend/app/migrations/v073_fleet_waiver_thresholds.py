@@ -3,7 +3,7 @@ printer that sets none of its own (`printers.waiver_flag_at` / `waiver_stop_at`,
 queue_config.default_group_strategy ("pool"): how a new print group packs. Existing groups keep theirs. Idempotent."""
 from sqlalchemy import text
 
-version = 72
+version = 73
 name = "fleet_waiver_thresholds"
 
 _COLUMNS = {"waiver_flag_at": "INTEGER NOT NULL DEFAULT 0", "waiver_stop_at": "INTEGER NOT NULL DEFAULT 0",

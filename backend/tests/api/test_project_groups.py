@@ -258,3 +258,14 @@ async def test_deleting_a_project_removes_its_groups_and_targets(client, session
     async with session_factory() as s:
         assert (await s.execute(select(ProjectGroup))).scalars().all() == []
         assert (await s.execute(select(ProjectGroupTarget))).scalars().all() == []
+
+
+async def test_group_overrides_drop_blank_values_so_they_never_reach_the_slicer(client):
+    pid = await _project(client)
+    (group,) = await _groups(client, pid)
+    path = f"/api/v1/projects/{pid}/groups/{group['id']}"
+    response = await client.patch(path, json={"overrides": {"layer_height": " ", "brim_type": " brim_ears "}})
+    assert response.status_code == 200, response.text
+    assert response.json()["overrides"] == {"brim_type": "brim_ears"}
+    only_blank = await client.patch(path, json={"overrides": {"layer_height": ""}})
+    assert only_blank.json()["overrides"] is None
