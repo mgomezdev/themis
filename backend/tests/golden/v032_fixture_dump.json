@@ -193,6 +193,7 @@
       "preferred_slicer_plugin_id": null,
       "printer_type": "bambu",
       "queue_on": 1,
+      "queue_paused_reason": null,
       "quiet_end": null,
       "quiet_start": null,
       "slice_overrides": null

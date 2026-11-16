@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, PartWaiver, Printer, ProjectItem, QueueConfig, UploadedFile
@@ -77,7 +77,9 @@ async def after_failure(session: AsyncSession, printer_id: int, item: ProjectIte
     limit = int(cfg.waive_after) if cfg is not None and cfg.waive_after else DEFAULT_WAIVE_AFTER
     rows = (await session.execute(
         select(JobItemFailure, ProjectItem).join(ProjectItem, ProjectItem.id == JobItemFailure.project_item_id)
-        .where(JobItemFailure.printer_id == printer_id, JobItemFailure.quantity_failed > 0))).all()
+        .join(Job, Job.id == JobItemFailure.job_id)             # a plate counted as failed by default names no part: not counted
+        .where(JobItemFailure.printer_id == printer_id, JobItemFailure.quantity_failed > 0,
+               or_(Job.outcome.is_(None), Job.outcome != "assumed_failed")))).all()
     waiver = (await session.execute(select(PartWaiver).where(PartWaiver.printer_id == printer_id,
                                                              PartWaiver.part_key == key))).scalar_one_or_none()
     since = waiver.cleared_at if waiver is not None else None          # a Clear starts the count again

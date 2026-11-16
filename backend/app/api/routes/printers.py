@@ -212,6 +212,7 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
+        "queue_paused_reason": p.queue_paused_reason,     # why Themis switched the queue off by itself (None = a person did, or it is on)
         "configured": p.configured,
         "config_error": p.config_error,
         "loaded_filaments": p.loaded_filaments or [],
@@ -727,6 +728,7 @@ async def update_printer(
         printer.enabled = body.enabled
     if body.queue_on is not None:
         printer.queue_on = body.queue_on
+        printer.queue_paused_reason = None                # a person decided: Themis' own reason no longer applies
     if body.loaded_filaments is not None:
         # whole-list replace from the client: resolve each slot against what is stored (dual-write, see inventory/refs.py)
         printer.loaded_filaments = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)

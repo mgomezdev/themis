@@ -19,7 +19,7 @@ CAPABILITY = "notify.channel"
 
 # The events a channel can subscribe to (offered as checkboxes on its settings page).
 NOTIFY_EVENTS: tuple[str, ...] = (
-    "job.complete", "job.failed", "job.blocked", "spool.low", "printer.alarm",
+    "job.complete", "job.failed", "job.blocked", "spool.low", "printer.alarm", "printer.paused",
     "inventory.tracking_unavailable", "inventory.tracking_restored", "inventory.disconnected", "inventory.reconnected",
     "inventory.weight_conflict", "inventory.no_spool_tracked",
 )

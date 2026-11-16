@@ -18,7 +18,7 @@ import { FieldRow, PageHeader, Toggle } from '../../components/settingsUi';
 export function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, flagAt: 0, stopAt: 0, strategy: 'pool' as 'pool' | 'fixed', snapshot: 2, name: '', estimates: false, useLatest: true });
+  const saved = useRef({ check: 5, dead: 30, retry: 2, waive: 2, flagAt: 0, stopAt: 0, strategy: 'pool' as 'pool' | 'fixed', clearComplete: 'assume_good' as QueueConfig['plate_clear_complete'], clearFailed: 'assume_failed' as QueueConfig['plate_clear_failed'], pauseAfter: 3, snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -119,6 +119,39 @@ export function PrintDefaultsPage() {
     setStopAt(v);
     await persist('the waiver stop limit', { waiver_stop_at: v },
       () => setStopAt(saved.current.stopAt), () => { saved.current.stopAt = v; }, setSavingStopAt);
+  }
+
+  // What happens to a plate cleared without results, and when repeated failures pause a printer
+  const [clearComplete, setClearComplete] = useState<QueueConfig['plate_clear_complete']>('assume_good');
+  const [savingClearComplete, setSavingClearComplete] = useState(false);
+  const [clearFailed, setClearFailed] = useState<QueueConfig['plate_clear_failed']>('assume_failed');
+  const [savingClearFailed, setSavingClearFailed] = useState(false);
+  const [pauseAfter, setPauseAfter] = useState<number>(3);
+  const [savingPauseAfter, setSavingPauseAfter] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => {
+      const cc = c.plate_clear_complete === 'ask' ? 'ask' : 'assume_good';
+      const cf = c.plate_clear_failed === 'ask' ? 'ask' : 'assume_failed';
+      const pa = c.pause_after_failed_prints ?? 3;
+      saved.current.clearComplete = cc; saved.current.clearFailed = cf; saved.current.pauseAfter = pa;
+      setClearComplete(cc); setClearFailed(cf); setPauseAfter(pa);
+    }).catch(console.error);
+  }, []);
+  async function commitClearComplete(v: QueueConfig['plate_clear_complete']) {
+    setClearComplete(v);
+    await persist('what a finished print cleared without results counts as', { plate_clear_complete: v },
+      () => setClearComplete(saved.current.clearComplete), () => { saved.current.clearComplete = v; }, setSavingClearComplete);
+  }
+  async function commitClearFailed(v: QueueConfig['plate_clear_failed']) {
+    setClearFailed(v);
+    await persist('what a failed print cleared without results counts as', { plate_clear_failed: v },
+      () => setClearFailed(saved.current.clearFailed), () => { saved.current.clearFailed = v; }, setSavingClearFailed);
+  }
+  async function commitPauseAfter(n: number) {
+    const v = Math.min(20, Math.max(0, Math.round(n) || 0));
+    setPauseAfter(v);
+    await persist('the failed-print pause limit', { pause_after_failed_prints: v },
+      () => setPauseAfter(saved.current.pauseAfter), () => { saved.current.pauseAfter = v; }, setSavingPauseAfter);
   }
 
   // Snapshot interval
@@ -352,6 +385,43 @@ export function PrintDefaultsPage() {
                  onBlur={e => commitStopAt(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">parts{savingStopAt ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="A finished print cleared without results"
+                hint="A plate cleared from a QR code or automation, or without answering the results dialog, gets this result. Assumed plates are labelled in History and can be corrected there.">
+        <div className="row gap-2">
+          <select className="select" aria-label="A finished print cleared without results" value={clearComplete}
+                  onChange={e => commitClearComplete(e.target.value === 'ask' ? 'ask' : 'assume_good')} style={{ maxWidth: 260 }}>
+            <option value="assume_good">Assume every part is good</option>
+            <option value="ask">Leave it for me to report</option>
+          </select>
+          {savingClearComplete && <span className="muted small">saving…</span>}
+        </div>
+      </FieldRow>
+
+      <FieldRow label="A failed print cleared without results"
+                hint="Assumed failures are printed again, but they do not count against a part or a printer's waivers (nobody said which part failed).">
+        <div className="row gap-2">
+          <select className="select" aria-label="A failed print cleared without results" value={clearFailed}
+                  onChange={e => commitClearFailed(e.target.value === 'ask' ? 'ask' : 'assume_failed')} style={{ maxWidth: 260 }}>
+            <option value="assume_failed">Assume the whole plate failed and print it again</option>
+            <option value="ask">Leave it for me to report</option>
+          </select>
+          {savingClearFailed && <span className="muted small">saving…</span>}
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Pause a printer after failed prints in a row"
+                hint="Its queue is switched off and Fleet says why. Switch the queue back on to resume. 0 turns it off.">
+        <div className="row gap-2">
+          <input className="input" type="number" min={0} max={20} step={1}
+                 aria-label="Pause a printer after failed prints in a row"
+                 value={pauseAfter}
+                 onChange={e => setPauseAfter(Number(e.target.value))}
+                 onBlur={e => commitPauseAfter(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">prints{savingPauseAfter ? ' · saving…' : ''}</span>
         </div>
       </FieldRow>
 

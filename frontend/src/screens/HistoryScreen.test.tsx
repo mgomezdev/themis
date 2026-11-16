@@ -64,57 +64,80 @@ describe('HistoryScreen', () => {
     expect(lid.getAllByText('—').length).toBeGreaterThanOrEqual(5); // printer, project, 4 numeric cells, outcome
   });
 
-  it('offers "Mark" only for completed project jobs that have plate quantities and are not yet reviewed', async () => {
+  it('shows the right outcome label or button for each state of a finished project job', async () => {
     const qty = { '11': 2 };
     stubFetch({
       [`GET ${HISTORY_URL}`]: [
-        job({ id: 1, file_name: 'markable.3mf', project_id: 5, project_item_quantities: qty }),
+        job({ id: 1, file_name: 'awaiting.3mf', project_id: 5, project_item_quantities: qty }),
         job({ id: 2, file_name: 'reviewed.3mf', project_id: 5, project_item_quantities: qty, outcome: 'reviewed' }),
         job({ id: 3, file_name: 'failed.3mf', project_id: 5, project_item_quantities: qty, status: 'failed' }),
         job({ id: 4, file_name: 'loose.3mf' }),
         job({ id: 5, file_name: 'no-qty.3mf', project_id: 5 }),
+        job({ id: 6, file_name: 'ok.3mf', project_id: 5, project_item_quantities: qty, outcome: 'assumed_good' }),
+        job({ id: 7, file_name: 'bad.3mf', project_id: 5, project_item_quantities: qty, status: 'failed', outcome: 'assumed_failed' }),
       ],
     });
     renderScreen();
-    await screen.findByText('markable.3mf');
+    await screen.findByText('awaiting.3mf');
 
-    expect(rowOf('markable.3mf').getByRole('button', { name: 'Mark' })).toBeTruthy();
+    expect(rowOf('awaiting.3mf').getByRole('button', { name: 'Report results' })).toBeTruthy();
+    expect(rowOf('failed.3mf').getByRole('button', { name: 'Report results' })).toBeTruthy();   // a failed plate can be reported too
     expect(rowOf('reviewed.3mf').getByText(/Reviewed/)).toBeTruthy();
-    for (const name of ['reviewed.3mf', 'failed.3mf', 'loose.3mf', 'no-qty.3mf']) {
-      expect(rowOf(name).queryByRole('button', { name: 'Mark' })).toBeNull();
+    expect(rowOf('ok.3mf').getByText('Assumed OK')).toBeTruthy();
+    expect(rowOf('ok.3mf').getByRole('button', { name: 'Change' })).toBeTruthy();
+    const bad = rowOf('bad.3mf');
+    expect(bad.getByText('Assumed failed').getAttribute('title')).toBe('Cleared without results; its parts are being printed again');
+    expect(bad.queryByRole('button')).toBeNull();
+    for (const name of ['reviewed.3mf', 'loose.3mf', 'no-qty.3mf']) {
+      expect(rowOf(name).queryByRole('button')).toBeNull();
     }
   });
 
-  it('Mark opens the outcome modal; saving PUTs the failures, refreshes history and marks the job Reviewed', async () => {
+  it('Report results opens the results dialog; saving POSTs the counts, refreshes history and marks the job Reviewed', async () => {
     let reviewed = false;
     const api = stubFetch({
       [`GET ${HISTORY_URL}`]: () => [
         job({ id: 1, file_name: 'a.3mf', project_id: 5, project_item_quantities: { '11': 2 }, outcome: reviewed ? 'reviewed' : null }),
         job({ id: 2, file_name: 'b.3mf', project_id: 5, project_item_quantities: { '11': 1 } }),
       ],
-      'GET /api/v1/projects/5': { id: 5, items: [{ id: 11, file_name: 'gear.stl' }] },
-      'PUT /api/v1/jobs/1/outcome': () => { reviewed = true; return { failures: [] }; },
+      'GET /api/v1/projects/5': { id: 5, items: [{ id: 11, file_name: 'gear.stl' }, { id: 12, file_name: 'other.stl' }] },
+      'POST /api/v1/jobs/1/results': () => { reviewed = true; return { ok: true, requeued_job_ids: [9], held: [] }; },
     });
     renderScreen();
     await screen.findByText('a.3mf');
 
-    await userEvent.click(rowOf('a.3mf').getByRole('button', { name: 'Mark' }));
+    await userEvent.click(rowOf('a.3mf').getByRole('button', { name: 'Report results' }));
 
-    await screen.findByText('Mark Job Outcome');
-    // while the modal is open no other job can be marked
-    expect((rowOf('b.3mf').getByRole('button', { name: 'Mark' }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByRole('dialog', { name: 'Print results' });
+    // while the dialog is open no other job can be reported
+    expect((rowOf('b.3mf').getByRole('button', { name: 'Report results' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText('other.stl')).toBeNull();   // only parts on this plate
+    await userEvent.clear(screen.getByLabelText('Failed gear.stl'));
+    await userEvent.type(screen.getByLabelText('Failed gear.stl'), '1');
+    await userEvent.click(screen.getByRole('button', { name: 'Save results' }));
 
-    await screen.findByText('gear.stl');
-    const failed = within(screen.getByText('gear.stl').closest('tr') as HTMLElement).getByRole('spinbutton');
-    await userEvent.clear(failed);
-    await userEvent.type(failed, '1');
-    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-    await waitFor(() => expect(api.to('PUT', '/api/v1/jobs/1/outcome')[0].body).toEqual({
-      failures: [{ project_item_id: 11, quantity_failed: 1 }],
+    await waitFor(() => expect(api.to('POST', '/api/v1/jobs/1/results')[0].body).toEqual({
+      results: [{ project_item_id: 11, quantity_failed: 1 }],
     }));
     await waitFor(() => expect(rowOf('a.3mf').getByText(/Reviewed/)).toBeTruthy());
     expect(api.to('GET', HISTORY_URL).length).toBeGreaterThanOrEqual(2); // refetched after save
-    expect(screen.queryByText('Mark Job Outcome')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a failed job opens with the whole plate failed; a 409 shows the server message', async () => {
+    stubFetch({
+      [`GET ${HISTORY_URL}`]: [job({ id: 3, file_name: 'f.3mf', status: 'failed', project_id: 5, project_item_quantities: { '11': 3 } })],
+      'GET /api/v1/projects/5': { id: 5, items: [{ id: 11, file_name: 'gear.stl' }] },
+      'POST /api/v1/jobs/3/results': new Reply(409, { detail: 'These parts are already being reprinted' }),
+    });
+    renderScreen();
+    await screen.findByText('f.3mf');
+    await userEvent.click(rowOf('f.3mf').getByRole('button', { name: 'Report results' }));
+
+    await screen.findByText('This print ended in a failure — adjust if some parts are usable.');
+    expect((screen.getByLabelText('Failed gear.stl') as HTMLInputElement).value).toBe('3');
+    await userEvent.click(screen.getByRole('button', { name: 'Save results' }));
+    await screen.findByText('These parts are already being reprinted');
+    expect(screen.getByRole('dialog', { name: 'Print results' })).toBeTruthy();
   });
 });

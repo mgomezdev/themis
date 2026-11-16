@@ -5851,6 +5851,63 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/results": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Report (or correct) what a finished project plate printed",
+        "description": "The same report as the plate-clear dialog, given later (History): for a plate still awaiting results, or to correct one\nthat was assumed good when its plate was cleared without results. Failed parts are requeued in their print group or held,\nexactly as at plate clear. A plate that was assumed failed is final (its parts are already being printed again).",
+        "operationId": "report_job_results_api_v1_jobs__job_id__results_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobResultsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Report Job Results Api V1 Jobs  Job Id  Results Post"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Job has no project items"
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job has not finished, its results were already reported, or its parts are already being printed again"
+          },
+          "422": {
+            "description": "A listed project item is not on this plate"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/outcome": {
       "put": {
         "tags": [
@@ -13313,6 +13370,21 @@
         "type": "object",
         "title": "JobProjectLink"
       },
+      "JobResultsBody": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/OutcomeFailureItem"
+            },
+            "type": "array",
+            "title": "Results",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "JobResultsBody",
+        "description": "Per part, how many failed; parts not listed all succeeded."
+      },
       "JobSaveSlicePatch": {
         "properties": {
           "save_slice": {
@@ -16233,6 +16305,49 @@
             ],
             "title": "Default Group Strategy"
           },
+          "plate_clear_complete": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "assume_good",
+                  "ask"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Clear Complete"
+          },
+          "plate_clear_failed": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "assume_failed",
+                  "ask"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Clear Failed"
+          },
+          "pause_after_failed_prints": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause After Failed Prints"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16315,6 +16430,26 @@
             ],
             "title": "Default Group Strategy"
           },
+          "plate_clear_complete": {
+            "type": "string",
+            "enum": [
+              "assume_good",
+              "ask"
+            ],
+            "title": "Plate Clear Complete"
+          },
+          "plate_clear_failed": {
+            "type": "string",
+            "enum": [
+              "assume_failed",
+              "ask"
+            ],
+            "title": "Plate Clear Failed"
+          },
+          "pause_after_failed_prints": {
+            "type": "integer",
+            "title": "Pause After Failed Prints"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -16348,6 +16483,9 @@
           "waiver_flag_at",
           "waiver_stop_at",
           "default_group_strategy",
+          "plate_clear_complete",
+          "plate_clear_failed",
+          "pause_after_failed_prints",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

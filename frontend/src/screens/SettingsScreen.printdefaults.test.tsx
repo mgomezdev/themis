@@ -425,3 +425,65 @@ describe('Print defaults - fleet waiver thresholds', () => {
     expect(field().value).toBe('9');
   });
 });
+
+describe('Print defaults - plate cleared without results', () => {
+  const clearComplete = () => screen.getByLabelText('A finished print cleared without results') as HTMLSelectElement;
+  const clearFailed = () => screen.getByLabelText('A failed print cleared without results') as HTMLSelectElement;
+  const pauseAfter = () => screen.getByLabelText('Pause a printer after failed prints in a row') as HTMLInputElement;
+  const STORED = { ...CONFIG, plate_clear_complete: 'ask', plate_clear_failed: 'ask', pause_after_failed_prints: 7 };
+
+  it('shows the stored values, defaulting to assume good / assume failed / 3', async () => {
+    open({ 'GET /api/v1/settings/queue': STORED });
+    await waitFor(() => expect(clearComplete().value).toBe('ask'));
+    expect(clearFailed().value).toBe('ask');
+    expect(pauseAfter().value).toBe('7');
+  });
+
+  it('defaults when the server does not report them', async () => {
+    open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+    expect(clearComplete().value).toBe('assume_good');
+    expect(clearFailed().value).toBe('assume_failed');
+    expect(pauseAfter().value).toBe('3');
+  });
+
+  it('each control PUTs exactly its own key', async () => {
+    const api = open();
+    await waitFor(() => expect(interval().value).toBe('5'));
+
+    await userEvent.selectOptions(clearComplete(), 'ask');
+    await waitFor(() => expect(puts(api)).toEqual([{ plate_clear_complete: 'ask' }]));
+    await userEvent.selectOptions(clearFailed(), 'ask');
+    await waitFor(() => expect(puts(api)).toEqual([{ plate_clear_complete: 'ask' }, { plate_clear_failed: 'ask' }]));
+    fireEvent.change(pauseAfter(), { target: { value: '5' } });
+    fireEvent.blur(pauseAfter());
+    await waitFor(() => expect(puts(api)).toEqual([
+      { plate_clear_complete: 'ask' }, { plate_clear_failed: 'ask' }, { pause_after_failed_prints: 5 }]));
+  });
+
+  it('clamps the pause limit to 0..20 (0 = off)', async () => {
+    const api = open();
+    await waitFor(() => expect(pauseAfter().value).toBe('3'));
+    fireEvent.change(pauseAfter(), { target: { value: '99' } });
+    fireEvent.blur(pauseAfter());
+    await waitFor(() => expect(pauseAfter().value).toBe('20'));
+    fireEvent.change(pauseAfter(), { target: { value: '-4' } });
+    fireEvent.blur(pauseAfter());
+    await waitFor(() => expect(pauseAfter().value).toBe('0'));
+    await waitFor(() => expect(puts(api)).toEqual([{ pause_after_failed_prints: 20 }, { pause_after_failed_prints: 0 }]));
+  });
+
+  it('puts every control back when the save is refused', async () => {
+    open({ 'GET /api/v1/settings/queue': STORED, [QUEUE]: new Reply(500, 'nope') });
+    await waitFor(() => expect(clearComplete().value).toBe('ask'));
+
+    await userEvent.selectOptions(clearComplete(), 'assume_good');
+    await waitFor(() => expect(clearComplete().value).toBe('ask'));
+    await userEvent.selectOptions(clearFailed(), 'assume_failed');
+    await waitFor(() => expect(clearFailed().value).toBe('ask'));
+    fireEvent.change(pauseAfter(), { target: { value: '2' } });
+    fireEvent.blur(pauseAfter());
+    await waitFor(() => expect(pauseAfter().value).toBe('7'));
+    expect(alertText()).toContain("Couldn't save");
+  });
+});

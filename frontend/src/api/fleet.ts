@@ -13,6 +13,7 @@ export interface FleetPrinter {
   dormant_reason?: string | null;
   enabled: boolean;
   queue_on: boolean;
+  queue_paused_reason?: string | null;  // why Themis switched the queue off by itself
   configured?: boolean;                 // BIZ-369: a connection confirmed its setup (only configured printers take work)
   config_error?: string | null;         // why not: last test failure / missing field
   connected: boolean;
@@ -116,6 +117,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     fanBox: p.fan_box ?? 0,
     bedTempTarget: p.temperatures?.bed_target ?? 0,
     queueOn: p.queue_on ?? true,
+    queuePausedReason: p.queue_paused_reason ?? null,
     configured: p.configured ?? true,
     configError: p.config_error ?? null,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,

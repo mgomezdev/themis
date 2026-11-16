@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 from fastapi import Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
@@ -134,7 +135,7 @@ async def plate_results(printer_id: int, session: AsyncSession = Depends(get_ses
                            Job.id.not_in(reported), Job.outcome.is_(None))
         .order_by(Job.updated_at.desc(), Job.id.desc()).limit(1))).scalar_one_or_none()
     if job is None:
-        return {"job_id": None, "project_id": None, "parts": [], "test_print_waiver_id": None}
+        return {"job_id": None, "project_id": None, "parts": [], "test_print_waiver_id": None, "print_failed": False}
     parts = []
     for key, qty in _json.loads(job.project_item_quantities).items():
         item = await session.get(ProjectItem, int(key))
@@ -144,7 +145,9 @@ async def plate_results(printer_id: int, session: AsyncSession = Depends(get_ses
         parts.append({"project_item_id": item.id, "file_name": f.original_filename if f else f"[file {item.file_id}]",
                       "quantity": int(qty)})
     test_waiver = printer.test_print_waiver_id if printer is not None and printer.test_print_job_id == job.id else None
-    return {"job_id": job.id, "project_id": job.project_id, "parts": parts, "test_print_waiver_id": test_waiver}
+    # `print_failed`: the dialog opens on "whole plate failed" for a print that ended in failure, "nothing failed" otherwise.
+    return {"job_id": job.id, "project_id": job.project_id, "parts": parts, "test_print_waiver_id": test_waiver,
+            "print_failed": job.status == "failed"}
 
 
 @router.post(
@@ -169,7 +172,6 @@ async def plate_cleared(
     recorded: dict | None = None
     job = None
     if body is not None and body.job_id is not None:
-        from ...models import Job
         from ...services import print_results
         if "jobs:write" not in (getattr(key, "scopes", None) or []):
             raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
@@ -183,9 +185,19 @@ async def plate_cleared(
         else:
             recorded = await print_results.record_and_restore(
                 session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
-    if job is None:                        # a plain clear: a failed pool plate nobody reported gives its parts back to the pool
-        from ...services import pools
-        await pools.release_unreported(session, printer_id)
+    # Every other finished plate of this printer that nobody reported (all of them, on a clear without results) gets the
+    # Settings default for how its print ended: nothing is left in limbo, and what was assumed is recorded on the job.
+    from ...services import print_results as _results
+    # A write first, so the transaction is open before the savepoint: with SQLite a SAVEPOINT that opens the transaction is
+    # committed for good by its RELEASE, and assumed results could then outlive a failed clear.
+    await session.execute(sa_update(Printer).where(Printer.id == printer_id).values(awaiting_plate_clear=Printer.awaiting_plate_clear))
+    try:
+        async with session.begin_nested():     # bookkeeping must never fail the clear itself (the QR / home-automation hook)
+            assumed = await _results.apply_clear_defaults(session, printer)
+    except Exception:                          # noqa: BLE001 - the plates stay awaiting results; History can still report them
+        import logging
+        logging.getLogger("app").exception("Applying the plate-clear defaults for printer %s failed", printer_id)
+        assumed = []
     if job is None and printer.test_print_job_id is not None:          # a plain clear (QR / home automation) after a test print
         test_job = await session.get(Job, printer.test_print_job_id)
         if test_job is not None and test_job.status in ("complete", "failed"):
@@ -202,5 +214,14 @@ async def plate_cleared(
     if recorded:
         requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
         outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
+    for a in assumed:                      # a plate counted as failed by default: its parts are packed again
+        if a["requeue"]:
+            again = await _results.requeue_reported(session, await session.get(Job, a["job_id"]), a["requeue"])
+            a["requeued_job_ids"] = again["requeued_job_ids"]
+            for key in ("held", "requeue_errors"):          # a repack that could not be built holds the parts for a person
+                if again.get(key):
+                    a[key] = again[key]
+    if assumed:
+        outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
     _printers.queue_engine.wake()
     return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported

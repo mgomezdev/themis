@@ -384,7 +384,7 @@ async def test_a_failed_plate_cleared_without_results_puts_its_parts_back(
     assert (await client.post(f"/api/v1/printers/{a}/plate-cleared")).status_code == 200
 
     assert (await client.get(f"/api/v1/projects/{pid}/groups")).json()[0]["pool"] == {"done": 0, "printing": 0, "left": 2}
-    assert (await _pool_jobs(session_factory, gid))[0].outcome == "unreported"
+    assert (await _pool_jobs(session_factory, gid))[0].outcome == "assumed_failed"
     await _claim(session_factory, qe, a, tmp_path, packer)                       # and the printer packs them again
     jobs = await _pool_jobs(session_factory, gid)
     assert [(j.status, json.loads(j.project_item_quantities)) for j in jobs] == [
@@ -542,7 +542,8 @@ async def test_a_plate_whose_parts_went_back_can_no_longer_be_reported_reviewed_
     review = await client.put(f"/api/v1/jobs/{job.id}/outcome", json={"failures": []})
     requeue = await client.patch(f"/api/v1/jobs/{job.id}/configs", json={
         "printer_configs": [{"printer_id": a, "print_profile": "0.2"}]})
-    assert (late.status_code, review.status_code, requeue.status_code) == (409, 409, 409)
+    again = await client.post(f"/api/v1/jobs/{job.id}/results", json={"results": []})
+    assert (late.status_code, review.status_code, requeue.status_code, again.status_code) == (409, 409, 409, 409)
 
     async with session_factory() as s:
         assert (await s.get(Job, job.id)).status == "failed"

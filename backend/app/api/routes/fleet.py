@@ -39,6 +39,7 @@ def _fleet_dict(p: Printer) -> dict:
         "printer_type": p.printer_type,
         "enabled": p.enabled,
         "queue_on": p.queue_on,
+        "queue_paused_reason": p.queue_paused_reason,
         "configured": p.configured,
         "config_error": p.config_error,
         "awaiting_plate_clear": p.awaiting_plate_clear,

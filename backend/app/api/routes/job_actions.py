@@ -145,9 +145,9 @@ async def update_job_configs(
     job = await _get_or_404(job_id, session)
     if job.status not in _EDITABLE:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
-    from ...services import pools
-    if pools.released(job):                # requeueing it would print parts the pool is already printing again
-        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
+    from ...services import print_results
+    if print_results.final(job):           # requeueing it would print parts that are already being printed again
+        raise HTTPException(409, "This plate was counted as failed when it was cleared: its parts are already being printed again")
     if not body.printer_configs and not body.model_targets:
         raise HTTPException(422, "printer_configs or model_targets must not be empty")
     _validate_targets(body.model_targets)
@@ -755,6 +755,41 @@ class OutcomeBody(BaseModel):
     failures: list[OutcomeFailureItem] = []
 
 
+class JobResultsBody(BaseModel):
+    """Per part, how many failed; parts not listed all succeeded."""
+    results: list[OutcomeFailureItem] = []
+
+
+@router.post(
+    "/{job_id}/results",
+    summary="Report (or correct) what a finished project plate printed",
+    responses={
+        400: {"description": "Job has no project items"},
+        404: {"description": "Job not found"},
+        409: {"description": "Job has not finished, its results were already reported, or its parts are already being printed again"},
+        422: {"description": "A listed project item is not on this plate"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def report_job_results(job_id: int, body: JobResultsBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """The same report as the plate-clear dialog, given later (History): for a plate still awaiting results, or to correct one
+    that was assumed good when its plate was cleared without results. Failed parts are requeued in their print group or held,
+    exactly as at plate clear. A plate that was assumed failed is final (its parts are already being printed again)."""
+    from ...services import print_results
+    job = await _get_or_404(job_id, session)
+    if job.project_id is None or job.status not in ("complete", "failed"):
+        raise HTTPException(409, f"Job {job_id} is not a finished project job")
+    if job.outcome == print_results.REVIEWED:       # reported already — or a test print, which is not a project result
+        raise HTTPException(409, "This job's print results were already reported")
+    printer_id = job.assigned_printer_id or job.printed_on_printer_id
+    recorded = await print_results.record_and_restore(
+        session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
+    await session.commit()                 # the results are in before any repacking
+    requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
+    _jobs.queue_engine.wake()
+    return {"ok": True, **requeued, "held": recorded["held"] + requeued["held"]}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -781,9 +816,9 @@ async def mark_job_outcome(
     if job.project_item_quantities is None:
         raise HTTPException(400, "This job has no project items to mark")
 
-    from ...services import pools
-    if pools.released(job):
-        raise HTTPException(409, "This plate was cleared without results: its parts already went back to the pool")
+    from ...services import print_results
+    if print_results.final(job):
+        raise HTTPException(409, "This plate was counted as failed when it was cleared: its parts are already being printed again")
     plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
     reported = (await session.execute(select(JobItemFailure.id).where(
         JobItemFailure.job_id == job_id, JobItemFailure.resolution.is_not(None)).limit(1))).first()
