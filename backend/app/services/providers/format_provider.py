@@ -30,5 +30,11 @@ class FormatProvider(ABC):
         """Compare a project file's embedded settings with `merged_config` (what the chosen presets would produce)
         and the printer's `slots` capacity."""
 
+    def embedded_overrides(self, source_project: str) -> dict:
+        """The process settings a project file's author changed from the file's own system preset, as {key: value}
+        (values exactly as the file stores them). Slicing re-applies them onto whichever preset the routed printer
+        slices with. {} when the file records none (or the provider can't tell). Default: none."""
+        return {}
+
     def curated_keys(self) -> tuple[str, ...]:
         return tuple(s.key for s in self.curated_settings())

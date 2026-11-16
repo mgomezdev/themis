@@ -133,7 +133,7 @@ with BIZ-291 because it conflicts with the two behaviors above. A future provide
 * **`produce()` (BIZ-295).** `SlicerService.slice(req, output_dir, cancel)` is core's translator: `SliceRequest` → `ProduceRequest(source, input_kind, plate,
   TargetPrinter(bed, machine_profile), SliceSettings, want)` → the resolved plugin's `produce()`; `ProviderError` → `SliceError` with the provider's message (the
   job's block text, unchanged) or `SliceCancelled`. `want` is `gcode_3mf` when the printer's export args ask for the archive; core still injects the plate thumbnail
-  into raw G-code. `SliceSettings.plate_type` carries the printer's build plate (not an override); `overrides` must be curated keys (else `INVALID_SETTINGS`);
+  into raw G-code. `SliceSettings.plate_type` carries the printer's build plate (not an override); `overrides` (the job's input) and `printer_overrides` (the printer's own, lowest precedence) must be curated keys (else `INVALID_SETTINGS`); the provider re-applies the project file's own preset changes between them (printer < file < job);
   `tool_index`/`filament_map` are set only for a printer whose client declares `slice_tool_mapping` (`slicer_service.slice_side_mapping`).
   `LaminusGcodeProducer.produce()`: names → catalog refs (`INVALID_SETTINGS` with the actionable "not found … refresh the profile sync" text; catalog unreadable →
   `UNREACHABLE`), tool mapping on a job-scoped copy, `curr_bed_type` + overrides → `extra_config`, `SlicingProvider.slice(..., should_stop=)`; poll ceiling →

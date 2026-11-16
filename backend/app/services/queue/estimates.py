@@ -73,6 +73,8 @@ class EstimatesMixin:
         print_profile: str | None = None
         printer_name: str | None = None
         preset_label: dict | None = None
+        estimate_extra: dict = {}
+        estimate_printer_overrides: dict = {}
 
         async with self._factory() as session:
             job = await session.get(Job, job_id)
@@ -106,6 +108,11 @@ class EstimatesMixin:
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
+            # The estimate slices with the same overrides a real slice on this printer would: bed type + the job's (and its
+            # config's) overrides, the printer's own underneath; the provider adds the project file's changes in between.
+            estimate_extra = ({"curr_bed_type": printer.build_plate_type} if printer is not None and printer.build_plate_type else {})
+            estimate_extra.update({**(job.overrides or {}), **((getattr(config, "overrides", None) or {}) if config else {})})
+            estimate_printer_overrides = dict((printer.slice_overrides or {}) if printer is not None else {})
 
             # Resolve filament profiles
             fmap = config.filament_map if config else None
@@ -152,6 +159,8 @@ class EstimatesMixin:
             filament_presets=filament_profiles,
             filament_colours=[],
             export_args=[],
+            extra_config=estimate_extra,
+            printer_overrides=estimate_printer_overrides,
         )
 
         fut: asyncio.Future = asyncio.get_running_loop().create_future()

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Order, Printer, PrinterModelRecord, Project, QueueConfig, SlicedVersion, UploadedFile
-from ...services import job_details, slice_cache
+from ...services import job_details, slice_cache, slice_overrides
 from ...services.bed_requirement import MinBed
 from ...services.slicer_intent import OverrideFields, PrinterPreference, validate_preference
 from ...services import gcode_eligibility as eligibility
@@ -44,12 +44,8 @@ def _inspection_json(i: OverrideInspection) -> dict:
 
 
 def _clean_overrides(o: dict | None) -> dict | None:
-    """Strip any key not in the curated allowlist before storing."""
-    if not o:
-        return None
-    allowed = frozenset(s.key for s in get_format_provider().curated_settings())
-    cleaned = {k: str(v) for k, v in o.items() if k in allowed}
-    return cleaned or None
+    """Strip any key not in the curated allowlist, and any blank value (it would reach the slicer as ""), before storing."""
+    return slice_overrides.clean(o)
 
 
 # Statuses where a printer is physically working on the job and must be told to stop.
@@ -271,6 +267,9 @@ class OverrideCheckRequest(BaseModel):
     print_profile: str
     filament_profile: str | None = None
     filament_color: str | None = None
+    # The job overrides the user has picked so far: the check compares the 3MF against what will really be sliced
+    # (preset < printer overrides < the 3MF's own changes < these).
+    overrides: dict | None = None
 
 
 def _normalise_not_before(v: str | None) -> str | None:
@@ -517,6 +516,14 @@ async def create_job(
     return _to_dict(job)
 
 
+@router.get("/override-settings", summary="Overridable slicer settings", dependencies=[Depends(require_scope("jobs:read"))])
+async def override_settings() -> list[dict]:
+    """The settings a job (or a printer) may override, in display order: `key`, `label`, `kind` ("bool" | "enum" | "text")
+    and, for bool/enum, the accepted `options`. Precedence when slicing: job > the 3MF's own changes > printer."""
+    return [{"key": c.key, "label": c.label, "kind": c.kind, "options": list(c.options)}
+            for c in get_format_provider().curated_settings()]
+
+
 @router.post(
     "/check-overrides",
     summary="Check embedded settings vs presets",
@@ -585,6 +592,10 @@ async def check_overrides(
     except SlicingProviderError as e:
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
+    # What is really sliced: the preset with the printer's overrides, the 3MF's own changes (carried onto this preset) and
+    # the job's overrides on top - so only settings that are actually lost or changed are flagged.
+    config = {**config, **slice_overrides.effective(
+        printer.slice_overrides, await slice_overrides.embedded_for(uploaded_file), _clean_overrides(body.overrides))}
     slots = len(printer.loaded_filaments or []) or 1
     inspection = await asyncio.to_thread(
         with_local_path, get_library_store(), uploaded_file.relative_path,

@@ -18,7 +18,8 @@ class OverrideFields(BaseModel):
             raise ValueError("Unknown process override key")
         if any(not isinstance(v, (str, int, float, bool)) or (isinstance(v, float) and not isfinite(v)) for v in value.values()):
             raise ValueError("Process overrides must be scalar finite values")
-        return {k: ("1" if v else "0") if isinstance(v, bool) else str(v) for k, v in value.items()}
+        cleaned = {k: ("1" if v else "0") if isinstance(v, bool) else str(v).strip() for k, v in value.items()}
+        return {k: v for k, v in cleaned.items() if v} or None    # a blank value would reach the slicer as ""
 
 
 class PrinterPreference(BaseModel):

@@ -185,6 +185,8 @@ export interface ProjectGroup {
   max_parts: number | null;                 // pool: parts per claimed plate cap (null = as many as fit)
   pool: { done: number; printing: number; left: number } | null;   // pool groups only (BIZ-362)
   pool_warning: string | null;
+  /** Slicer setting overrides copied onto this group's future jobs (they win over the printer's own). */
+  overrides: Record<string, string> | null;
 }
 
 export interface ProjectGroupPatch {
@@ -195,6 +197,7 @@ export interface ProjectGroupPatch {
   targets?: ProjectGroupTarget[];
   strategy?: 'fixed' | 'pool';
   max_parts?: number | null;
+  overrides?: Record<string, string> | null;   // null/{} clears
 }
 
 /** One reported failure (BIZ-364): what failed where and when, and what happened to the failed parts. */

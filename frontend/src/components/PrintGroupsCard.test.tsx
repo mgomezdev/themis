@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PrintGroupsCard } from './PrintGroupsCard';
 import { Reply, stubFetch } from '../test/fetchStub';
@@ -7,7 +7,7 @@ import type { ProjectGroup, ProjectItem } from '../api/projects';
 
 const group = (id: number, name: string, over: Partial<ProjectGroup> = {}): ProjectGroup => ({
   id, project_id: 7, name, sort_order: id, is_default: id === 1, strategy: 'fixed', envelope_x: null, envelope_y: null,
-  mix_colours: false, targets: [], max_parts: null, pool: null, pool_warning: null, ...over,
+  mix_colours: false, targets: [], max_parts: null, pool: null, pool_warning: null, overrides: null, ...over,
 });
 const ITEM = { id: 50, project_id: 7, file_id: 1, file_name: 'Bracket.stl', quantity: 4, quantity_completed: 0, quantity_failed: 0,
   filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0, group_id: 1 } as ProjectItem;
@@ -23,10 +23,51 @@ function open(groups: ProjectGroup[]) {
     'PUT /api/v1/projects/7/groups/order': [],
     'POST /api/v1/projects/7/groups': group(3, 'Draft'),
     'PUT /api/v1/projects/7/items/50': { ...ITEM, group_id: 2 },
+    'GET /api/v1/jobs/override-settings': [
+      { key: 'enable_support', label: 'Enable supports', kind: 'bool', options: ['0', '1'] },
+      { key: 'brim_type', label: 'Brim type', kind: 'enum', options: ['auto_brim', 'brim_ears', 'no_brim'] },
+      { key: 'brim_width', label: 'Brim width', kind: 'text', options: [] },
+    ],
   });
 }
 
 describe('PrintGroupsCard (BIZ-360)', () => {
+  it('saves a typed override once, on blur, not on every keystroke', async () => {
+    const { resetOverrideSettingsCache } = await import('./overrideSettings');
+    resetOverrideSettingsCache();
+    const api = open([group(1, 'Default Group'), group(2, 'Fine', { overrides: { brim_width: '5' } })]);
+    render(<PrintGroupsCard projectId={7} items={[]} />);
+    const scope = await screen.findByTestId('group-overrides-2');
+    const width = within(scope).getByLabelText('Brim width');
+    fireEvent.change(width, { target: { value: '1' } });
+    fireEvent.change(width, { target: { value: '10' } });
+    expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(0);
+    fireEvent.blur(width);
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2').map(c => c.body)).toEqual([
+      { overrides: { brim_width: '10' } }]));
+    fireEvent.blur(width);                                                  // nothing changed since: no second save
+    expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(1);
+  });
+
+  it("saves a group's setting overrides (enable supports, a brim type) and clears them when the last is removed", async () => {
+    const { resetOverrideSettingsCache } = await import('./overrideSettings');
+    resetOverrideSettingsCache();
+    const api = open([group(1, 'Default Group'), group(2, 'Fine', { overrides: { brim_type: 'no_brim' } })]);
+    render(<PrintGroupsCard projectId={7} items={[]} />);
+    const scope = await screen.findByTestId('group-overrides-2');
+    expect((within(scope).getByLabelText('Brim type') as HTMLSelectElement).value).toBe('no_brim');
+    fireEvent.change(within(scope).getByLabelText('Add override'), { target: { value: 'enable_support' } });
+    fireEvent.change(within(scope).getByLabelText('Brim type'), { target: { value: 'brim_ears' } });
+    fireEvent.click(within(scope).getByRole('button', { name: 'Remove Enable supports' }));
+    fireEvent.click(within(scope).getByRole('button', { name: 'Remove Brim type' }));
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2').map(c => c.body)).toEqual([
+      { overrides: { brim_type: 'no_brim', enable_support: '1' } },
+      { overrides: { brim_type: 'brim_ears', enable_support: '1' } },
+      { overrides: { brim_type: 'brim_ears' } },
+      { overrides: null },
+    ]));
+  });
+
   it('adds a printer target to a group with Printer default, then sets its process profile', async () => {
     const api = open([group(1, 'Default Group'), group(2, 'Fine')]);
     render(<PrintGroupsCard projectId={7} items={[ITEM]} />);

@@ -7,6 +7,7 @@ import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../.
 import { isModelKey, modelConfigSource } from '../../components/ModelTargets';
 import { PrinterTargetPicker } from '../../components/PrinterTargetPicker';
 import { OverridePanel } from '../../components/OverridePanel';
+import { SliceOverridesEditor } from '../../components/SliceOverridesEditor';
 import { GcodeWarning } from '../../components/GcodeWarning';
 import { Plate, PlateConfig } from './model';
 import { ProjectPicker, QueueToggle, StepNum } from './widgets';
@@ -179,6 +180,16 @@ export function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers,
                 onChange={onSetOverrides}
               />
             </>
+          )}
+
+          {!gcode && (
+            <SliceOverridesEditor
+              title="Job setting overrides"
+              hint="Applied to this job on whichever printer slices it; they win over the 3MF's settings and the printer's overrides."
+              value={config.confirmedOverrides}
+              onChange={onSetOverrides}
+              testId="job-overrides"
+            />
           )}
         </div>
       </div>
