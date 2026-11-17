@@ -5,10 +5,17 @@
         "source": "github",
         "repo": "michael-denyer/pstack-claude"
       }
+    },
+    "impeccable": {
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable"
+      }
     }
   },
   "enabledPlugins": {
-    "pstack@pstack-claude": true
+    "pstack@pstack-claude": true,
+    "impeccable@impeccable": true
   },
   "hooks": {
     "PreToolUse": [
