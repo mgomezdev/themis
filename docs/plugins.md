@@ -323,7 +323,7 @@ functionality lives in the neutral core API (`/api/v1/inventory/*`); the old `/a
 
 | Mode | Providers | Dispatch | Example |
 |---|---|---|---|
-| `exclusive` (default) | exactly one active; selecting another replaces it | `host.call(cap, ...)` / `host.part(cap)` | `inventory.filament` |
+| `exclusive` (default) | exactly one active; selecting another replaces it | `host.call(cap, ...)` / `host.part(cap)` | `inventory.filament`, `3mf.construct` (project generation, BIZ-296) |
 | `routed` | every enabled plugin | the provider bound to the resource: `host.call_for(HANDLE, plugin_id, fn)` | `printer.client` |
 | `choose_one` | every enabled plugin built; the selection row is the **default** | `host.resolve(cap, preferred=, eligible=)` / `call_choose`: per-resource preference → default → blocked. Eligibility is checked first; a dormant (disabled/removed) or ineligible preference **blocks**, never falls back to another implementation | slicing (`gcode.produce`: each printer's `preferred_slicer_plugin_id`, resolved by `slice_resolution.resolve_slicing`, BIZ-291) |
 | `fan_out` | every enabled plugin | `host.fan_out(HANDLE, fn)`: each provider is called independently (own timeout/containment), one failing never blocks the rest | notifications (`notify.channel`, BIZ-252) |

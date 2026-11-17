@@ -9,7 +9,7 @@ Assumed Spoolman behaviors verified here:
 """
 import json
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -59,7 +59,7 @@ async def test_patch_sends_only_orca_profiles_in_extra():
 
     ctx, mock_client = _mock_client(_ok_response(returned))
     with ctx:
-        result = await patch_filament(BASE_URL, None, FILAMENT_ID, profiles)
+        await patch_filament(BASE_URL, None, FILAMENT_ID, profiles)
 
     mock_client.patch.assert_called_once()
     call_kwargs = mock_client.patch.call_args

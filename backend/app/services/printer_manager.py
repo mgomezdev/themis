@@ -3,10 +3,10 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Callable
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
 from .events import event_bus
@@ -40,6 +40,8 @@ class PrinterManager:
         self._offline_since: dict[int, float] = {}
         self._dead: set[int] = set()
         self._on_connectivity: Callable | None = None
+        # BIZ-369: printers whose setup no connection has confirmed yet (`printers.configured` False); never ready for work.
+        self._unconfigured: set[int] = set()
 
     def subscribe_events(self) -> None:
         """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
@@ -76,17 +78,67 @@ class PrinterManager:
             ids = {row[0] for row in result.all()}
             self.load_awaiting_plate_clear(ids)
 
+    async def load_configured_from_db(self) -> None:
+        if not self._session_factory:
+            return
+        async with self._session_factory() as session:
+            from ..models import Printer
+            result = await session.execute(select(Printer.id).where(Printer.configured == False))  # noqa: E712
+            self._unconfigured = {row[0] for row in result.all()}
+
+    def set_configured(self, printer_id: int, configured: bool) -> None:
+        if configured:
+            self._unconfigured.discard(printer_id)
+        else:
+            self._unconfigured.add(printer_id)
+
+    def is_configured(self, printer_id: int) -> bool:
+        return printer_id not in self._unconfigured
+
+    async def mark_configured(self, printer_id: int, session_factory=None, *, broadcast: bool = True) -> None:
+        """A connection succeeded: persist `configured`, clear the last error, and tell the UI."""
+        self.set_configured(printer_id, True)
+        factory = session_factory or self._session_factory
+        if factory:
+            async with factory() as session:
+                from ..models import Printer
+                printer = await session.get(Printer, printer_id)
+                if printer is not None:
+                    printer.configured, printer.config_error = True, None
+                    await session.commit()
+        if self._on_connectivity is not None:
+            try:
+                await self._on_connectivity(printer_id, "configured", False)   # it may claim now: don't wait for the next tick
+            except Exception:
+                logger.exception("Connectivity handler failed for printer %s", printer_id)
+        if broadcast and self._on_state_broadcast:
+            await self._on_state_broadcast("printer_configured",
+                                           {"printer_id": printer_id, "configured": True, "config_error": None})
+
     async def connect_all_enabled_printers(self, session_factory) -> None:
         if not session_factory:
             return
+        from . import printer_setup
         async with session_factory() as session:
             from ..models import Printer
             result = await session.execute(
                 select(Printer).where(Printer.enabled == True)  # noqa: E712
             )
             printers = result.scalars().all()
+            incomplete: set[int] = set()
+            for printer in printers:                  # no client (no login attempt) for a printer missing a required field
+                missing = printer_setup.missing_required(printer_setup.fields_for(printer), printer.connection_config or {})
+                if missing:
+                    printer.configured, printer.config_error = False, printer_setup.missing_reason(missing)
+                    self.set_configured(printer.id, False)
+                    incomplete.add(printer.id)
+            if incomplete:
+                await session.commit()
         for printer in printers:
             self.set_printer_plugin(printer.id, printer.plugin_id)
+            if printer.id in incomplete:
+                logger.warning("Not connecting printer %s (id=%s): %s", printer.name, printer.id, printer.config_error)
+                continue
             try:
                 client = create_client(printer)
                 self.connect_printer(printer.id, client)
@@ -190,6 +242,8 @@ class PrinterManager:
             return False
         if dormant_reason(self._printer_plugin.get(printer_id)) is not None:
             return False
+        if printer_id in self._unconfigured:
+            return False
         return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 
     def set_awaiting_plate_clear(self, printer_id: int, awaiting: bool) -> None:
@@ -218,6 +272,15 @@ class PrinterManager:
             except Exception:
                 logger.exception("Connectivity handler failed for printer %s", printer_id)
         client = self._clients.get(printer_id)
+        from . import printer_setup
+        # The first live connection confirms setup — but not while a test is pending or running: after a connection change the
+        # old client may still report until the test replaces it, and that must not vouch for the new, untested config.
+        if client is not None and printer_id in self._unconfigured and getattr(client, "connected", False) \
+                and not printer_setup.is_pending(printer_id):
+            try:
+                await self.mark_configured(printer_id)            # the first live connection confirms the setup (BIZ-369)
+            except Exception:
+                logger.exception("Marking printer %s configured failed", printer_id)
         if client is not None:
             try:
                 alarms = client.get_alarms()

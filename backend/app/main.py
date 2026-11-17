@@ -27,6 +27,7 @@ from .api.routes.api_keys import router as api_keys_router
 from .api.routes.customer_portal import router as customer_portal_router
 from .api.routes.cameras import router as cameras_router
 from .api.routes.customers import router as customers_router
+from .api.routes.project_groups import router as project_groups_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
@@ -44,6 +45,7 @@ from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
 from .api.routes.session import router as session_router
+from .api.routes.slicer_sends import router as slicer_sends_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
@@ -123,6 +125,7 @@ async def lifespan(app: FastAPI):
     printer_manager.set_session_factory(SessionLocal)
     printer_manager.subscribe_events()
     await printer_manager.load_awaiting_plate_clear_from_db()
+    await printer_manager.load_configured_from_db()
     await printer_manager.connect_all_enabled_printers(SessionLocal)
 
     # Plugins first: the Laminus URL lives in plugin settings, so the queue must not run (and try to slice) before the host loads them.
@@ -162,6 +165,9 @@ async def lifespan(app: FastAPI):
     # catalog cache in the background so the first user request is fast.
     from .services.providers.slicing import get_slicing_provider
     _slicing = get_slicing_provider()
+    # Held here for the life of the app: the event loop keeps only a weak reference to a task, so an unreferenced
+    # warm-up (it can poll for five minutes) may be garbage-collected mid-run. Cancelled on shutdown below.
+    warm_task: asyncio.Task | None = None
     if _slicing is not None:
         try:
             await asyncio.to_thread(_slicing.health)
@@ -172,9 +178,18 @@ async def lifespan(app: FastAPI):
             )
         # Kick off catalog warm-up in the background — don't block startup.
         from .services import catalog_service
-        asyncio.create_task(catalog_service.warm())
+        warm_task = asyncio.create_task(catalog_service.warm(), name="catalog-warm")
 
     yield
+
+    if warm_task is not None and not warm_task.done():
+        warm_task.cancel()
+        try:
+            await warm_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:                       # a warm-up that dies while being cancelled must not skip the stops below
+            logging.getLogger("app").exception("Catalog warm-up failed during shutdown")
 
     await inventory_sync_loop.stop()
     await event_hub.stop()
@@ -216,6 +231,7 @@ app.include_router(cameras_router)
 app.include_router(customers_router)
 app.include_router(customer_portal_router)
 app.include_router(session_router)
+app.include_router(slicer_sends_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(printer_models_router)
@@ -228,6 +244,7 @@ app.include_router(alarms_router)
 app.include_router(labor_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
+app.include_router(project_groups_router)        # before projects_router: its literal /groups/order path must win
 app.include_router(projects_router)
 app.include_router(payments_router)
 app.include_router(public_router)

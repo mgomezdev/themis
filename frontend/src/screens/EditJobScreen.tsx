@@ -6,9 +6,11 @@ import type { ApiPrinter } from '../api/printers';
 import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
+import { SliceOverridesEditor } from '../components/SliceOverridesEditor';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { isPresliced } from '../lib/fileKind';
-import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
+import { buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
+import { PrinterTargetPicker } from '../components/PrinterTargetPicker';
 import { apiFetch } from '../api/client';
 
 // ---- hooks ----
@@ -21,64 +23,6 @@ function usePrinterList(): ApiPrinter[] {
     return () => { alive = false; };
   }, []);
   return printers;
-}
-
-// ---- Checkbox ----
-
-function Checkbox({ checked }: { checked: boolean }) {
-  return (
-    <div style={{
-      width: 18, height: 18, flexShrink: 0, borderRadius: 5,
-      border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
-      background: checked ? 'var(--accent)' : 'transparent',
-      display: 'grid', placeItems: 'center',
-    }}>
-      {checked && <span style={{ color: 'white', display: 'inline-flex', fontSize: 10 }}>✓</span>}
-    </div>
-  );
-}
-
-// ---- PrinterPicker ----
-
-const BADGE: Record<string, string> = { elegoo_centauri: 'ECC', bambu: 'P1S' };
-
-function PrinterPicker({ printers, selected, onToggle }: {
-  printers: ApiPrinter[];
-  selected: string[];
-  onToggle: (id: string) => void;
-}) {
-  if (printers.length === 0) return <div className="tiny muted">No printers configured.</div>;
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-      {printers.map(p => {
-        const sid = String(p.id);
-        const isSelected = selected.includes(sid);
-        const badge = BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase();
-        return (
-          <button key={p.id} onClick={() => onToggle(sid)} style={{
-            padding: 12,
-            background: isSelected ? 'var(--bg-3)' : 'var(--bg-1)',
-            border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-1)'}`,
-            boxShadow: isSelected ? '0 0 0 1px var(--accent)' : 'none',
-            borderRadius: 10, textAlign: 'left', cursor: 'pointer',
-            color: 'var(--text-1)', fontFamily: 'inherit',
-          }}>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
-              <span className={`elig ${isSelected ? 'on' : 'off'}`}
-                    style={isSelected ? { background: 'rgba(59,130,246,0.20)' } : undefined}>
-                {badge}
-              </span>
-              <div className="col" style={{ flex: 1, minWidth: 0 }}>
-                <div className="small" style={{ fontWeight: 500 }}>{p.name}</div>
-                <div className="tiny muted">{p.printer_type}</div>
-              </div>
-              <Checkbox checked={isSelected} />
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 // ---- Main screen ----
@@ -179,7 +123,7 @@ export function EditJobScreen() {
 
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return gcode ? !!pp : !!(pp?.printProfile);
+    return gcode ? !!pp : pp?.printProfile != null;      // "" = Printer default
   });
 
   async function handleSave() {
@@ -220,7 +164,7 @@ export function EditJobScreen() {
     return (
       <div className="col gap-3">
         <button className="btn ghost sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate(-1)}>{Icons.chevL} Back</button>
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{loadError}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{loadError}</div>
       </div>
     );
   }
@@ -234,24 +178,24 @@ export function EditJobScreen() {
       </div>
 
       {saveError && (
-        <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{saveError}</div>
+        <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{saveError}</div>
       )}
 
       {job && (
-        <div className="card" style={{ padding: '12px 16px', background: 'var(--bg-1)' }}>
-          <div className="row gap-3" style={{ alignItems: 'center' }}>
+        <div className="card" style={{ padding: '12px 16px' }}>
+          <div className="row gap-3">
             <span className="mono tiny muted">#{job.id}</span>
-            <span className="small" style={{ fontWeight: 500 }}>
+            <span className="small fw-500">
               Plate {job.plate_number}
               {job.file && <span className="muted" style={{ fontWeight: 400 }}> · {job.file.original_filename}</span>}
             </span>
             {job.status === 'blocked' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(251,191,36,0.12)', color: 'var(--warn)', fontWeight: 500 }}>
+              <span className="tiny tone-warn tint-bg tone-text" style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
                 BLOCKED
               </span>
             )}
             {job.status === 'failed' && (
-              <span className="tiny" style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.12)', color: 'var(--err)', fontWeight: 500 }}>
+              <span className="tiny tone-err tint-bg tone-text" style={{ padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
                 FAILED
               </span>
             )}
@@ -271,8 +215,7 @@ export function EditJobScreen() {
             <SectionHeader title="Eligible printers"
                            sub="Which printers may claim this job. Configure slicing settings for each." />
             {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
-            <PrinterPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
-            <ModelPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
+            <PrinterTargetPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
           </div>
 
           {/* Per-printer config */}
@@ -292,6 +235,8 @@ export function EditJobScreen() {
                       config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                       onChange={patch => patchPerPrinter(sid, patch)}
                       modelFilaments={isModelKey(sid) ? undefined : modelFilaments}
+                      unmatchedFilaments={JSON.stringify(perPrinter[sid]?.filamentMap) === JSON.stringify(job?.printer_configs.find(c => String(c.printer_id) === sid)?.filament_map)
+                        ? job?.unmatched_filaments?.[sid] : undefined}
                       gcode={gcode}
                     />
                   );
@@ -304,11 +249,23 @@ export function EditJobScreen() {
           {!gcode && embeddedSettings.length > 0 && (
             <div className="card" style={{ padding: 20 }}>
               <SectionHeader title="3MF Embedded Settings"
-                             sub="Settings baked into the file. Check the ones you want to apply — unchecked ones use the profile default." />
+                             sub="Settings baked into the file. Carried ones are re-applied on any printer; check others to keep them." />
               <OverridePanel
                 settings={embeddedSettings}
                 value={confirmedOverrides}
                 onChange={setConfirmedOverrides}
+              />
+            </div>
+          )}
+
+          {!gcode && (
+            <div className="card" style={{ padding: 20 }}>
+              <SliceOverridesEditor
+                title="Job setting overrides"
+                hint="Applied to this job on whichever printer slices it; they win over the 3MF's settings and the printer's overrides."
+                value={confirmedOverrides}
+                onChange={setConfirmedOverrides}
+                testId="job-overrides"
               />
             </div>
           )}
@@ -317,7 +274,7 @@ export function EditJobScreen() {
         {/* Sidebar */}
         <div className="col gap-4">
           <div className="card" style={{ padding: 18 }}>
-            <button className="btn primary" style={{ width: '100%' }}
+            <button className="btn primary w-full"
                     disabled={!isComplete || saving || !job}
                     onClick={handleSave}>
               {Icons.check} {saving ? 'Saving…' : 'Save & re-queue'}
@@ -340,9 +297,9 @@ export function EditJobScreen() {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
                   const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
-                  const done = gcode ? !!pp : !!(pp?.printProfile);
+                  const done = gcode ? !!pp : pp?.printProfile != null;
                   return (
-                    <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div key={sid} className="row gap-2">
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
                       <span className="small" style={{ flex: 1, minWidth: 0, color: done ? 'var(--text-1)' : 'var(--text-3)' }}>
                         {label}
@@ -380,21 +337,13 @@ export function EditJobScreen() {
                   {verifyRunning ? 'Slicing…' : `${Icons.refresh} Run test slice`}
                 </button>
                 {verifyResult && (
-                  <div style={{
-                    padding: '10px 12px', borderRadius: 8,
-                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
-                  }}>
-                    <div className="tiny" style={{
-                      fontWeight: 600,
-                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
-                      marginBottom: verifyResult.error ? 4 : 0,
-                    }}>
+                  <div className={`tint tone-${verifyResult.ok ? 'ok' : 'err'}`} style={{ padding: '10px 12px', borderRadius: 8 }}>
+                    <div className="tiny tone-text" style={{ fontWeight: 600, marginBottom: verifyResult.error ? 4 : 0 }}>
                       {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
                     </div>
                     {verifyResult.error && (
                       <div className="mono tiny" style={{
-                        color: 'var(--text-2)', whiteSpace: 'pre-wrap',
+                        color: 'var(--text-1)', whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto',
                       }}>
                         {verifyResult.error}

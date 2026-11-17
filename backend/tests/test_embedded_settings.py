@@ -1,7 +1,6 @@
 import io
 import json
 import zipfile
-import pytest
 from app.services.three_mf_parser import parse_embedded_settings
 
 
@@ -44,6 +43,13 @@ def test_list_values_joined_as_string(tmp_path):
     path = _make_3mf({"enable_support": ["1"]}, tmp_path)
     result = parse_embedded_settings(path)
     assert result[0]["value"] == "1"
+
+
+def test_marks_the_settings_the_author_changed_as_carried(tmp_path):
+    path = _make_3mf({"enable_support": "1", "layer_height": "0.2",
+                      "different_settings_to_system": ["enable_support", "", ""]}, tmp_path)
+    by_key = {r["key"]: r["carried"] for r in parse_embedded_settings(path)}
+    assert by_key == {"enable_support": True, "layer_height": False}
 
 
 def test_returns_empty_for_bad_zip(tmp_path):

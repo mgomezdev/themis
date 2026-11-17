@@ -64,7 +64,7 @@ async def seed(factory, printers: dict[int, dict], jobs: list[dict]) -> list[int
     "printers": [ids], "type": "any", "color": "any", "failed": {printer_id: "error"}}. Returns job ids."""
     async with factory() as s:
         for pid, spec in printers.items():
-            s.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
+            s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
                           machine_profile_override=spec.get("machine", f"Machine P{pid}"),
                           loaded_filaments=spec.get("loaded", [])))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
@@ -186,7 +186,7 @@ async def test_a_job_eligible_on_two_idle_printers_is_claimed_exactly_once(engin
 
 
 async def test_slice_failure_on_one_printer_blocks_the_job_and_another_printer_can_rescue_it(engine, world, session_factory):
-    def slice_or_fail(req):
+    def slice_or_fail(req, *_):
         if req.machine_preset == "Machine P1":
             raise SliceError("profile not found")
         return world.slicer.slice.return_value

@@ -118,7 +118,7 @@ function TableBlock({ pluginId, block }: { pluginId: string; block: Extract<Sche
       {rows === null ? <div className="muted small">Loading…</div> : rows.length === 0 ? (
         <div className="muted small">{block.empty ?? 'Nothing here yet.'}</div>
       ) : (
-        <table className="table" style={{ width: '100%' }}>
+        <table className="tbl w-full">
           <thead><tr>{block.columns.map(c => <th key={c.key} style={{ textAlign: 'left' }}>{c.label}</th>)}{block.row_actions && <th />}</tr></thead>
           <tbody>
             {rows.map((r, i) => (
@@ -137,7 +137,7 @@ function TableBlock({ pluginId, block }: { pluginId: string; block: Extract<Sche
       {block.create && (
         <div className="row gap-2" style={{ marginTop: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           {visibleFields(block.create.fields, draft).map(f => (
-            <label key={f.key} className="col" style={{ gap: 4 }}>
+            <label key={f.key} className="col gap-1">
               <span className="tiny muted">{f.label}{f.required ? ' *' : ''}</span>
               <FieldInput f={f} value={draft[f.key]} onChange={v => setDraft(d => ({ ...d, [f.key]: v }))} />
             </label>

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
 import { apiFetch, openLiveSocket } from './client';
+import { UNKNOWN_COLOR } from '../data/helpers';
 
 export interface FleetPrinter {
   id: number;
@@ -12,6 +13,9 @@ export interface FleetPrinter {
   dormant_reason?: string | null;
   enabled: boolean;
   queue_on: boolean;
+  queue_paused_reason?: string | null;  // why Themis switched the queue off by itself
+  configured?: boolean;                 // BIZ-369: a connection confirmed its setup (only configured printers take work)
+  config_error?: string | null;         // why not: last test failure / missing field
   connected: boolean;
   awaiting_plate_clear: boolean;
   no_snapshots_while_idle: boolean;
@@ -33,17 +37,27 @@ export interface FleetPrinter {
   fan_box: number;
   alarm_count?: number;                 // active, unacknowledged
   alarm_severity?: 'info' | 'warning' | 'error' | 'fatal' | null;
+  waived_parts?: number;                // BIZ-365: parts it no longer gets
+  waiver_flag?: boolean;                // reached its flag threshold: wash the plate / do maintenance
+  waiver_stopped?: boolean;             // reached its stop threshold: takes no queue work
 }
 
-const ACCENT: Record<string, string> = {
-  elegoo_centauri: '#22d3ee',
-  bambu: '#3b82f6',
-};
+// A printer's badge and accent are derived from its type key, never looked up per vendor: shared UI names no plugin
+// (pluginIdGuard.test.ts), and a type added by a new plugin gets a stable colour and badge with no change here.
+const ACCENTS = ['#22d3ee', '#3b82f6', '#a78bfa', '#34d399', '#fb923c', '#f472b6', '#facc15', '#94a3b8'];
 
-const BADGE: Record<string, string> = {
-  elegoo_centauri: 'ECC',
-  bambu: 'P1S',
-};
+/** Stable per-type accent: the same type key always maps to the same palette entry. */
+export function typeAccent(printerType: string): string {
+  let h = 0;
+  for (const ch of printerType) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return ACCENTS[h % ACCENTS.length];
+}
+
+/** Short badge for a type key: initials of a multi-word key (`acme_core_one` → ACO), else its first three letters. */
+export function typeBadge(printerType: string): string {
+  const words = printerType.split(/[_\s-]+/).filter(Boolean);
+  return (words.length > 1 ? words.map(w => w[0]).join('').slice(0, 4) : printerType.slice(0, 3)).toUpperCase();
+}
 
 const DORMANT_TEXT: Record<string, string> = {
   plugin_disabled: 'Its plugin is disabled',
@@ -71,7 +85,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     model: p.printer_type,
     pluginId: p.plugin_id ?? undefined,
     dormantReason: p.dormant ? (DORMANT_TEXT[p.dormant_reason ?? ''] ?? 'Plugin unavailable') : undefined,
-    badge: BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase(),
+    badge: typeBadge(p.printer_type),
     buildVolume: '',
     capabilities: Object.entries(p.capabilities ?? {})
       .filter(([, v]) => v)
@@ -91,22 +105,28 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     bedTemp: p.temperatures?.bed ?? 0,
     chamberTemp: p.temperatures?.chamber ?? null,
     material: mat
-      ? { name: mat.name || '—', type: mat.type || '—', color: mat.color || '#475472' }
-      : { name: '—', type: '—', color: '#475472' },
+      ? { name: mat.name || '—', type: mat.type || '—', color: mat.color || UNKNOWN_COLOR }
+      : { name: '—', type: '—', color: UNKNOWN_COLOR },
     materials: p.loaded_filaments.map(m => ({
-      name: m.name || '—', type: m.type || '—', color: m.color || '#475472',
+      name: m.name || '—', type: m.type || '—', color: m.color || UNKNOWN_COLOR,
     })),
     currentJobId: p.current_print ?? null,
-    accent: ACCENT[p.printer_type] ?? '#888888',
+    accent: typeAccent(p.printer_type),
     fanModel: p.fan_model ?? 0,
     fanAux: p.fan_aux ?? 0,
     fanBox: p.fan_box ?? 0,
     bedTempTarget: p.temperatures?.bed_target ?? 0,
     queueOn: p.queue_on ?? true,
+    queuePausedReason: p.queue_paused_reason ?? null,
+    configured: p.configured ?? true,
+    configError: p.config_error ?? null,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,
     noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
     alarmCount: p.alarm_count ?? 0,
     alarmSeverity: p.alarm_severity ?? null,
+    waivedParts: p.waived_parts ?? 0,
+    waiverFlag: p.waiver_flag ?? false,
+    waiverStopped: p.waiver_stopped ?? false,
   };
 }
 
@@ -139,6 +159,12 @@ export function useFleetRaw(): [FleetPrinter[], () => void] {
     return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
+        if (msg.type === 'printer_configured') {
+          // a connection test finished or the first live connection confirmed the setup (BIZ-369)
+          const d = msg.data as unknown as { printer_id: number; configured: boolean; config_error: string | null };
+          setRaw(prev => prev.map(p => (p.id === d.printer_id ? { ...p, configured: d.configured, config_error: d.config_error } : p)));
+          return;
+        }
         if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
           // A live frame is only vendor telemetry (no name, loaded_filaments, enabled…), so an unknown
           // printer can't be built from it: fetch the full row once instead of rendering the fragment.

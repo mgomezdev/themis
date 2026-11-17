@@ -27,5 +27,5 @@ class MoonrakerClient(MoonrakerClientBase):
         user-owned configuration that survives upgrades."""
         toolheads = int(getattr(model, "toolheads", 1) or 1)
         return [*cls.base_connection_fields(),
-                ConnectionField(name="toolheads", label="Toolheads / extruders", field_type="number", default=toolheads, required=False,
+                ConnectionField(name="toolheads", label="Toolheads / extruders", field_type="number", default=toolheads, required=False, connects=False,
                                 help_text="How many extruders Klipper drives (extruder, extruder1…). Telemetry is read for these.")]

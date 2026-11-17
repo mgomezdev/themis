@@ -152,6 +152,7 @@ async def test_delete_blocked_by_active_job(client, lib, session_factory):
         await session.commit()
     r = await client.delete(f"/api/v1/files/{up['id']}")
     assert r.status_code == 409
+    assert up["id"] in [f["id"] for f in (await client.get("/api/v1/files")).json()]      # the refusal left the file in place
 
 
 @pytest.mark.asyncio
@@ -253,7 +254,6 @@ async def test_move_rejects_name_traversal(client, lib):
         stored_path = r2.json()["relative_path"]
         assert not stored_path.startswith(".."), "Stored path must not escape via .."
         # Confirm the physical file is still inside the library
-        import pathlib
         full = lib / stored_path.lstrip("/")
         assert full.exists(), "Original file must still be present inside the library"
     else:
@@ -357,7 +357,7 @@ async def test_removing_or_assigning_a_tag_is_idempotent_and_assign_validates_it
     twice_removed = [await client.delete(f"/api/v1/files/{f['id']}/tags/{tag['id']}") for _ in range(2)]
     twice_assigned = [await client.post(f"/api/v1/files/{f['id']}/tags", json={"tag_id": tag["id"]}) for _ in range(2)]
     unknown_tag = await client.post(f"/api/v1/files/{f['id']}/tags", json={"tag_id": 999})
-    unknown_file = await client.post(f"/api/v1/files/999/tags", json={"tag_id": tag["id"]})
+    unknown_file = await client.post("/api/v1/files/999/tags", json={"tag_id": tag["id"]})
 
     assert [r.status_code for r in twice_removed + twice_assigned] == [200] * 4
     assert (unknown_tag.status_code, unknown_file.status_code) == (404, 404)
@@ -369,7 +369,8 @@ async def test_removing_or_assigning_a_tag_is_idempotent_and_assign_validates_it
 # ---------------------------------------------------------------------------
 
 def _project_3mf(settings: dict) -> bytes:
-    import json, zipfile
+    import json
+    import zipfile
     from tests.conftest import make_3mf_bytes
     buf = io.BytesIO(make_3mf_bytes())
     with zipfile.ZipFile(buf, "a") as zf:
@@ -404,7 +405,7 @@ async def test_embedded_settings_returns_only_curated_keys_with_labels(client, l
     resp = await client.get(f"/api/v1/files/{file_id}/embedded-settings")
 
     assert resp.status_code == 200
-    assert resp.json() == [{"key": "wall_loops", "label": "Wall loops", "value": "3"},
-                           {"key": "layer_height", "label": "Layer height", "value": "0.2"}]
+    assert resp.json() == [{"key": "wall_loops", "label": "Wall loops", "value": "3", "carried": False},
+                           {"key": "layer_height", "label": "Layer height", "value": "0.2", "carried": False}]
     assert (await client.get("/api/v1/files/999/embedded-settings")).status_code == 404
 

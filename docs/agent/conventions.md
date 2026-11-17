@@ -11,7 +11,8 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   only by an upload/start error after slicing (`_fail_job_post_slice`), never by a slice failure. Never set
   `failed` for a recoverable filament/slice issue.
 - **awaiting_plate_clear**: set `True` the moment a print **starts** (`status=printing`), not when it
-  finishes. A printer is eligible only when `is_idle AND not awaiting_plate_clear AND queue_on`. Cleared
+  finishes. A printer is eligible only when `configured AND is_idle AND not awaiting_plate_clear AND queue_on`
+  (`configured`, BIZ-369: set only by a passed connection test or the first live connection; DB row + `PrinterManager._unconfigured`, checked by `is_printer_ready` and `_try_claim_for_printer` — keep both in sync). Cleared
   only by `POST /printers/{id}/plate-cleared` (the Fleet "Ready for new work" button). Lives in the DB
   row AND the `PrinterManager` set — keep both in sync.
 - **Versioned migrations, not `create_all` alone**: `init_db()` runs `Base.metadata.create_all` *then*
@@ -56,6 +57,9 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   (a meta-test fails on a row naming a missing test); data lifecycle rules are `docs/plugin-lifecycle.md`.
 - **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
   `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
+- **Every finished project plate gets a result** (`docs/superpowers/plans/2026-11-15-plate-clear-defaults.md`): a person's report (`jobs.outcome = "reviewed"`; the plate-clear dialog, or `POST /jobs/{id}/results` from History) always wins. A plate cleared WITHOUT results gets the Settings default for how its print ended (`print_results.apply_clear_defaults`, run on every `plate-cleared` for every finished unreported project plate of that printer): completed -> `plate_clear_complete` (`assume_good` credits every part, outcome `assumed_good`, correctable later) or `ask` (left awaiting); failed -> `plate_clear_failed` (`assume_failed` requeues / returns every part, outcome `assumed_failed`, final: report, review and requeue answer 409 via `print_results.final`) or `ask` (parts stay reserved). Assumed failures move parts but name no part: they never hold a part and never count toward waivers (`record_and_restore(assumed=)`, `part_waivers.after_failure`). The brake for that case is the printer: after `pause_after_failed_prints` failed prints in a row `_pause_failing_printer` switches its queue off with `printers.queue_paused_reason` and a `printer.paused` notification; a person switching the queue (either way) clears the reason. A test print is never given an assumed result. A cancel by a person is not a print result.
+- **Pool plates never loop parts**: A pool plate cancelled before printing (slice failure, block, upload/start error) is remembered by `queue_engine._pool_plate_dropped`: its items are not packed again for THAT printer for `POOL_RETRY_DROPPED_S` (15 min, in memory) — other printers and the pool's other items carry on (`preference.defer_pool` waits for neither such a printer nor one its waivers stopped). Without it the printer re-packs, re-slices and cancels the same plate every cycle.
+- **Printer part waivers (BIZ-365)**: a printer that failed a part `queue_config.waive_after` times is waived for it (`part_waivers`, keyed by the part — file content hash + kind + plate/object — so in every project). The claim loop skips (never blocks) a job carrying a waived part; at `waiver_stop_at` waived parts the printer claims nothing (the printer's own `waiver_flag_at` / `waiver_stop_at`, else the fleet-wide `queue_config.waiver_flag_at` / `waiver_stop_at` from Settings; 0 = off — `part_waivers.fleet_limits` + `stopped`/`flagged`), and while `test_print_job_id` is set it claims only that test print. The unmatched sweep blocks a job every eligible printer is waived for. The waived-part skip runs before the head-of-line `slice_failed` block: a waived job never stops the printer looking further, even if it also failed to slice there. A stale test-print pointer (its job gone, cancelled, failed or reported) is dropped at claim; `DELETE /printers/{id}/test-print` cancels one. Only a person clears a waiver (Clear / Clear all / a good test print); maintenance never does.
 - **Cancel ↔ stop are bidirectional**: cancelling an active job stops the printer; stopping a printer
   reconciles its running job → `cancelled`. Keep both directions wired when touching either.
 - **Head-of-line queue**: a job that can't run blocks; the engine does **not** skip to a runnable job
@@ -117,7 +121,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 ```
 # Backend (from backend/, python.org venv active)
 uvicorn app.main:app --reload --port 8001
-pytest -v                       # all (CI: `pytest -v -ra --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
+pytest -n auto                  # all, one worker per core (CI: `pytest -ra -n auto --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
 pytest tests/services/test_bambu_mqtt.py -v   # the Bambu client now lives in app/plugins/bambu/client.py
 
 # Frontend (from frontend/)

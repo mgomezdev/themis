@@ -43,6 +43,8 @@ export interface PluginSummary {
   name: string;
   version: string;
   description: string;
+  /** False when the plugin has no connection of its own (a printer plugin: each printer has its own) — no Test button. */
+  can_test_connection?: boolean;
   docs_url: string | null;
   source: string;                 // bundled | upload | github
   /** False for an installed package that is not running (staged for the next restart, or failed to load). */
@@ -64,6 +66,7 @@ export interface PluginSummary {
 }
 
 export interface PluginDetail extends PluginSummary {
+  printer_discovery?: boolean;
   settings: Record<string, unknown>;
   /** Secret fields: whether a value is stored (the value itself never leaves the server). */
   secrets: Record<string, boolean>;

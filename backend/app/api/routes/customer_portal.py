@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_customer
 from ...database import get_session
 from ...models import Job, Project, ProjectItem, ProjectPayment, UploadedFile
-from ...services import project_events
+from ...services import project_events, project_groups
 from ...services.library_scanner import is_presliced_name
 from ...services.payments import outstanding, paid_amount
 from .files import upload_file
@@ -136,6 +136,8 @@ async def create_draft(body: DraftCreate, customer_id: int = Depends(require_cus
     p = Project(name=name, notes=body.notes, customer="", order_type="customer", stage="draft",
                 customer_id=customer_id, created_at=now, updated_at=now)
     session.add(p)
+    await session.flush()
+    await project_groups.ensure_default_group(session, p.id)
     await session.commit()
     await session.refresh(p)
     await project_events.publish("project.created", p)
@@ -165,7 +167,8 @@ async def upload_to_draft(project_id: int, file: UploadFile,
     if is_presliced_name(file.filename):   # project items get packed and sliced: send the model, not gcode
         raise HTTPException(422, "Upload the model (.3mf or .stl), not sliced gcode")
     uploaded = await upload_file(file, f"/Customer Uploads/{customer_id}", session)
-    session.add(ProjectItem(project_id=p.id, file_id=uploaded["id"], quantity=1))
+    session.add(ProjectItem(project_id=p.id, file_id=uploaded["id"], quantity=1,
+                            group_id=(await project_groups.ensure_default_group(session, p.id)).id))
     p.updated_at = _now()
     await session.commit()
     return await _project_dict(p, session)

@@ -18,7 +18,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -74,10 +74,15 @@ class CacheKeyInputs:
     # depends on which provider happens to be the default. The engine version is deliberately NOT in the key (it is `slicer_version`
     # staleness): a key must be computable with the engine down (BIZ-201) and a stale version must stay reusable by policy.
     provider: str = DEFAULT_PROVIDER
+    # The printer's own overrides (SliceRequest.printer_overrides): hashed only when set, so keys of printers without any are
+    # unchanged. The project file's own preset changes need no field: they are a function of `source_content_hash`.
+    printer_overrides: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["filament_presets"] = list(self.filament_presets)
+        if not d["printer_overrides"]:
+            del d["printer_overrides"]
         return d
 
 
@@ -85,7 +90,7 @@ def key_inputs(
     req: SliceRequest, source_content_hash: str | None, tool_index: int | None, filament_map: list | None,
     provider: str | None = None,
 ) -> CacheKeyInputs | None:
-    """`tool_index`/`filament_map` aren't on the request (they reach the slicer as a 3MF remap via `prepare_hook`) but
+    """`tool_index`/`filament_map` are passed separately (the request carries them only when the printer needs a slice-side remap) but
     they change the output, so they're part of the key. `filament_map` must be the RESOLVED map (slot indices, after
     `queue_engine._resolve_filament_map`) — exactly what the remap used — or save and lookup drift apart.
 
@@ -104,6 +109,7 @@ def key_inputs(
         filament_map=list(filament_map) if filament_map else None,
         artifact_kind="gcode_3mf" if _export_3mf_name(req.export_args) is not None else "gcode",
         provider=provider or req.provider_id or slicing_provider_name(),
+        printer_overrides=dict(getattr(req, "printer_overrides", None) or {}),
     )
 
 
@@ -120,6 +126,7 @@ def key_fields(inputs: CacheKeyInputs) -> dict:
         "process_preset": inputs.process_preset,
         "filament_presets": list(inputs.filament_presets),
         "extra_config_hash": sha256_of(inputs.extra_config),
+        "printer_overrides_hash": sha256_of(inputs.printer_overrides) if inputs.printer_overrides else None,
         "filament_map_hash": sha256_of(inputs.filament_map) if inputs.filament_map else None,
         "tool_index": inputs.tool_index,
         "artifact_kind": inputs.artifact_kind,

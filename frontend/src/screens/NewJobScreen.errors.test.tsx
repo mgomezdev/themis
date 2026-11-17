@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NewJobScreen } from './NewJobScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
+import { pickPrinter } from '../test/pickPrinter';
 
 const PRINTER = {
   id: 1, name: 'Barnabus', printer_type: 'elegoo_centauri', model_uuid: 'model-ecc', model_label: 'Elegoo Centauri Carbon', connection_config: {}, awaiting_plate_clear: false,
@@ -52,7 +53,7 @@ async function upload(name = 'model.3mf', user: Pick<ReturnType<typeof userEvent
 }
 /** Pick Barnabus and its print profile for whichever plate tab is showing. */
 async function configureActivePlate() {
-  await userEvent.click(await screen.findByText('Barnabus'));
+  await pickPrinter('Barnabus');
   await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
 }
 const jobPosts = (api: ReturnType<typeof stubFetch>) => api.to('POST', '/api/v1/jobs');
@@ -68,12 +69,12 @@ describe('NewJobScreen - upload failures', () => {
 
     await upload('big.3mf');
     expect(await screen.findByText('Upload failed: 413 file too large')).toBeTruthy();
-    expect(screen.queryByText('Barnabus')).toBeNull();
+    expect(screen.queryByRole('button', { name: '+ Printer' })).toBeNull();
     expect(screen.getAllByText(/Drop a \.3mf, \.stl, \.gcode or \.gcode\.3mf file/i).length).toBeGreaterThan(0);
 
     await upload('model.3mf');
 
-    expect(await screen.findByText('Barnabus')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '+ Printer' })).toBeTruthy();
     expect(screen.queryByText(/Upload failed/)).toBeNull();          // the error goes away with the next attempt
     expect(api.to('POST', '/api/v1/files/upload')).toHaveLength(2);
   });
@@ -166,7 +167,7 @@ describe('NewJobScreen - creating the job', () => {
     const api = open();
     await upload();
 
-    await userEvent.click(await screen.findByTestId('model-target-model-ecc'));
+    await pickPrinter('Any Elegoo Centauri Carbon');
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
 
@@ -181,13 +182,32 @@ describe('NewJobScreen - creating the job', () => {
     }]);
   });
 
+  it('can target Any printer, sent as a model target with a null model (BIZ-357)', async () => {
+    const api = open();
+    await upload();
+
+    await pickPrinter('Any printer');
+    await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
+    await userEvent.click(addButton());
+
+    expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
+    expect(jobPosts(api).map(c => c.body)).toEqual([{
+      uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
+      printer_configs: [],
+      model_targets: [{
+        model_uuid: null, print_profile: PROFILE, filament_profile: null,
+        filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null,
+      }],
+    }]);
+  });
+
   it('queues a .gcode file without a print profile, warning about the printer match and skipping slicing reads', async () => {
     localStorage.clear();
     const api = open([plate(1)], { 'POST /api/v1/files/upload': { id: 42, original_filename: 'part.gcode' } });
     await upload('part.gcode');
 
     expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     expect(screen.queryByTestId('print-profile-select')).toBeNull();   // nothing to slice
     await userEvent.click(addButton());
 
@@ -209,7 +229,7 @@ describe('NewJobScreen - creating the job', () => {
     await upload('part.gcode.3mf');
 
     expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
-    await userEvent.click(await screen.findByText('Barnabus'));
+    await pickPrinter('Barnabus');
     expect(screen.queryByTestId('print-profile-select')).toBeNull();
     await userEvent.click(addButton());
 
@@ -275,10 +295,10 @@ describe('NewJobScreen - creating the job', () => {
   it('cannot be submitted until a printer and profile are chosen', async () => {
     const api = open();
     await upload();
-    await screen.findByText('Barnabus');
+    await screen.findByRole('button', { name: '+ Printer' });
     expect(addButton().hasAttribute('disabled')).toBe(true);
 
-    await userEvent.click(screen.getByText('Barnabus'));
+    await pickPrinter('Barnabus');
     expect(addButton().hasAttribute('disabled')).toBe(true);          // printer but no profile yet
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
 

@@ -6,7 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeVar
 
-CAP_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+# Dotted lowercase segments; a segment may start with a digit ("3mf.construct", the contract name from BIZ-248).
+CAP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]*(\.[a-z0-9][a-z0-9_]*)+$")
 
 P = TypeVar("P")
 

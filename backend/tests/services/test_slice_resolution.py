@@ -115,7 +115,16 @@ async def test_ineligible_preference_blocks_even_when_the_default_could_take_it(
     b = FakeGcodeProducer("b", models=frozenset({"someone-else"}))
     world(["a", "b"], "a", {"a": a, "b": b})
     d = await sr.resolve_slicing(printer(preferred="b"), "m.3mf")
-    assert d.outcome.reason is Reason.PREFERENCE_INELIGIBLE and not d.recoverable and d.message == "B can't slice for P1 — slicing paused"
+    assert d.outcome.reason is Reason.PREFERENCE_INELIGIBLE and not d.recoverable
+    assert d.message == ("B can't slice for P1 with machine profile 'Machine 0.4' — Refresh the profile sync, and re-map the "
+                         "printer model if that profile was renamed or removed — slicing paused")
+
+
+async def test_an_input_the_provider_never_takes_keeps_the_plain_ineligible_message(world):
+    a = FakeGcodeProducer("a", accepted=[c.InputKind.MODEL_3MF])
+    world(["a"], "a", {"a": a})
+    d = await sr.resolve_slicing(printer(), "part.stl")
+    assert d.message == "A can't slice for P1 — slicing paused"
 
 
 async def test_no_provider_enabled(world):

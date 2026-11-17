@@ -196,7 +196,7 @@ def test_every_bundled_printer_plugin_satisfies_the_printer_client_contract():
 def test_the_conformance_tables_in_the_docs_match_the_capability_catalog():
     docs = (Path(__file__).resolve().parents[3] / "docs" / "provider-interfaces.md").read_text(encoding="utf-8")
     section = docs.split("## Conformance", 1)[1]
-    rows = {m.group(1): m for m in re.finditer(r"^\| `([a-z.]+)` \| (\w+) \| (.*?) \| (.*?) \|$", section, re.M)}
+    rows = {m.group(1): m for m in re.finditer(r"^\| `([a-z0-9_.]+)` \| (\w+) \| (.*?) \| (.*?) \|$", section, re.M)}
     assert set(rows) == set(CORE), "every core capability needs a row in the Conformance table"
     for cap, row in rows.items():
         d = CORE[cap]

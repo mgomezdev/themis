@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectDetailScreen } from './ProjectDetailScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
+import { pickPrinter } from '../test/pickPrinter';
 
 const PRINTERS = [
   { id: 1, name: 'Printer A', enabled: true, bed_x_mm: 256, bed_y_mm: 256 },
@@ -126,7 +127,29 @@ describe('ProjectDetailScreen - generating jobs', () => {
     await ready();
 
     expect(button('Generate…').hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText('No parts — edit the project to add parts.')).toBeTruthy();
+    expect(screen.getByText('No parts — edit the project, or drop a .3mf / .stl file on this page, to add parts.')).toBeTruthy();
+  });
+
+  it('sends Any printer and model groups as their own generate fields (BIZ-357)', async () => {
+    const withModels = [{ ...PRINTERS[0], model_uuid: 'm-p1s', model_label: 'Bambu Lab P1S' }, PRINTERS[1]];
+    const { api } = open({ 'GET /api/v1/printers': withModels, 'POST /api/v1/projects/42/generate': () => generated(1) });
+    await ready();
+
+    await userEvent.click(button('Generate…'));
+    await pickPrinter('Any Bambu Lab P1S');
+    await pickPrinter('Printer B');
+    await userEvent.click(button('Generate'));
+    await screen.findByText(/1 job queued/);
+
+    await userEvent.click(button('Generate…'));
+    await pickPrinter('Any printer');
+    await userEvent.click(button('Generate'));
+    await waitFor(() => expect(api.to('POST', '/api/v1/projects/42/generate')).toHaveLength(2));
+
+    expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
+      { eligible_printer_ids: [2], eligible_model_uuids: ['m-p1s'], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], eligible_model_uuids: ['m-p1s'], eligible_any_printer: true, process_preset: null, allow_cached: true, save_slice: false },
+    ]);
   });
 
   it('generates for the chosen printers, reports the job count and reloads the job list', async () => {
@@ -139,14 +162,14 @@ describe('ProjectDetailScreen - generating jobs', () => {
     await ready();
 
     await userEvent.click(button('Generate…'));
-    await userEvent.click(await screen.findByRole('checkbox', { name: /Printer B/ }));
+    await pickPrinter(/Printer B/);
     await waitFor(() => expect(screen.getByTestId('process-preset-select').textContent).toContain('0.20mm Standard'));
     await userEvent.selectOptions(screen.getByTestId('process-preset-select'), '0.20mm Standard');
     await userEvent.click(button('Generate'));
 
     expect(await screen.findByText('2 jobs queued')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], eligible_model_uuids: [], eligible_any_printer: false, process_preset: '0.20mm Standard', allow_cached: true, save_slice: false },
     ]);
     expect(screen.queryByText('Eligible printers')).toBeNull();          // picker closed
     await waitFor(() => expect(api.to('GET', '/api/v1/projects/42/jobs')).toHaveLength(2));   // refreshed after generating
@@ -161,7 +184,7 @@ describe('ProjectDetailScreen - generating jobs', () => {
 
     expect(await screen.findByText('1 job queued')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [], eligible_model_uuids: [], eligible_any_printer: false, process_preset: null, allow_cached: true, save_slice: false },
     ]);
   });
 
@@ -179,7 +202,7 @@ describe('ProjectDetailScreen - generating jobs', () => {
 
     expect(await screen.findByText('2 jobs queued')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [], process_preset: null, allow_cached: false, save_slice: true },
+      { eligible_printer_ids: [], eligible_model_uuids: [], eligible_any_printer: false, process_preset: null, allow_cached: false, save_slice: true },
     ]);
     expect(screen.getByTestId('generate-cache-info').textContent).toBe(
       'project-x-PLA.3mf: reused previous pack, 2 plates have cached versions');

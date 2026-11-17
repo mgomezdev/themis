@@ -38,15 +38,15 @@ export interface PrinterConfigInput extends Partial<FilamentAsk> {
   filament_map?: FilamentMapEntry[] | null;
 }
 
-/** Eligible on any printer of the registry model `model_uuid` (BIZ-294). */
+/** Eligible on any printer of the registry model `model_uuid` (BIZ-294); null = any printer at all (BIZ-357). */
 export interface ModelTargetInput extends Partial<FilamentAsk> {
-  model_uuid: string;
+  model_uuid: string | null;
   print_profile: string;
   filament_profile?: string | null;
 }
 
 export interface ApiModelTarget extends FilamentAsk {
-  model_uuid: string;
+  model_uuid: string | null;      // null = "Any printer"
   model_label: string | null;     // "<manufacturer> <model>"
   print_profile: string;
   filament_profile: string | null;
@@ -91,7 +91,23 @@ export interface ApiJob {
   allow_cached_slice: boolean;       // print a matching cached version instead of slicing when claimed
   sliced_version_id: number | null;  // the cached version this job prints / printed
   slice_cache_info: SliceCacheInfo | null;
+  pool_group_id?: number | null;     // BIZ-362 (queue rows): the print pool this plate was packed from at claim time
 }
+
+/** A pooled print group of a queued project (BIZ-362): one queue entry each idle printer packs its next plate from. */
+export interface QueuePool {
+  group_id: number;
+  name: string;
+  project_id: number;
+  project_name: string | null;
+  queue_position: number;
+  done: number;
+  printing: number;
+  left: number;
+  warning: string | null;            // why it is stuck: no eligible printer can take the remaining parts
+}
+
+export const getQueuePools = () => request<QueuePool[]>('/api/v1/queue/pools');
 
 /** The latest slicing-cache decision for a job (+ the outcome of saving its slice), for the job-details debug view. */
 export interface SliceCacheInfo {
@@ -156,6 +172,7 @@ export interface ApiJobPrinterConfig extends FilamentAsk {
 
 export interface ApiJobDetails extends ApiJob {
   block_reason: string | null;
+  unmatched_filaments?: Record<string, number[]>;
   file: { id: number; original_filename: string } | null;
   plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
   printer_configs: ApiJobPrinterConfig[];
@@ -206,6 +223,20 @@ export interface EmbeddedSetting {
   key: string;
   label: string;
   value: string;
+  /** The 3MF's author changed this from its preset: it is re-applied onto whichever printer's preset slices the job. */
+  carried?: boolean;
+}
+
+/** A slicer setting a job or printer may override. Precedence when slicing: job > the 3MF's own changes > printer. */
+export interface OverrideSetting {
+  key: string;
+  label: string;
+  kind: 'bool' | 'enum' | 'text';
+  options: string[];
+}
+
+export async function getOverrideSettings(): Promise<OverrideSetting[]> {
+  return request('/api/v1/jobs/override-settings');
 }
 
 export async function getEmbeddedSettings(fileId: number): Promise<EmbeddedSetting[]> {
@@ -273,6 +304,8 @@ export async function checkOverrides(body: {
   print_profile: string;
   filament_profile?: string | null;
   filament_color?: string | null;
+  /** The job overrides picked so far, so the check compares against what will really be sliced. */
+  overrides?: Record<string, string> | null;
 }): Promise<OverrideCheck> {
   return request('/api/v1/jobs/check-overrides', {
     method: 'POST',
@@ -285,9 +318,25 @@ export interface QueueConfig {
   check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
   /** Minutes a printer may be offline before it is declared dead (its running job fails and goes back to the top of the queue). 0 = never. */
   printer_dead_after_minutes: number;
+  /** A part is held for a person after failing on this many different printers (BIZ-364). */
+  part_retry_limit: number;
+  /** A printer is waived for a part after failing it this many times (BIZ-365). */
+  waive_after: number;
+  /** Fleet-wide: a printer waived for at least this many parts is flagged (0 = off). A printer's own non-zero limit wins. */
+  waiver_flag_at: number;
+  /** Fleet-wide: a printer waived for at least this many parts takes no more work (0 = off). A printer's own non-zero limit wins. */
+  waiver_stop_at: number;
+  /** How a NEW print group packs: 'pool' = each printer packs its own next plate when it picks the group up; 'fixed' = once, at generate, for one bed size. */
+  default_group_strategy: 'pool' | 'fixed';
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;
+  /** A finished print whose plate is cleared without results (QR code, automation, no answer): 'assume_good' credits every part, 'ask' leaves it awaiting a report. */
+  plate_clear_complete: 'assume_good' | 'ask';
+  /** A failed print cleared without results: 'assume_failed' reprints the whole plate, 'ask' leaves it awaiting a report. */
+  plate_clear_failed: 'assume_failed' | 'ask';
+  /** A printer's queue is switched off after this many failed prints in a row (0 = off). */
+  pause_after_failed_prints: number;
 }
 
 export async function getQueueConfig(): Promise<QueueConfig> {
@@ -410,6 +459,25 @@ export async function markJobOutcome(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ failures }),
   });
+}
+
+export interface JobResultsOut { ok: boolean; requeued_job_ids: number[]; held: { project_item_id: number; quantity: number }[] }
+
+/** Report (or correct) what came off a finished project plate after it was cleared; failed parts are requeued. A 409 carries the reason in `detail`. */
+export async function reportJobResults(
+  jobId: number,
+  results: { project_item_id: number; quantity_failed: number }[],
+): Promise<JobResultsOut> {
+  const resp = await apiFetch(`/api/v1/jobs/${jobId}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(typeof body?.detail === 'string' ? body.detail : `${resp.status} ${resp.statusText}`);
+  }
+  return resp.json();
 }
 
 export async function reorderQueue(

@@ -1,5 +1,5 @@
 from tests.catalog_helpers import patch_cached_catalog, prime_catalog
-from tests.fake_providers import FakeFormatProvider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
 from app.services.providers.contract import OverrideInspection, SettingChange, SlotWarning
 from contextlib import nullcontext
 from pathlib import Path
@@ -115,23 +115,15 @@ def test_extra_config_forwarded_to_sidecar():
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="MyPrinter", process_preset="MyProcess",
         filament_presets=["MyFilament"],
-        extra_config={"fill_pattern": "grid", "layer_height": "0.15"},
+        extra_config={"sparse_infill_pattern": "grid", "layer_height": "0.15"},
     )
-
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "sidecar-job-1"
-    mock_client.poll_status.return_value = {"artifact": {"name": "out.gcode"}}
-    mock_client.download.return_value = Path("/tmp/out.gcode")
-
-    with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
-         patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
-        mock_exec.return_value = "/tmp/out.gcode"
+    from tests.slicing_env import slicing_provider
+    fake = FakeSlicingProvider()
+    with slicing_provider(fake):
         svc.slice(req)
 
-    mock_exec.assert_called_once()
-    _, kwargs = mock_exec.call_args[0], mock_exec.call_args[1]
-    # extra_config must be passed through to _execute_slice_by_ids
-    assert req.extra_config == {"fill_pattern": "grid", "layer_height": "0.15"}
+    (spec,) = [c[1] for c in fake.calls if c[0] == "slice"]
+    assert spec.extra_config == {"sparse_infill_pattern": "grid", "layer_height": "0.15"}   # curated overrides reach the slicer
 
 
 def test_slice_raises_without_sidecar():
@@ -143,11 +135,8 @@ def test_slice_raises_without_sidecar():
         machine_preset="m", process_preset="p", filament_presets=["f"],
     )
     with patch("app.services.providers.slicing.configured_server_url", return_value=None):
-        try:
+        with pytest.raises(SliceError, match="Settings -> Laminus"):
             svc.slice(req)
-            assert False, "expected SliceError"
-        except SliceError as e:
-            assert "Settings -> Laminus" in str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +146,6 @@ def test_slice_raises_without_sidecar():
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -335,3 +323,115 @@ async def test_check_overrides_serializes_the_providers_inspection_dto_to_the_un
     }
     (call,) = [c for c in provider.fmt.calls if c[0] == "inspect_overrides"]
     assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one
+
+
+async def test_check_overrides_diffs_against_the_printer_default_process_for_a_printer_default_config(check):
+    """BIZ-358: print_profile "" means the printer's default process, so the diff resolves that preset, not ""."""
+    from tests.catalog_helpers import catalog_from_dict
+    compat = catalog_from_dict({"machine": _CATALOG["machine"], "filament": [],
+                                "process": [{"name": "0.20mm Standard", "uuid": "p-1", "compatible_printers": ["Bambu Lab P1S 0.4"]}]})
+    with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=compat):
+        resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), print_profile="",
+                                    printer={"default_process_profile": "0.20mm Standard"},
+                                    merged={"layer_height": "0.28"})
+    assert resp.status_code == 200, resp.text
+    assert "error" not in resp.json()
+    assert [c[2] for c in _merge_calls(sidecar)] == ["p-1"]
+
+
+async def test_override_settings_lists_curated_keys_with_kinds_and_options(client: AsyncClient):
+    resp = await client.get("/api/v1/jobs/override-settings")
+    assert resp.status_code == 200
+    by_key = {s["key"]: s for s in resp.json()}
+    assert by_key["enable_support"] == {"key": "enable_support", "label": "Enable supports", "kind": "bool", "options": ["0", "1"]}
+    assert by_key["brim_type"]["kind"] == "enum" and {"no_brim", "outer_only", "brim_ears"} <= set(by_key["brim_type"]["options"])
+    assert by_key["layer_height"]["kind"] == "text" and by_key["layer_height"]["options"] == []
+
+
+async def test_printer_slice_overrides_are_cleaned_stored_replaced_and_cleared(client: AsyncClient, create_printer):
+    printer_id = await create_printer(slice_overrides={"brim_type": "outer_only", "post_process": "x"})
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["slice_overrides"] == {"brim_type": "outer_only"}
+
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"slice_overrides": {"enable_support": 1}})
+    assert resp.json()["slice_overrides"] == {"enable_support": "1"}                # whole-dict replace, values as strings
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"name": "renamed"})
+    assert resp.json()["slice_overrides"] == {"enable_support": "1"}                # omitted: unchanged
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"slice_overrides": None})
+    assert resp.json()["slice_overrides"] == {}
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["slice_overrides"] == {}
+
+
+def _orca_3mf(settings: dict, process_diff: list[str]) -> bytes:
+    return _project_3mf({**settings, "different_settings_to_system": [";".join(process_diff), "", ""]})
+
+
+async def test_check_overrides_does_not_flag_3mf_changes_that_carry_over(check):
+    """The file enabled supports; the chosen preset has them off. That change is re-applied when slicing, so nothing is
+    lost. A curated value the author did NOT change (layer height, from the file's own preset) is still flagged."""
+    data = _orca_3mf({"enable_support": "1", "layer_height": "0.2"}, ["enable_support"])
+    resp, _ = await check(data=data, merged={"enable_support": "0", "layer_height": "0.16"})
+    assert resp.json()["setting_changes"] == [{"key": "layer_height", "from": "0.2", "to": "0.16"}]
+
+
+async def test_check_overrides_flags_what_the_job_and_printer_overrides_change(check):
+    """job > 3MF > printer: the job's brim beats the file's; the printer's support type fills in under both."""
+    data = _orca_3mf({"brim_type": "no_brim", "support_type": "normal(auto)"}, ["brim_type"])
+    resp, _ = await check(data=data, merged={"brim_type": "auto_brim", "support_type": "normal(auto)"},
+                          printer={"slice_overrides": {"brim_type": "outer_only", "support_type": "tree(auto)"}},
+                          overrides={"brim_type": "brim_ears"})
+    assert sorted(resp.json()["setting_changes"], key=lambda c: c["key"]) == [
+        {"key": "brim_type", "from": "no_brim", "to": "brim_ears"},
+        {"key": "support_type", "from": "normal(auto)", "to": "tree(auto)"},
+    ]
+
+
+@pytest.mark.parametrize("endpoint", ["verify-slice", "complete-manually"])
+async def test_manual_slices_use_job_over_3mf_over_printer(client, tmp_path, upload_3mf, create_printer, endpoint):
+    from tests.api.test_complete_manually import _fake_gcode_with_estimates
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"):
+        resp, seen = await _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates)
+    assert resp.status_code == 200, resp.text
+    # The job's input (+ bed type) and the printer's overrides travel separately; the provider puts the 3MF's own
+    # changes between them (see tests/services/test_laminus_producer.py for that merge).
+    assert seen == [({"curr_bed_type": "Textured PEI Plate", "enable_support": "1"},
+                     {"brim_type": "outer_only", "support_type": "tree(auto)"})]
+
+
+async def _manual_slice_case(client, tmp_path, upload_3mf, create_printer, endpoint, _fake_gcode_with_estimates):
+    file_id = await upload_3mf(data=_orca_3mf({"brim_type": "no_brim", "wall_loops": "4"}, ["brim_type", "wall_loops"]))
+    printer_id = await create_printer(slice_overrides={"brim_type": "outer_only", "support_type": "tree(auto)"},
+                                      build_plate_type="Textured PEI Plate")
+    with patch("app.api.routes.jobs.queue_engine"):
+        job_id = (await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1, "overrides": {"enable_support": "1"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
+        })).json()["id"]
+    seen = []
+
+    async def fake_run_verify_slice(req, output_dir):
+        seen.append((req.extra_config, req.printer_overrides))
+        return _fake_gcode_with_estimates(output_dir)
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+    mock_qe.run_verify_slice = fake_run_verify_slice
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/{endpoint}", json={"printer_id": printer_id})
+
+    return resp, seen
+
+
+async def test_blank_job_and_target_override_values_are_dropped(client: AsyncClient, upload_3mf, create_printer):
+    """An override added but left empty in the editor would reach the slicer as "" and fail the slice."""
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "overrides": {"layer_height": "", "brim_type": "outer_only"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P", "filament_type": "any", "filament_color": "any",
+                                 "overrides": {"wall_loops": " ", "enable_support": "1"}}],
+        })
+    assert resp.status_code == 201, resp.text
+    detail = (await client.get(f"/api/v1/jobs/{resp.json()['id']}/details")).json()
+    assert detail["overrides"] == {"brim_type": "outer_only"}
+    assert detail["printer_configs"][0]["overrides"] == {"enable_support": "1"}

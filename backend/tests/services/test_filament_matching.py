@@ -200,3 +200,16 @@ async def test_no_provider_call_unless_a_hardware_reported_slot_is_bound(session
     assert fake.calls == []
     await fm.conflicts_for([bound(0, "1", reported=True)])
     assert fake.calls != []
+
+
+def test_every_unmatched_model_number_is_structured_and_empty_overrides_stale_type():
+    config = cfg(filament_map=[
+        {"model_filament": 1, "filament_type": "PLA"},
+        {"model_filament": 2, "filament_type": "PETG", "filament_color": "#519F61"},
+        {"model_filament": 3, "tool_index": 1},
+        {"model_filament": 4, "filament_type": "ABS"},
+    ])
+    verdict = fm.evaluate(config, [slot(0), slot(1, empty=True)])
+    assert not verdict.eligible and verdict.plan == []
+    assert verdict.unmatched_filaments == [2, 3, 4]
+    assert fm.evaluate(cfg(type_="PLA"), [slot(0, empty=True)]).eligible is False
