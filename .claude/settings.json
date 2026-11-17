@@ -1,4 +1,7 @@
 {
+  "enabledPlugins": {
+    "pstack@pstack-claude": true
+  },
   "hooks": {
     "PreToolUse": [
       {
