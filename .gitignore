@@ -33,3 +33,6 @@ backend/.coverage
 
 # Dev server logs
 *.log
+
+# verify skill scratch (instance data, logs, evidence)
+.claude/verify-run/
