@@ -47,6 +47,7 @@ async function up() {
     windowsHide: true,
     env: {
       ...process.env,
+      THEMIS_LIBRARY_DIR: '', THEMIS_GIT_SHA: '',     // never inherit a real library dir / sha from the shell
       THEMIS_MOCK_PRINTERS: '1',                       // enables the mock printer plugin
       THEMIS_DATA_DIR: dataDir,                         // fresh SQLite + library, never <repo>/data
       THEMIS_STATIC_DIR: dist,                          // serve the built SPA; no vite needed
@@ -116,9 +117,12 @@ async function doctor() {
   if (bad) process.exitCode = 1;
 }
 
-function down() {
+async function down() {
   const st = readState();
-  if (st && alive(st.pid)) {
+  // Only kill if the recorded pid is alive AND our instance still answers on its port (guards against a reused pid).
+  const ours = st && alive(st.pid) && await fetch(`http://127.0.0.1:${st.port}/api/v1/health`).then(r => r.ok, () => false);
+  if (st && alive(st.pid) && !ours) console.log(`pid ${st.pid} is alive but nothing healthy answers on :${st.port}; not killing it (stale state?)`);
+  else if (ours) {
     try {
       if (win) execFileSync('taskkill', ['/PID', String(st.pid), '/T', '/F'], { stdio: 'ignore' });
       else process.kill(-st.pid, 'SIGTERM');
@@ -135,6 +139,6 @@ try {
   if (cmd === 'up') { await up(); await seed(false); }
   else if (cmd === 'seed') await seed(rest.includes('--job'));
   else if (cmd === 'doctor') await doctor();
-  else if (cmd === 'down') down();
+  else if (cmd === 'down') await down();
   else { console.error('usage: instance.mjs <up|doctor|seed [--job]|down>'); process.exitCode = 2; }
 } catch (e) { console.error('ERROR:', e.message); process.exitCode = 1; }

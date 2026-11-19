@@ -46,7 +46,7 @@ Written to `.claude/verify-run/evidence/` (gitignored): screenshots plus `journe
 
 ## Cleanup
 
-`instance.mjs down` — kills only the pid recorded in state.json (never by name), removes the scratch data dir and state; **keeps** `evidence/` and `backend.log`. Run it after every attempt, including failed ones. Confirm with `netstat -ano | findstr :8011` (Windows) that nothing listens.
+`instance.mjs down` — kills only the pid recorded in state.json (never by name), and only if that instance still answers /health, removes the scratch data dir and state; **keeps** `evidence/` and `backend.log`. Run it after every attempt, including failed ones. Confirm with `netstat -ano | findstr :8011` (Windows) that nothing listens.
 
 Do not use `/themis-start` for verification: it kills whatever holds :8001 and opens the user's dev servers.
 
@@ -54,4 +54,3 @@ Do not use `/themis-start` for verification: it kills whatever holds :8001 and o
 
 - `scripts/instance.mjs` — lifecycle + seed + doctor (usage above).
 - `scripts/drive.mjs` — `shot`, `plate-clear` (usage above). Needs `up` first; reads `.claude/verify-run/state.json` for the port.
-- Keep the map honest with `/maintain-verification-skill`.
