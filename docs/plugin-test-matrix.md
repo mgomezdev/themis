@@ -1,5 +1,20 @@
 # Plugin compatibility and failure matrix (BIZ-304)
 
+## Browser recovery and lifecycle coverage (BIZ-309 / BIZ-310)
+
+These specs use the shared mock API and run in the existing `frontend-e2e` CI job. They exercise the actual frontend;
+they do not simulate a real remote-provider outage or validate/install plugin code on a server.
+
+- `frontend/e2e/inventory-recovery.spec.ts`: last-known spools remain selectable; cache age, queued writes, configured
+  disconnect limit and alert-sent state are visible. Apply a queued write, discard another, correct a suspended spool's
+  weight and resume tracking. Both request payloads and visible results are asserted.
+- `frontend/e2e/plugin-archive-lifecycle.spec.ts`: upload an archive, preview source/hash, require trust, commit and
+  explicitly restart. Uninstall with keep-data and remove-data choices; after restart navigation, tabs, settings form
+  and direct routes have no stale plugin content.
+
+The archive is a small ZIP fixture; backend installer tests remain responsible for archive/manifest validation and data
+retention/removal. Restart and uninstall affect only in-memory browser fixtures. No real printing or remote service is used.
+
 Every plugin scenario that crosses a boundary (install, registry, capability resolution, HTTP API, UI contribution, provider failure,
 removal) and the automated test that holds it. Single-component behaviour stays in that component's own tests; the rows below are
 the integration view, and the new cross-boundary scenarios live in `backend/tests/plugins/test_plugin_matrix.py`.
