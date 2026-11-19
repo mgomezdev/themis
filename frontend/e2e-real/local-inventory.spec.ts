@@ -39,6 +39,7 @@ test('Local inventory lifecycle, Fleet binding, tuple matching and disabled navi
   await page.getByLabel('Vendor', { exact: true }).fill('Fixture vendor');
   await page.getByLabel('Colour', { exact: true }).fill('#FF0000');
   await page.getByTestId('material-form').getByRole('button', { name: 'Add material' }).click();
+  await expect(page.getByTestId('material-form')).toHaveCount(0);
   let materials = (await api('GET', '/inventory/materials')).items;
   expect(materials).toHaveLength(1);
   const material = materials[0];
@@ -55,6 +56,7 @@ test('Local inventory lifecycle, Fleet binding, tuple matching and disabled navi
   await page.getByLabel('Storage location').fill('Shelf A');
   await page.getByLabel('Initial weight', { exact: true }).fill('750');
   await page.getByTestId('spool-form').getByRole('button', { name: 'Add spool' }).click();
+  await expect(page.getByTestId('spool-form')).toHaveCount(0);
   const spools = (await api('GET', '/inventory/spools')).items;
   expect(spools).toHaveLength(1);
   const spool = spools[0], row = page.getByTestId(`spool-${spool.ref}`);
@@ -88,6 +90,7 @@ test('Local inventory lifecycle, Fleet binding, tuple matching and disabled navi
   let detail = await api('GET', `/jobs/${job.id}/details`);
   expect(detail.printer_configs[0].filament_match.eligible).toBe(true);
   await page.goto(`/jobs/${job.id}`);
+  await expect(page.getByText('PLA silk #FF0000').first()).toBeVisible();
   await expect(page.getByTestId('filament-match-reasons')).toHaveCount(0);
   const slots = (await api('GET', `/printers/${printer.id}`)).loaded_filaments;
   await api('PATCH', `/printers/${printer.id}`, { loaded_filaments: slots.map((s: object) => ({ ...s, inventory: null, type: 'PLA', subtype: 'standard', color: '#FF0000' })) });
