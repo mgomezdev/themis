@@ -134,7 +134,8 @@ for cross-cutting work. For non-trivial changes: design → document → impleme
 
 - **Design + document**: `brainstorming` then `writing-plans`, plan saved to `docs/superpowers/plans/`; use `themis-planning` to scope against `docs/agent/` first.
 - **Implement**: execute the plan in the main session.
-- **Review**: exactly one fresh, non-fork subagent, one pass. Hand over by reference, not paste:
+- **Review**: at least one fresh, non-fork subagent, one pass; a pstack review panel (`/interrogate`, models per
+  `.claude/pstack-models.md`) is fine. Hand over by reference, not paste:
   base/head SHA, the plan file path, and `docs/agent/backend-review.md` / `docs/agent/frontend-review.md`
   as applicable. It also reviews the tests — a weak or unfalsifiable test is a defect, so a test-only diff still gets a review.
 - **Commit**: main session, after addressing whatever the reviewer flags.
@@ -160,3 +161,5 @@ top-level keys it lists, not nested or unlisted ones, so still grep both sides.
 ## Spec & Plans
 - Design spec: `docs/superpowers/specs/2026-05-20-themis-print-farm-manager-design.md`
 - Implementation plans: `docs/superpowers/plans/`
+
+@.claude/pstack-models.md
