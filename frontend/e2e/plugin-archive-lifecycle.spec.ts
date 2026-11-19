@@ -7,6 +7,7 @@ const archive = fileURLToPath(new URL('./fixtures/inventory-plugin.zip', import.
 
 for (const removeData of [false, true]) {
   test(`archive install and uninstall clear navigation and routes (remove data: ${removeData})`, async ({ page }) => {
+    test.setTimeout(60000); // Two restart/reconnect cycles plus installation and removal.
     await mockApi(page);
     let staged = false, loaded = false, removing = false, gone = false, down = false;
     let uploadType = '', uploadBody = '', restartCount = 0;
