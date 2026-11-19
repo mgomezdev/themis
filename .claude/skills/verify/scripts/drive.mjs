@@ -19,7 +19,7 @@ const log = msg => { console.log(msg); appendFileSync(join(evidence, 'journey.lo
 const api = path => fetch(`${base}/api/v1${path}`).then(r => r.json());
 
 const [cmd, a, b] = process.argv.slice(2);
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const consoleErrors = [];
 page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
