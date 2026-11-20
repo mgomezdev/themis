@@ -88,7 +88,7 @@ Core-owned registry: `id` (UUID4 string, **never changes**), `plugin_id, manufac
 together), `manufacturer_name, display_name, bed_x_mm, bed_y_mm, toolheads` (refreshed from the manifest on every sync), `enabled` (the
 user's subset for setup/eligibility pickers; default true, preserved across upgrades), `declared` (False once no registered plugin
 declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed|plugin_disabled|model_removed`) is computed, not stored.
-`default_slicer_plugin_id` (v076) selects the model's slicing provider. Set it in Settings → Printer models after mapping at least one profile
+`default_slicer_plugin_id` (v079) selects the model's slicing provider. Set it in Settings → Printer models after mapping at least one profile
 for that slicer. A null value follows the capability default. Fleet backups preserve the model's provider and each printer's preference.
 `printers.model_uuid` points at the row (v043 backfilled from the v042 triple; set on create/identity change). Synced by
 `services/printer_model_registry.sync_registry` at startup, on `GET /printer-models`, `GET /printers/types`, printer create and discover.
@@ -242,7 +242,7 @@ A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCA
 process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
 `SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` + the slicing provider's plugin id
 (always hashed since v051/BIZ-291, which rewrote every saved key). The producing plugin ID is stored in `provider_plugin_id`
-since v075. The migration attributes a legacy version to Laminus when its existing key confirms that identity and leaves other
+since v078. The migration attributes a legacy version to Laminus when its existing key confirms that identity and leaves other
 legacy producer IDs unknown.
 → `cache_key` = sha256 of their canonical JSON (`services/slice_cache.cache_key` over `CacheKeyInputs`; filament colour is deliberately **not** in it,
 nor is the engine version). Non-key:

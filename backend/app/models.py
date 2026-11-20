@@ -1079,3 +1079,43 @@ class JobDetail(Base):
     status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
     value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[str] = mapped_column(String(32))
+
+
+class LibraryCatalogEntry(Base):
+    """Remote metadata is not an UploadedFile until its bytes are materialized locally."""
+    __tablename__ = "library_catalog_entries"
+    __table_args__ = (UniqueConstraint("provider_plugin_id", "source_file_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_file_id: Mapped[str] = mapped_column(String(1024))
+    source_url: Mapped[str] = mapped_column(String(2048), unique=True)
+    descriptor: Mapped[dict] = mapped_column(JSON)
+    last_seen_sweep: Mapped[str] = mapped_column(String(36))
+    missing: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    updated_at: Mapped[str] = mapped_column(String(40))
+    cached_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True)
+
+
+class LibraryCatalogSyncLease(Base):
+    __tablename__ = "library_catalog_sync_leases"
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(36))
+    expires_at: Mapped[float] = mapped_column(Float)
+
+
+class LibrarySourceRevision(Base):
+    """Immutable source attribution for a materialized local file revision."""
+    __tablename__ = 'library_source_revisions'
+    file_id: Mapped[int] = mapped_column(ForeignKey('uploaded_files.id', ondelete='CASCADE'), primary_key=True)
+    entry_id: Mapped[str] = mapped_column(ForeignKey('library_catalog_entries.id', ondelete='CASCADE'), index=True)
+    revision: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    descriptor: Mapped[dict] = mapped_column(JSON)
+    downloaded_at: Mapped[str] = mapped_column(String(40))
+
+
+class LibraryCatalogSchedule(Base):
+    """Durable scheduling claim, shared across workers and retained while disabled."""
+    __tablename__ = 'library_catalog_schedules'
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    next_due_at: Mapped[float] = mapped_column(Float)

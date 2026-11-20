@@ -73,7 +73,7 @@ async def test_v051_is_idempotent_and_a_noop_on_an_empty_table(tmp_path):
         await engine.dispose()
 
 
-async def test_v075_backfills_only_attributable_versions_and_preserves_both_keys(tmp_path):
+async def test_v078_backfills_only_attributable_versions_and_preserves_both_keys(tmp_path):
     case = CASES[0]
     keys = [slice_cache.cache_key(_inputs(case, provider)) for provider in ("laminus", "test-slicer")]
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'upgrade.db'}")
@@ -88,7 +88,7 @@ async def test_v075_backfills_only_attributable_versions_and_preserves_both_keys
                 s.add(SlicedVersion(file_id=f.id, source_content_hash="srchash", cache_key=key, created_at="t", **case))
             await s.commit()
         async with engine.begin() as conn:
-            await rollback_to(conn, 74)
+            await rollback_to(conn, 77)
             await run_migrations(conn)
             rows = (await conn.execute(text("SELECT cache_key, provider_plugin_id FROM sliced_versions ORDER BY id"))).all()
             assert rows == [(keys[0], "laminus"), (keys[1], None)]

@@ -1,7 +1,7 @@
 """Store format-pair defaults and brand-level converter preferences."""
 from sqlalchemy import text
 
-version = 77
+version = 80
 name = "print_conversion_defaults"
 
 

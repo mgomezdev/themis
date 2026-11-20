@@ -1,7 +1,7 @@
 """Allow printers to inherit a slicing provider from their model."""
 from sqlalchemy import text
 
-version = 76
+version = 79
 name = "model_default_slicer"
 
 

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fmtBytes } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { Empty } from '../components/ui';
@@ -19,6 +19,7 @@ import {
 import type { CachedVersionRef, FileKindFilter } from '../api/files';
 import { useTags } from '../api/tags';
 import { FolderCard } from './files/FolderTree';
+import { SourceCatalogPanel } from './files/SourceCatalogPanel';
 import { FacetGroup, FilterCard } from './files/FilterCard';
 import { FileDetailPanel, FileThumb } from './files/FileDetailPanel';
 import { versionSummary } from './files/palette';
@@ -31,13 +32,13 @@ import { DeleteVersionsDialog, FolderPicker } from './files/dialogs';
 // Empty root for the folder tree before /dirs resolves.
 const EMPTY_TREE: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
 
-function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'manyfold') => void }) {
+function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'sources') => void }) {
   return (
     <div className="row gap-2" style={{ marginBottom: 14 }}>
       <button className={`btn sm ${tab === 'library' ? 'primary' : 'ghost'}`}
               onClick={() => setTab('library')}>Library</button>
-      <button className={`btn sm ${tab === 'manyfold' ? 'primary' : 'ghost'}`}
-              onClick={() => setTab('manyfold')}>Manyfold</button>
+      <button className={`btn sm ${tab === 'sources' ? 'primary' : 'ghost'}`}
+              onClick={() => setTab('sources')}>Sources</button>
     </div>
   );
 }
@@ -48,7 +49,10 @@ function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'ma
 
 export function FilesScreen() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'library' | 'manyfold'>('library');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fileParam = searchParams.get('file') ?? '';
+  const linkedFileId = /^\d+$/.test(fileParam) && Number.isSafeInteger(Number(fileParam)) && Number(fileParam) > 0 ? Number(fileParam) : null;
+  const [tab, setTab] = useState<'library' | 'sources'>('library');
   const [currentFolder, setCurrentFolder] = useState('');
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [sort, setSort] = useState('updated');
@@ -261,20 +265,29 @@ export function FilesScreen() {
   }
 
   // keep the open detail panel in sync with the latest file data after refetch
-  const selectedLive = selected ? files.find(f => f.id === selected.id) ?? null : null;
+  const selectedLive = files.find(f => f.id === (linkedFileId ?? selected?.id)) ?? null;
 
-  // -- manyfold tab ------------------------------------------------------
+  const activeTab = linkedFileId ? 'library' : tab;
+  function selectTab(next: 'library' | 'sources') {
+    setTab(next);
+    const params = new URLSearchParams(searchParams); params.delete('file'); setSearchParams(params, { replace: true });
+  }
+  function openDetails(file: LibraryFile) {
+    setSelected(file);
+    const params = new URLSearchParams(searchParams); params.delete('file'); setSearchParams(params, { replace: true });
+  }
+  function closeDetails() {
+    setSelected(null);
+    const params = new URLSearchParams(searchParams); params.delete('file'); setSearchParams(params, { replace: true });
+  }
 
-  if (tab === 'manyfold') {
+  // -- source catalogs --------------------------------------------------
+
+  if (activeTab === 'sources') {
     return (
       <div>
-        <FilesTabBar tab={tab} setTab={setTab} />
-        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-          <div style={{ fontSize: 18, fontWeight: 600 }}>Manyfold integration</div>
-          <div className="muted" style={{ marginTop: 8 }}>
-            Coming soon — sync this library with a Manyfold server.
-          </div>
-        </div>
+        <FilesTabBar tab={activeTab} setTab={selectTab} />
+        <SourceCatalogPanel />
       </div>
     );
   }
@@ -283,7 +296,7 @@ export function FilesScreen() {
 
   return (
     <div>
-      <FilesTabBar tab={tab} setTab={setTab} />
+      <FilesTabBar tab={activeTab} setTab={selectTab} />
       <div style={{
         display: 'grid',
         gridTemplateColumns: folderExpanded ? '240px 1fr' : 'auto 1fr',
@@ -402,7 +415,7 @@ export function FilesScreen() {
                          ? 'inset 0 0 0 1px var(--accent)'
                          : 'none',
                      }}
-                     onClick={() => setSelected(f)}>
+                     onClick={() => openDetails(f)}>
                   <label
                     onClick={e => e.stopPropagation()}
                     title="Select"
@@ -429,7 +442,7 @@ export function FilesScreen() {
                   {f.sliced_version_count > 0 && (
                     <button className="elig" data-testid="sliced-badge"
                             title="Show its cached sliced versions"
-                            onClick={e => { e.stopPropagation(); setSelected(f); }}
+                            onClick={e => { e.stopPropagation(); openDetails(f); }}
                             style={{ marginTop: 4, fontSize: 10, padding: '1px 6px', cursor: 'pointer',
                                      background: 'var(--accent-glow)', color: 'var(--accent-hi)', border: 'none' }}>
                       {f.sliced_version_count} sliced version{f.sliced_version_count === 1 ? '' : 's'}
@@ -473,9 +486,10 @@ export function FilesScreen() {
 
       {selectedLive && (
         <FileDetailPanel
+          key={selectedLive.id}
           file={selectedLive}
           tags={tags}
-          onClose={() => setSelected(null)}
+          onClose={closeDetails}
           onRename={handleRename}
           onMove={handleMove}
           onDelete={handleDelete}

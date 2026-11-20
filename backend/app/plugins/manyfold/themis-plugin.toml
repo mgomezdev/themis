@@ -1,0 +1,7 @@
+id = "manyfold"
+name = "Manyfold"
+version = "1.0.0"
+provides = ["library.source@1"]
+host_api = 1
+entry = "app.plugins.manyfold:MANIFEST"
+publisher = "Themis"

@@ -4,6 +4,7 @@
 // (backend/tests/api/test_response_contracts.py) asserting real responses carry these keys.
 import { describe, expect, it } from 'vitest';
 import contractRaw from '../../../contracts/response-keys.json?raw';
+import type { CatalogEntry, LibrarySource, Materialization, FileSourceOrigin } from './library';
 import type { LibraryFile } from '../data/types';
 import type { SlicedVersion } from './files';
 import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
@@ -25,6 +26,11 @@ const sorted = (keys: string[]) => [...new Set(keys)].sort();
 const keysOf = (o: object) => sorted(Object.keys(o));
 
 // `satisfies Record<keyof T, 1>` makes tsc reject a missing OR an extra key, so each literal tracks its interface.
+const LIBRARY_SOURCE = { plugin_id: 1, name: 1, enabled: 1, active: 1, error: 1, last_sync_at: 1 } satisfies Record<keyof LibrarySource, 1>;
+const FILE_SOURCE_ORIGIN = { file_id: 1, entry_id: 1, provider_plugin_id: 1, source_url: 1, revision: 1, downloaded_at: 1, metadata: 1, is_latest: 1, source_missing: 1 } satisfies Record<keyof FileSourceOrigin, 1>;
+const MATERIALIZATION = { file_id: 1, fresh: 1, warning: 1 } satisfies Record<keyof Materialization, 1>;
+const CATALOG_ENTRY = { id: 1, provider_plugin_id: 1, source_file_id: 1, source_url: 1, name: 1, missing: 1, cached_file_id: 1, metadata: 1 } satisfies Record<keyof CatalogEntry, 1>;
+
 const FLEET = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, dormant: 1, dormant_reason: 1, enabled: 1, queue_on: 1, queue_paused_reason: 1, configured: 1, config_error: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
@@ -230,6 +236,10 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['plugin discovery', contract.plugin_discovery, keysOf(PLUGIN_DISCOVERY)],
     ['discovered printer (POST /printers/discover found[])', contract.discovered_printer, keysOf(DISCOVERED_PRINTER)],
     ['capability info', contract.capability_info, keysOf(CAPABILITY_INFO)],
+    ['library source', contract.library_source, keysOf(LIBRARY_SOURCE)],
+    ['catalog entry', contract.catalog_entry, keysOf(CATALOG_ENTRY)],
+    ['library materialization', contract.library_materialization, keysOf(MATERIALIZATION)],
+    ['file source origin', contract.file_source_origin, keysOf(FILE_SOURCE_ORIGIN)],
   ];
 
   it.each(cases)('%s', (_name, fromContract, fromInterface) => {
@@ -245,7 +255,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
       'printer_model_slicer_profile', 'slicer_profile_suggestions', 'slicer_profile_candidate', 'slicer_profile_variant', 'model_target',
-      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'plugin_discovery', 'discovered_printer', 'capability_info', 'filament_match', 'slot_conflicts']);
+      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'plugin_discovery', 'discovered_printer', 'capability_info', 'filament_match', 'slot_conflicts', 'library_source', 'catalog_entry', 'library_materialization', 'file_source_origin']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

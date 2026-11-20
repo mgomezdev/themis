@@ -3,7 +3,7 @@ from sqlalchemy import text
 
 from .v051_slice_cache_provider_keys import PROVIDER, _key
 
-version = 75
+version = 78
 name = "sliced_version_provider"
 
 

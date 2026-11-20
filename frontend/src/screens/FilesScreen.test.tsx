@@ -13,6 +13,8 @@ const TAGS = [{ id: 1, name: 'PLA', color: '#fff', category: 'Material', usage_c
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
     if (url.startsWith('/api/v1/tags')) return new Response(JSON.stringify(TAGS), { status: 200 });
     if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
       { name: 'All files', path: '', count: 1, children: {} }), { status: 200 });
@@ -29,10 +31,10 @@ describe('FilesScreen', () => {
     await waitFor(() => expect(screen.getByText('arm.3mf')).toBeInTheDocument());
   });
 
-  it('shows the Manyfold placeholder when that tab is selected', async () => {
+  it('shows generic source setup when the Sources tab is selected', async () => {
     render(<MemoryRouter><FilesScreen /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: /Manyfold/i }));
-    await waitFor(() => expect(screen.getByText(/coming soon/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Sources/i }));
+    await waitFor(() => expect(screen.getByText(/No library sources are installed/i)).toBeInTheDocument());
   });
 
   it('selects multiple files and bulk-deletes them', async () => {
@@ -43,7 +45,9 @@ describe('FilesScreen', () => {
         plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
         { name: 'All files', path: '', count: 2, children: {} }), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(
@@ -76,7 +80,9 @@ describe('FilesScreen', () => {
         plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
         { name: 'All files', path: '', count: 1,
           children: { Archive: { name: 'Archive', path: '/Archive', count: 0, children: {} } } }),
@@ -105,7 +111,9 @@ describe('FilesScreen', () => {
       children: { Empty: { name: 'Empty', path: '/Empty', count: 0, children: {} } },
     };
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 }); // no files anywhere
@@ -137,7 +145,9 @@ describe('FilesScreen', () => {
       children: { Customers: { name: 'Customers', path: '/Customers', count: 0, children: {} } },
     };
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/folders')) return new Response(
@@ -173,7 +183,9 @@ describe('FilesScreen', () => {
       },
     };
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 });
@@ -192,4 +204,58 @@ describe('FilesScreen', () => {
     fireEvent.click(ju);
     expect(screen.getByRole('button', { name: 'Delete folder' })).toBeDisabled();
   });
+});
+
+
+it('opens a local file from a deep link and closes it without reopening', async () => {
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  await screen.findByText('File details');
+  fireEvent.click(screen.getByTitle('Close'));
+  await waitFor(() => expect(screen.queryByText('File details')).not.toBeInTheDocument());
+});
+
+it('shows historical source attribution and keeps source failures separate from local file actions', async () => {
+  const baseFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/v1/library/files/1/origin') return new Response(JSON.stringify({ origin: {
+      file_id: 1, entry_id: 'entry', provider_plugin_id: 'fixture', source_url: 'https://source.test/one', revision: 'v1',
+      downloaded_at: '2026-11-20T00:00:00Z', metadata: { creator: { name: 'Original artist' }, license_code: 'CC-BY-4.0' },
+      is_latest: false, source_missing: true,
+    } }), { status: 200 });
+    return baseFetch(url, init);
+  }));
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  const origin = await screen.findByTestId('source-attribution');
+  expect(origin).toHaveTextContent('Original artist');
+  expect(origin).toHaveTextContent('CC-BY-4.0');
+  expect(origin).toHaveTextContent('Earlier local revision');
+  expect(origin).toHaveTextContent('Missing at source; local file retained.');
+  expect(screen.getByRole('link', { name: 'Open in source' })).toHaveAttribute('href', 'https://source.test/one');
+});
+
+it('retries attribution errors while leaving local file actions available', async () => {
+  const baseFetch = globalThis.fetch;
+  let attempts = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/v1/library/files/1/origin') {
+      attempts++;
+      return attempts === 1
+        ? new Response(JSON.stringify({ detail: 'Temporary attribution failure' }), { status: 503 })
+        : new Response(JSON.stringify({ origin: null }), { status: 200 });
+    }
+    return baseFetch(url, init);
+  }));
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: /Use in new job/i })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry source attribution' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  expect(attempts).toBe(2);
+});
+
+
+it.each(['-1', '0', 'bad', '99999'])('ignores an invalid or absent local file deep link: %s', async id => {
+  render(<MemoryRouter initialEntries={[`/files?file=${id}`]}><FilesScreen /></MemoryRouter>);
+  await screen.findByText('arm.3mf');
+  expect(screen.queryByText('File details')).not.toBeInTheDocument();
 });

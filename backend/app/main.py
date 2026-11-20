@@ -29,6 +29,7 @@ from .api.routes.cameras import router as cameras_router
 from .api.routes.customers import router as customers_router
 from .api.routes.project_groups import router as project_groups_router
 from .api.routes.files import router as files_router
+from .api.routes.library_catalog import router as library_catalog_router
 from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
@@ -160,6 +161,8 @@ async def lifespan(app: FastAPI):
     await event_hub.start(SessionLocal)
     inventory_sync_loop.configure(SessionLocal)
     await inventory_sync_loop.start()
+    from .services.library_sync import library_sync_loop
+    await library_sync_loop.start(SessionLocal, plugin_host)
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
@@ -191,6 +194,7 @@ async def lifespan(app: FastAPI):
         except Exception:                       # a warm-up that dies while being cancelled must not skip the stops below
             logging.getLogger("app").exception("Catalog warm-up failed during shutdown")
 
+    await library_sync_loop.stop()
     await inventory_sync_loop.stop()
     await event_hub.stop()
     from .services import webhook_service as _webhooks
@@ -238,6 +242,7 @@ app.include_router(printer_models_router)
 app.include_router(printer_model_slicer_profiles_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
+app.include_router(library_catalog_router)
 app.include_router(jobs_router)
 app.include_router(job_fields_router)
 app.include_router(alarms_router)

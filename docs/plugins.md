@@ -343,3 +343,70 @@ failure). Core never changes. `deliver(ChannelMessage)` returns `ChannelResult` 
 `test_connection()` powers the page's **Test connection** button. Secrets belong in `secret_fields` (write-only; errors are redacted).
 A channel failure shows as the plugin's `last_error`; `ChannelMessage.message_id` is stable per notification if a channel retries.
 Webhooks for companion apps are a separate mechanism (`docs/companion-apps.md`).
+
+## Manyfold library source
+
+Manyfold is bundled but disabled by default. It reads a complete catalog of accessible model files; synchronization
+fetches metadata, not model bytes. Existing local files remain under Files → Library. Files → Sources lists configured
+sources and their cached catalog, with Sync now, errors and pagination. Disabling a source retains its synchronized
+metadata and existing local files. Prepare a catalog entry locally to select it in a job or project;
+automatic metadata synchronization is enabled for configured sources unless their interval is set to zero.
+
+Create an OAuth application in Manyfold at `/oauth/applications`, owned by the account whose library should be visible.
+Grant `public` and `read`; this implementation never requests write/delete/upload. Follow the instance UI's redirect-URI
+requirements (client credentials do not navigate a redirect). In Themis Settings → Plugins, enable Manyfold, then open its settings and enter the base URL,
+OAuth client ID and client secret. Save and test the connection. The secret is a write-only plugin secret field.
+Use Sync now in Files → Sources to retrieve the catalog. A read error preserves the prior catalog instead of treating
+an unavailable source as an empty library.
+
+The adapter targets the [v0.153.0 API schema](https://github.com/manyfold3d/manyfold/blob/v0.153.0/app/api/v0/openapi.json)
+and [OAuth initializer](https://github.com/manyfold3d/manyfold/blob/v0.153.0/config/initializers/doorkeeper.rb).
+The initializer enables client-credentials grants, public as the default scope and read/write/delete/upload as optional
+scopes. Requests currently send client credentials as form parameters; compatibility with the operator's instance must
+be verified when credentials are configured. Tests use versioned wire shapes and a local HTTP transport, not a live account.
+
+Pagination uses Hydra `member`/`view.next`; the API has no documented `changed_since` filter. Because offset pages can
+shift while a library changes, unseen files are checked individually before being marked missing. Only an inaccessible
+file identity confirms absence; a creator lookup failure, authentication error or outage does not. Backlinks are not
+advertised or written. File downloads are explicit provider operations with size/revision checks; responses and streams
+are bounded and kept on the configured origin. Do not point this connection at a different server as an identity-migration
+shortcut: source URLs are part of catalog identity.
+
+Source catalog entries can be **prepared locally** before use. The materialization
+endpoint streams through the source plugin with a core 512 MiB cap, publishes a
+complete artifact atomically, and creates an ordinary local library file. The
+source's filename cannot select folders. Repeated identical downloads with the
+same origin/metadata snapshot reuse the existing local ID; changed bytes or terms
+create a new local revision. Earlier files and their job/project references remain
+intact. Source attribution is snapshotted in `library_source_revisions`.
+
+If a refresh fails or the source is disabled, an existing local copy can still be
+prepared with a visible **last-known local copy** warning. Missing local bytes do
+not count as an offline success. **Use in job** carries the local file ID into the
+normal job flow; project builders can select it from the local library. Source
+operations are serialized per provider, including sync. Downloads have a finite
+time limit and heartbeat their database lease. No automatic eviction, source-side
+writes or print commands occur in this flow.
+
+
+Manyfold's **Catalog sync interval** defaults to 60 minutes; set
+`sync_interval_minutes` to `0` for manual-only operation. The scheduler checks
+active sources every minute and records sync errors in the same Sources UI as
+manual sync. A successful manual sync postpones the next automatic sweep.
+Durable due-time claims prevent workers from scheduling the same provider twice;
+the source-operation lease still serializes each sweep with downloads. Failed
+attempts and worker crashes back off until the claimed next due time (manual
+sync remains available). Busy sources retry on the next poll. Sources run in
+separate retained tasks, so a slow catalog does not block another provider.
+Shutdown cancels and reaps all source tasks. Scheduled sync never materializes
+bytes or writes backlinks.
+
+
+Prepared source entries offer **Open local details**, linking to `/files?file=<id>`.
+The file drawer shows the creator, raw source license and source URL recorded at
+download, without contacting the source. Older local revisions remain addressable
+and are labeled when another revision is the catalog's current local copy. Source
+absence and disabled plugins do not erase this attribution. Ordinary local uploads
+have no invented source attribution. An attribution-read failure can be retried
+without preventing local file actions. These source facts are separate from the
+shared license assignments and warning badges still being implemented.
