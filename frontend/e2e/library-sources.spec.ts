@@ -59,3 +59,35 @@ test('catalog pages remain browsable beyond the first hundred entries', async ({
   await page.getByRole('button', { name: 'Previous', exact: true }).click();
   await expect(page.getByTestId('catalog-0')).toBeVisible();
 });
+
+test('preparing a cached source file exposes the offline warning before use in a job', async ({ page }) => {
+  await mockApi(page, { files: [] });
+  let attempts = 0;
+  await page.route('**/api/v1/library/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const ok = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (path.endsWith('/materialize')) {
+      attempts++;
+      if (attempts === 1) return ok({ detail: 'Source is temporarily unavailable' }, 502);
+      return ok({ file_id: 42, fresh: false, warning: 'Using the last-known local copy. Source is offline.' });
+    }
+    if (path.endsWith('/sources')) return ok({ sources: [] });
+    return ok({ total: 1, items: [{ id: 'cached', name: 'Cached part.stl', provider_plugin_id: 'disabled_source',
+      source_url: 'https://source.test/cached', missing: true, cached_file_id: 42, metadata: {} }] });
+  });
+  await page.goto('/files');
+  await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  const row = page.getByTestId('catalog-cached');
+  await row.getByRole('button', { name: 'Prepare locally' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Source is temporarily unavailable');
+  await expect(row.getByRole('link', { name: 'Use in job' })).toHaveCount(0);
+  await row.getByRole('button', { name: 'Prepare locally' }).click();
+  await expect(row.getByRole('alert')).toHaveText('Using the last-known local copy. Source is offline.');
+  await expect(row).toContainText('Last-known local file ready.');
+  await expect(row.getByRole('link', { name: 'Use in job' })).toHaveAttribute('href', '/queue/new');
+  await row.getByRole('link', { name: 'Use in job' }).click();
+  await expect(page).toHaveURL(/\/queue\/new$/);
+  expect(attempts).toBe(2);
+  // React Router carries the concrete local file ID, so the job needs no source call.
+  expect(await page.evaluate(() => window.history.state.usr.libraryFileId)).toBe(42);
+});

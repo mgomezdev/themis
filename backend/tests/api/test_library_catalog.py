@@ -78,6 +78,9 @@ async def test_catalog_read_and_sync_have_separate_file_scopes(client, session_f
     reader = await _client_with(session_factory, ["files:read"])
     unrelated = await _client_with(session_factory, ["inventory:read"])
     async with reader, unrelated:
+        assert (
+            await reader.post("/api/v1/library/entries/absent/materialize")
+        ).status_code == 403
         assert (await reader.get("/api/v1/library/sources")).status_code == 200
         assert (await reader.get("/api/v1/library/entries")).status_code == 200
         assert (
@@ -117,3 +120,60 @@ async def test_source_errors_are_redacted_in_response_and_persisted_catalog_stat
     assert "***" in response.text
     listing = await client.get("/api/v1/library/sources")
     assert "fixture-private-key" not in listing.text
+
+
+async def test_materialization_routes_real_local_file_and_reports_disabled_source_cache(
+    client, tmp_path, monkeypatch
+):
+    from app import config
+    from app.plugins.capabilities.library_source import SourceDownload
+
+    monkeypatch.setattr(config, "get_library_dir", lambda: tmp_path / "library")
+    monkeypatch.setattr(config, "get_filecache_dir", lambda: tmp_path / "filecache")
+
+    class DownloadSource(Source):
+        async def list_catalog(self, cursor=None, changed_since=None):
+            return CatalogPage((await self.describe("one"),), full_scan=True)
+
+        async def describe(self, source_file_id):
+            return SourceFile("one", "part.stl", "https://source.test/one")
+
+        @asynccontextmanager
+        async def download(self, source_file_id, revision=None):
+            async def chunks():
+                yield b"solid part\nendsolid part\n"
+
+            yield SourceDownload(chunks())
+
+    plugins.register_plugin(
+        PluginManifest(
+            id="downloads",
+            name="Downloads",
+            version="1.0.0",
+            host_api=HOST_API,
+            settings_model=DummySettings,
+            factory=DownloadSource,
+            provides={CAPABILITY: Provide()},
+        )
+    )
+    await client.put("/api/v1/plugins/downloads", json={"enabled": True})
+    await client.post("/api/v1/library/sources/downloads/sync")
+    entry = (await client.get("/api/v1/library/entries")).json()["items"][0]
+    result = await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
+    assert result.status_code == 200, result.text
+    result = result.json()
+    from tests.api.test_response_contracts import assert_carries
+
+    assert_carries("library_materialization", result)
+    assert result["fresh"] and result["warning"] is None
+    assert (await client.get(f"/api/v1/files/{result['file_id']}")).status_code == 200
+    await client.put("/api/v1/plugins/downloads", json={"enabled": False})
+    cached = await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
+    assert cached.status_code == 200 and not cached.json()["fresh"]
+    assert (
+        cached.json()["file_id"] == result["file_id"]
+        and "last-known" in cached.json()["warning"]
+    )
+    assert (
+        await client.post("/api/v1/library/entries/absent/materialize")
+    ).status_code == 404

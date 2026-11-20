@@ -548,5 +548,6 @@
     "missing",
     "cached_file_id",
     "metadata"
-  ]
+  ],
+  "library_materialization": ["file_id", "fresh", "warning"]
 }

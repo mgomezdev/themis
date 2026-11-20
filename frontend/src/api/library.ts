@@ -14,3 +14,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const fetchSources = () => request<{ sources: LibrarySource[] }>('/api/v1/library/sources');
 export const fetchCatalog = (offset = 0) => request<{ items: CatalogEntry[]; total: number }>(`/api/v1/library/entries?limit=100&offset=${offset}`);
 export const syncSource = (id: string) => request<{ entries: number; full_scan: boolean }>(`/api/v1/library/sources/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+
+export interface Materialization { file_id: number; fresh: boolean; warning: string | null }
+export const materializeEntry = (id: string) => request<Materialization>(`/api/v1/library/entries/${encodeURIComponent(id)}/materialize`, { method: 'POST' });
