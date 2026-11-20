@@ -167,6 +167,9 @@ describe('CustomerDetailScreen', () => {
     const phone = await screen.findByDisplayValue('555-1234');
     const save = screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
+    // Focus the mounted field before editing, allowing its initial saved-details
+    // effect to settle just as it does before a real user types.
+    await userEvent.click(phone);
     // This test holds the PATCH contract; browser specs cover keyboard editing.
     // Set the final edit atomically so clear/type scheduling cannot concatenate
     // the old phone value under a loaded CI worker.
