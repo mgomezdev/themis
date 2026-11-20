@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { CustomerDetailScreen } from './CustomerDetailScreen';
@@ -167,8 +167,11 @@ describe('CustomerDetailScreen', () => {
     const phone = await screen.findByDisplayValue('555-1234');
     const save = screen.getByRole('button', { name: /save changes/i }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    await userEvent.clear(phone);
-    await userEvent.type(phone, '555-9999');
+    // This test holds the PATCH contract; browser specs cover keyboard editing.
+    // Set the final edit atomically so clear/type scheduling cannot concatenate
+    // the old phone value under a loaded CI worker.
+    fireEvent.change(phone, { target: { value: '555-9999' } });
+    expect(phone).toHaveValue('555-9999');
     await userEvent.click(save);
     await waitFor(() => expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
     const [url, init] = fetchMock.mock.calls.find(([, i]) => i?.method === 'PATCH')!;
