@@ -217,3 +217,22 @@ async def test_concurrent_materialization_reports_busy_and_reuses_completed_revi
         catalog.source.hold.set()
         first = await task
     assert await materialize(session_factory, catalog, "entry") == first
+
+
+async def test_external_local_edit_is_not_reused_as_a_fresh_source_download(
+    session_factory, catalog
+):
+    first = await materialize(session_factory, catalog, "entry")
+    async with session_factory() as session:
+        old = await session.get(UploadedFile, first["file_id"])
+    store = get_library_store()
+    with store.writer(old.relative_path, overwrite=True) as writer:
+        writer.write(b"x" * len(catalog.source.data))
+    second = await materialize(session_factory, catalog, "entry")
+    assert second["fresh"] and second["file_id"] != first["file_id"]
+    with store.open(old.relative_path) as content:
+        assert content.read() == b"x" * len(catalog.source.data)
+    async with session_factory() as session:
+        new = await session.get(UploadedFile, second["file_id"])
+    with store.open(new.relative_path) as content:
+        assert content.read() == catalog.source.data

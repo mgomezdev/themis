@@ -549,5 +549,6 @@
     "cached_file_id",
     "metadata"
   ],
-  "library_materialization": ["file_id", "fresh", "warning"]
+  "library_materialization": ["file_id", "fresh", "warning"],
+  "file_source_origin": ["file_id", "entry_id", "provider_plugin_id", "source_url", "revision", "downloaded_at", "metadata", "is_latest", "source_missing"]
 }

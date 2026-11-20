@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { shade, fmtBytes } from '../../data/helpers';
 import { Icons } from '../../components/icons';
 import type { LibraryFile } from '../../data/types';
+import { fetchFileOrigin, type FileSourceOrigin } from '../../api/library';
 import { getSlicedVersions } from '../../api/files';
 import type { SlicedVersion } from '../../api/files';
 import { FileEligibilityEditor } from '../../components/FileEligibilityEditor';
@@ -140,6 +141,7 @@ export function FileDetailPanel({
       <div style={{ fontSize: 16, fontWeight: 600, wordBreak: 'break-word' }}>
         {file.original_filename}
       </div>
+      <SourceAttribution fileId={file.id} />
       {file.missing && (
         <div className="tiny" style={{ color: 'var(--err)', marginTop: 4 }}>
           Missing on disk
@@ -241,4 +243,30 @@ function SlicedVersionsList({ fileId }: { fileId: number }) {
       </div>
     </div>
   );
+}
+
+
+function SourceAttribution({ fileId }: { fileId: number }) {
+  const [origin, setOrigin] = useState<FileSourceOrigin | null>(null);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setOrigin(null); setError('');
+    fetchFileOrigin(fileId).then(result => { if (alive) setOrigin(result.origin ?? null); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Source attribution unavailable'); });
+    return () => { alive = false; };
+  }, [fileId, retry]);
+  if (error) return <div><p role="alert">Source attribution unavailable: {error}</p>
+    <button className="btn sm" onClick={() => setRetry(v => v + 1)}>Retry source attribution</button></div>;
+  if (!origin) return null;
+  return <div className="card col gap-1" data-testid="source-attribution" style={{ padding: 10, marginTop: 10 }}>
+    <strong>Source at download</strong>
+    <span>Creator: {origin.metadata.creator?.name || 'Unknown'}</span>
+    <span>Source license: {origin.metadata.license_code || 'Unknown'}</span>
+    <span className="small muted">Downloaded: {new Date(origin.downloaded_at).toLocaleString()}</span>
+    {!origin.is_latest && <span>Earlier local revision; existing jobs keep this file.</span>}
+    {origin.source_missing && <span>Missing at source; local file retained.</span>}
+    <a href={origin.source_url} target="_blank" rel="noopener noreferrer">Open in source</a>
+  </div>;
 }
