@@ -249,6 +249,7 @@ suites. Those remain the owners of behaviour; the shared suite only checks what 
 | `notify.channel` | fan_out | `deliver`, `test_connection` | none defined |
 | `gcode.produce` | choose_one | `gcode_producer`, `slicing_provider` | none defined |
 | `3mf.construct` | exclusive | `project_constructor` | none defined |
+| `library.source` | routed | `describe`, `download`, `list_catalog`, `test_connection` | `BACKLINK`, `BROWSE` |
 
 *Normative* (a provider that breaks any of these fails validation or the suite): the capability **id and contract version** it
 declares (`Provide.version` must equal the catalog's); the **required operations** above (the Protocol's members, or the
