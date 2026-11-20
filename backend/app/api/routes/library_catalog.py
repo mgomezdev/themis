@@ -1,7 +1,5 @@
 """Catalog metadata API. Local file APIs and bytes remain owned by the file library."""
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -13,7 +11,9 @@ from ...models import LibraryCatalogEntry
 from ...plugins import providers_of
 from ...plugins.capabilities.library_source import CAPABILITY
 from ...plugins.host import plugin_host
-from ...services.library_catalog import CatalogSyncBusy, CatalogSyncError, sync_catalog
+from ...services.library_catalog import CatalogSyncBusy, CatalogSyncError
+
+from ...services.library_sync import synchronize
 
 router = APIRouter(prefix="/api/v1/library", tags=["library"])
 
@@ -99,18 +99,12 @@ async def sync_source(plugin_id: str, session: AsyncSession = Depends(get_sessio
         )
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     try:
-        result = await sync_catalog(factory, plugin_host, plugin_id)
+        result = await synchronize(factory, plugin_host, plugin_id)
     except CatalogSyncBusy as exc:
         raise HTTPException(409, str(exc)) from None
     except CatalogSyncError as exc:
         message = plugin_host.redact(plugin_id, str(exc))
-        await plugin_host.record_state(plugin_id, catalog_error=message)
         raise HTTPException(502, message) from None
-    await plugin_host.record_state(
-        plugin_id,
-        catalog_error=None,
-        catalog_synced_at=datetime.now(timezone.utc).isoformat(),
-    )
     return result
 
 

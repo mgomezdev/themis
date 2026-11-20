@@ -80,6 +80,9 @@ async def test_deliveries_validate_status_and_retry_404s_for_unknown(client, hub
 
 
 async def test_durable_rows_of_an_unregistered_subscriber_are_still_reported(client, hub, session_factory):
+    # Model a persisted orphan without an active dispatcher. Otherwise it can
+    # recreate the removed statistics while the API reads this staged backlog.
+    await hub.stop()
     hub.subscribe("job.complete", _noop, name="api.gone")
     async with session_factory() as s:
         await hub.enqueue_durable(s, EventEnvelope(name="job.complete", schema_version=2, dedup_key="job.complete:1", payload={"source": "queue"}))

@@ -350,7 +350,7 @@ Manyfold is bundled but disabled by default. It reads a complete catalog of acce
 fetches metadata, not model bytes. Existing local files remain under Files → Library. Files → Sources lists configured
 sources and their cached catalog, with Sync now, errors and pagination. Disabling a source retains its synchronized
 metadata and existing local files. Prepare a catalog entry locally to select it in a job or project;
-scheduled synchronization remains follow-up work under BIZ-348.
+automatic metadata synchronization is enabled for configured sources unless their interval is set to zero.
 
 Create an OAuth application in Manyfold at `/oauth/applications`, owned by the account whose library should be visible.
 Grant `public` and `read`; this implementation never requests write/delete/upload. Follow the instance UI's redirect-URI
@@ -387,3 +387,16 @@ normal job flow; project builders can select it from the local library. Source
 operations are serialized per provider, including sync. Downloads have a finite
 time limit and heartbeat their database lease. No automatic eviction, source-side
 writes or print commands occur in this flow.
+
+
+Manyfold's **Catalog sync interval** defaults to 60 minutes; set
+`sync_interval_minutes` to `0` for manual-only operation. The scheduler checks
+active sources every minute and records sync errors in the same Sources UI as
+manual sync. A successful manual sync postpones the next automatic sweep.
+Durable due-time claims prevent workers from scheduling the same provider twice;
+the source-operation lease still serializes each sweep with downloads. Failed
+attempts and worker crashes back off until the claimed next due time (manual
+sync remains available). Busy sources retry on the next poll. Sources run in
+separate retained tasks, so a slow catalog does not block another provider.
+Shutdown cancels and reaps all source tasks. Scheduled sync never materializes
+bytes or writes backlinks.

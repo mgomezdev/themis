@@ -1095,3 +1095,10 @@ class LibrarySourceRevision(Base):
     revision: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     descriptor: Mapped[dict] = mapped_column(JSON)
     downloaded_at: Mapped[str] = mapped_column(String(40))
+
+
+class LibraryCatalogSchedule(Base):
+    """Durable scheduling claim, shared across workers and retained while disabled."""
+    __tablename__ = 'library_catalog_schedules'
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    next_due_at: Mapped[float] = mapped_column(Float)
