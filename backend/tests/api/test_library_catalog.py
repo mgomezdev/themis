@@ -166,7 +166,9 @@ async def test_materialization_routes_real_local_file_and_reports_disabled_sourc
 
     assert_carries("library_materialization", result)
     assert result["fresh"] and result["warning"] is None
-    assert (await client.get(f"/api/v1/files/{result['file_id']}")).status_code == 200
+    downloaded = await client.get(f"/api/v1/files/{result['file_id']}/download")
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"solid part\nendsolid part\n"
     await client.put("/api/v1/plugins/downloads", json={"enabled": False})
     cached = await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
     assert cached.status_code == 200 and not cached.json()["fresh"]
