@@ -10,14 +10,14 @@ const sources = import.meta.glob('./**/*.{ts,tsx}', { query: '?raw', import: 'de
 
 // The bundled plugins' ids (backend/app/plugins/*/themis-plugin.toml). Kept in step by `test_the_frontend_guard_lists_every_bundled_plugin`.
 const BUNDLED_PLUGIN_IDS = ['bambu', 'elegoo_centauri', 'snapmaker', 'moonraker', 'mock', 'laminus', 'spoolman',
-  'local_inventory', 'notify_ntfy', 'notify_discord', 'notify_email'];
+  'local_inventory', 'notify_ntfy', 'notify_discord', 'notify_email', 'manyfold'];
 const ID = BUNDLED_PLUGIN_IDS.join('|');
 // `x.plugin_id === 'bambu'`, `'bambu' !== id`, and a comparison of anything called plugin id / provider id with any literal.
 const PATTERNS = [
   new RegExp(String.raw`(===|!==|==|!=)\s*['"\x60](${ID})['"\x60]`),
   new RegExp(String.raw`['"\x60](${ID})['"\x60]\s*(===|!==|==|!=)`),
   /(plugin_?[iI]d|provider_?[iI]d)\s*(===|!==|==|!=)\s*['"`]/,
-  /\[['"`](bambu|elegoo_centauri|snapmaker|moonraker|laminus|spoolman|local_inventory|notify_ntfy|notify_discord|notify_email)['"`]\]/,
+  /\[['"`](bambu|elegoo_centauri|snapmaker|moonraker|laminus|spoolman|local_inventory|notify_ntfy|notify_discord|notify_email|manyfold)['"`]\]/,
   // A lookup table keyed by plugin id (`const ACCENT = { bambu: '#3b82f6' }`) is the same branch written as data.
   // Only a literal value counts (`bambu: '#3b82f6'`, `spoolman: 3`): a response field that happens to be called `laminus`
   // (`{ laminus: {...} }`, `d: { laminus: unknown }`) is a payload shape, not a per-plugin table.

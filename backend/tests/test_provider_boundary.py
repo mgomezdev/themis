@@ -39,6 +39,7 @@ ALLOWED_INTERNAL = {("app.plugins.laminus", f"{PROVIDERS}.laminus.connection"), 
 # (printers, webhooks, notification channels, camera streams, network discovery). A new importer fails this test:
 # if it needs Laminus/Spoolman, go through the provider; otherwise add it here with the reason.
 HTTPX_ALLOWED = {
+    "app.plugins.manyfold.provider": "Manyfold catalog and downloads (a library.source plugin)",
     "app.services.camera_proxy": "printer camera streams",
     "app.services.discovery_net": "printer discovery",
     "app.plugins.elegoo_centauri.client": "Elegoo printer API",
