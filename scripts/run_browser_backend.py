@@ -1,15 +1,15 @@
 """Isolated real-backend browser harness (BIZ-307); never reads a deployment DB."""
 import asyncio
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import uvicorn
 
 
 async def prepare():
-    from app.database import init_db, SessionLocal, engine
+    from app.database import SessionLocal, engine, init_db
     from app.models import PluginConfig
     from app.plugins import registered_plugins
     await init_db()
@@ -36,4 +36,10 @@ if __name__ == '__main__':
         os.environ['THEMIS_BOOTSTRAP_KEY'] = 'isolated-browser-test-key'
         os.environ['THEMIS_LOCAL_NETWORKS'] = '127.0.0.0/8'
         asyncio.run(prepare())
-        uvicorn.run('app.main:app', host='127.0.0.1', port=18071, log_level='warning')
+        from browser_manyfold_fixture import start
+        source_fixture = start()
+        try:
+            uvicorn.run('app.main:app', host='127.0.0.1', port=18071, log_level='warning')
+        finally:
+            source_fixture.shutdown()
+            source_fixture.server_close()
