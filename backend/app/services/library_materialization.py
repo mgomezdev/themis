@@ -252,6 +252,7 @@ async def _materialize(
                     and previous.descriptor == snapshot
                     and not file.missing
                     and await _io(store.exists, file.relative_path)
+                    and await _io(store.sha256, file.relative_path) == info.sha256
                 ):
                     entry = await session.get(LibraryCatalogEntry, entry_id)
                     entry.cached_file_id, entry.descriptor, entry.missing = (
