@@ -1062,3 +1062,26 @@ class JobDetail(Base):
     status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
     value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[str] = mapped_column(String(32))
+
+
+class LibraryCatalogEntry(Base):
+    """Remote metadata is not an UploadedFile until its bytes are materialized locally."""
+    __tablename__ = "library_catalog_entries"
+    __table_args__ = (UniqueConstraint("provider_plugin_id", "source_file_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_file_id: Mapped[str] = mapped_column(String(1024))
+    source_url: Mapped[str] = mapped_column(String(2048), unique=True)
+    descriptor: Mapped[dict] = mapped_column(JSON)
+    last_seen_sweep: Mapped[str] = mapped_column(String(36))
+    missing: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    updated_at: Mapped[str] = mapped_column(String(40))
+    cached_file_id: Mapped[Optional[int]] = mapped_column(ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True)
+
+
+class LibraryCatalogSyncLease(Base):
+    __tablename__ = "library_catalog_sync_leases"
+    provider_plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner: Mapped[str] = mapped_column(String(36))
+    expires_at: Mapped[float] = mapped_column(Float)
