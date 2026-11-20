@@ -161,6 +161,8 @@ async def lifespan(app: FastAPI):
     await event_hub.start(SessionLocal)
     inventory_sync_loop.configure(SessionLocal)
     await inventory_sync_loop.start()
+    from .services.library_sync import library_sync_loop
+    await library_sync_loop.start(SessionLocal, plugin_host)
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
@@ -192,6 +194,7 @@ async def lifespan(app: FastAPI):
         except Exception:                       # a warm-up that dies while being cancelled must not skip the stops below
             logging.getLogger("app").exception("Catalog warm-up failed during shutdown")
 
+    await library_sync_loop.stop()
     await inventory_sync_loop.stop()
     await event_hub.stop()
     from .services import webhook_service as _webhooks
