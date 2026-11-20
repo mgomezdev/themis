@@ -13,7 +13,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
-    exclude: ['e2e/**', 'node_modules/**'],
+    exclude: ['e2e/**', 'e2e-real/**', 'node_modules/**'],
     // Vitest blanks CSS imports by default; src/styleTokens.test.ts reads the stylesheet's text to check the tokens.
     css: { include: [/styles\/app\.css/] },
     coverage: {

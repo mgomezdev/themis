@@ -62,6 +62,30 @@ python scripts/export_openapi.py
 
 Run the checks affected by a change before reporting it complete. Hardware protocol verification under `backend/protocol_verification/` is a separate manual suite and is not part of the ordinary backend tests; its README explains its read/write safeguards.
 
+### Real-backend browser acceptance
+
+`frontend/e2e-real` runs Chromium against the production frontend served by FastAPI, with a fresh temporary SQLite,
+library and artifact directory on each run. It does not intercept HTTP routes. Install the backend dependencies in a
+virtual environment first, then from `frontend/` run:
+
+```sh
+npm ci
+npx playwright install chromium
+npm run build
+THEMIS_TEST_PYTHON=/absolute/path/to/backend-venv/bin/python npm run test:e2e:real
+```
+
+If `python` already has the backend dependencies, omit `THEMIS_TEST_PYTHON`. The harness owns loopback port 18071
+and refuses to reuse another server. It overrides deployment paths and uses a fixture-only bootstrap key. On normal
+shutdown it deletes its temporary data. No configured production DB, external inventory, slicer or printer is used.
+All plugins boot disabled; the spec enables the bundled mock printer and sets inventory providers through the real API.
+The Spoolman starting state uses an unreachable loopback URL, then the browser switches to Local inventory.
+Printer dispatch is disabled so the test can inspect matching without starting work.
+
+The existing `frontend-e2e` CI job runs both the route-mocked specs and this real-backend project. BIZ-307 covers
+provider switching, material/spool create/edit/archive/read, persisted weight/location, Fleet spool binding,
+matching/mismatching filament tuples and removal of disabled plugin navigation/direct-route content.
+
 ## Change guidance
 
 - Keep printer-specific protocol code inside printer plugins. Core services should depend on the printer client and capability contracts, not a vendor implementation.

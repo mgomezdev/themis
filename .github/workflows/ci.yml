@@ -179,6 +179,22 @@ jobs:
       - name: Run Playwright tests
         run: npm run test:e2e
 
+      # BIZ-307: the production frontend against an isolated real API/SQLite process.
+      # Required plugins are configured through REST in the spec; no hardware or sidecars.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e '../backend'
+      - run: npm run build
+      - name: Run real-backend inventory acceptance
+        run: npm run test:e2e:real
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-failure-evidence
+          path: frontend/test-results/
+
   spec:
     needs: [changes]
     if: needs.changes.outputs.code != 'false'      # anything but an explicit docs-only verdict runs the job
