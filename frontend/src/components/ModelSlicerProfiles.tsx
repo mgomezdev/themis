@@ -14,10 +14,12 @@ type Flow = 'standard' | 'high_flow';
  * different physical nozzle picks another variant row (Edit printer -> Nozzle), so ten identical printers need no per-printer entry.
  * The slicing provider's suggestions are offered when it can make them; picking a profile by hand always works.
  */
-export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
+export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange, defaultSlicerId, onDefaultSlicerChange }: {
   modelUuid: string;
   modelLabel: string;
   onChange?: (rows: ModelSlicerProfile[]) => void;
+  defaultSlicerId?: string | null;
+  onDefaultSlicerChange?: (id: string | null) => Promise<void>;
 }) {
   const [rows, setRows] = useState<ModelSlicerProfile[] | null>(null);
   const [providers, setProviders] = useState<{ id: string; name: string }[] | null>(null);
@@ -46,10 +48,9 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
         if (!alive) return;
         const found = (list?.plugins ?? []).filter(p => p.enabled && p.provides.some(x => x.capability === 'gcode.produce'));
         setProviders(found.map(p => ({ id: p.id, name: p.name })));
-        setProvider(found[0]?.id ?? '');
+        setProvider(found.some(p => p.id === defaultSlicerId) ? defaultSlicerId ?? '' : found[0]?.id ?? '');
       })
       .catch(() => { if (alive) setProviders([]); });
-    fetchMachineCatalog().then(c => { if (alive) setCatalog(Array.isArray(c) ? c : []); }).catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelUuid]);
@@ -58,9 +59,11 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
     if (!provider) return;
     let alive = true;
     setSuggestions(null);
+    setCatalog([]);
     fetchProfileSuggestions(modelUuid, provider)
       .then(s => { if (alive) setSuggestions(s); })
       .catch(() => { if (alive) setSuggestions({ provider_plugin_id: provider, available: false, candidates: [], variants: [], error: null }); });
+    fetchMachineCatalog(provider).then(c => { if (alive) setCatalog(Array.isArray(c) ? c : []); }).catch(() => {});
     return () => { alive = false; };
   }, [modelUuid, provider]);
 
@@ -92,19 +95,41 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
   const candidate = suggestions?.candidates.find(c => c.name === chosen);
   const offered = (suggestions?.candidates ?? []).slice(0, 5);
   const otherVariants = (suggestions?.variants ?? []).filter(v => !mapped(v.nozzle_diameter_mm, v.flow) && v.nozzle_diameter_mm != null);
+  const mappedProviders = (providers ?? []).filter(p => rows?.some(r => r.provider_plugin_id === p.id && r.is_default));
+  const missingDefault = defaultSlicerId && !mappedProviders.some(p => p.id === defaultSlicerId);
 
   if (rows === null || providers === null) return <div className="tiny muted">{error ?? 'Loading…'}</div>;
-  if (providers.length === 0) {
+  if (providers.length === 0 && !defaultSlicerId) {
     return <div className="tiny muted">No slicing provider is enabled — enable one under Settings → Plugins to map a slicer profile.</div>;
   }
 
   return (
     <div className="col gap-3" data-testid="model-slicer-profiles">
       {error && <div role="alert" style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>}
+      {onDefaultSlicerChange && (mappedProviders.length > 0 || defaultSlicerId) && (
+        <div>
+          <label className="label" htmlFor={`msp-default-${modelUuid}`}>Default slicer for this model</label>
+          <select id={`msp-default-${modelUuid}`} className="select" disabled={busy} value={defaultSlicerId ?? ''}
+                  onChange={e => {
+                    const next = e.target.value || null;
+                    void run(() => onDefaultSlicerChange(next));
+                  }}>
+            <option value="">Use the shop default slicer</option>
+            {missingDefault && <option value={defaultSlicerId}>{defaultSlicerId} (unavailable)</option>}
+            {mappedProviders.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+      )}
       {providers.length > 1 && (
         <div>
           <label className="label" htmlFor={`msp-provider-${modelUuid}`}>Slicing provider</label>
-          <select id={`msp-provider-${modelUuid}`} className="select" value={provider} onChange={e => setProvider(e.target.value)}>
+          <select id={`msp-provider-${modelUuid}`} className="select" value={provider} disabled={busy} onChange={e => {
+            setChosen('');
+            setManualProfile('');
+            setSuggestions(null);
+            setCatalog([]);
+            setProvider(e.target.value);
+          }}>
             {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -166,7 +191,16 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
       <details>
         <summary className="small" style={{ cursor: 'pointer' }}>{mine.length === 0 ? 'Choose a profile by hand' : 'Add another nozzle variant by hand'}</summary>
         <div className="col gap-2" style={{ marginTop: 8 }}>
-          <MachinePicker catalog={catalog} value={manualProfile} onChange={pickFromCatalog} />
+          {catalog.some(p => p.printer_model && p.nozzle) && (
+            <MachinePicker key={provider} catalog={catalog.filter(p => p.printer_model && p.nozzle)}
+                           value={manualProfile} onChange={pickFromCatalog} />
+          )}
+          <label className="label" htmlFor={`msp-profile-${modelUuid}`}>Machine profile name</label>
+          <input id={`msp-profile-${modelUuid}`} className="input" value={manualProfile}
+                 list={`msp-names-${modelUuid}`} onChange={e => pickFromCatalog(e.target.value)} />
+          <datalist id={`msp-names-${modelUuid}`}>
+            {[...new Set(catalog.map(p => p.name))].map(name => <option key={name} value={name} />)}
+          </datalist>
           <div className="row gap-2" style={{ alignItems: 'flex-end' }}>
             <div>
               <label className="label" htmlFor={`msp-d-${modelUuid}`}>Nozzle (mm)</label>
@@ -180,8 +214,8 @@ export function ModelSlicerProfiles({ modelUuid, modelLabel, onChange }: {
                 <option value="high_flow">High-flow</option>
               </select>
             </div>
-            <button className="btn primary sm" disabled={busy || !manualProfile || !(Number(diameter) > 0)}
-                    onClick={() => add(manualProfile, Number(diameter), flow)}>
+            <button className="btn primary sm" disabled={busy || !provider || !manualProfile.trim() || !(Number(diameter) > 0)}
+                    onClick={() => add(manualProfile.trim(), Number(diameter), flow)}>
               Set profile
             </button>
           </div>

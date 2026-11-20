@@ -15,6 +15,7 @@ from ...models import (
     UploadedFile,
 )
 from ..slicer_service import SliceRequest
+from ..print_artifacts import required_output
 from .. import slice_cache, slice_saver, slicer_profiles
 from .. import filament_matching
 
@@ -68,6 +69,7 @@ class EstimatesMixin:
         token: int | None = None
         process_missing: str | None = None
         machine_preset: str | None = None
+        provider_id: str | None = None
         source_key: str | None = None
         filament_profiles: list[str] = []
         print_profile: str | None = None
@@ -103,7 +105,11 @@ class EstimatesMixin:
                                if config is not None and printer is not None and uploaded_file is not None else None)
 
             # Capture all scalars before session closes
-            machine_preset = ((await slicer_profiles.machine_profile_for(session, printer)) or "") if printer else ""
+            if printer:
+                resolution = await slicer_profiles.resolve_for_printer(
+                    session, printer, source_filename=uploaded_file.original_filename if uploaded_file else None)
+                machine_preset = resolution.profile
+                provider_id = resolution.provider_id
             print_profile = _qe.effective_process_profile(config, printer) if config else ""
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
@@ -146,6 +152,9 @@ class EstimatesMixin:
         if not machine_preset or not source_key or not filament_profiles:
             await self._fail_estimate(job_id, token, "missing machine preset, file, or filament profile")
             return
+        if provider_id is None:
+            await self._fail_estimate(job_id, token, "no slicing provider is configured")
+            return
 
         # Step 3 — Enqueue slice
         output_dir = self._slicer._data_dir / "gcode_estimates" / str(job_id)
@@ -158,9 +167,11 @@ class EstimatesMixin:
             process_preset=print_profile,
             filament_presets=filament_profiles,
             filament_colours=[],
-            export_args=[],
+            output_kind=required_output(printer.printer_type),
+            model_uuid=printer.model_uuid,
             extra_config=estimate_extra,
             printer_overrides=estimate_printer_overrides,
+            provider_id=provider_id,
         )
 
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -196,7 +207,7 @@ class EstimatesMixin:
             return
 
         # Step 4 — Parse, discard gcode, write results
-        est = _qe.get_format_provider().parse_estimates(gcode_path)
+        est = _qe.get_format_provider(provider_id).parse_estimates(gcode_path)
         grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
         shutil.rmtree(output_dir, ignore_errors=True)
 

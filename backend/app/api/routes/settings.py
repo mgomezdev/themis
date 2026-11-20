@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import CostConfig, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
+from ...models import BrandConversionPreference, CostConfig, PrintConversionDefault, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
 from ...services import printer_setup, slicer_profiles, webhook_service
 from ...services import printer_model_registry as model_registry
 from ...services import catalog_service
@@ -21,10 +21,85 @@ from ...services.inventory import refs as inventory_refs
 from ...services.printer_client_factory import client_class
 from ...services.printer_identity import IdentityError, LEGACY_IDENTITY, resolve_legacy
 from ...services.printer_manager import printer_manager
+from ...plugins import get_plugin
+from ...services.print_artifacts import MODEL_INPUTS, PRINT_OUTPUTS
+from ...services.providers.contract import ArtifactKind, InputKind
+from ...services.providers.slicing import enabled_provider_ids, gcode_producer_for
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 _BACKUP_VERSION = 1
+
+
+class ConversionProviderChoice(BaseModel):
+    provider_plugin_id: str | None
+
+
+@router.get("/print-conversion", summary="List print conversion defaults and available services",
+            dependencies=[Depends(require_scope("settings:read"))])
+async def get_print_conversion(session: AsyncSession = Depends(get_session)) -> dict:
+    defaults = {(r.input_kind, r.output_kind): r.provider_plugin_id
+                for r in (await session.execute(select(PrintConversionDefault))).scalars()}
+    brands = {}
+    for model in (await session.execute(select(PrinterModelRecord).order_by(
+            PrinterModelRecord.manufacturer_name, PrinterModelRecord.manufacturer_id))).scalars():
+        brands.setdefault(model.manufacturer_id, model.manufacturer_name)
+    preferences = {r.manufacturer_id: r.provider_plugin_id
+                   for r in (await session.execute(select(BrandConversionPreference))).scalars()}
+    providers = []
+    for plugin_id in enabled_provider_ids():
+        plugin = get_plugin(plugin_id)
+        producer = gcode_producer_for(plugin_id)
+        providers.append({"id": plugin_id, "name": plugin.name, "inputs": sorted(producer.accepted_inputs) if producer else [],
+                          "outputs": sorted(producer.output_kinds) if producer else []})
+    return {
+        "providers": providers,
+        "routes": [{"input_kind": source, "output_kind": output, "provider_plugin_id": defaults.get((source, output))}
+                   for source in MODEL_INPUTS for output in PRINT_OUTPUTS],
+        "brands": [{"id": brand_id, "name": name, "provider_plugin_id": preferences.get(brand_id)}
+                   for brand_id, name in brands.items()],
+    }
+
+
+@router.put("/print-conversion/routes/{input_kind}/{output_kind}", summary="Set the default service for a print format pair",
+            dependencies=[Depends(require_scope("settings:write"))])
+async def set_conversion_default(input_kind: InputKind, output_kind: ArtifactKind, body: ConversionProviderChoice,
+                                 session: AsyncSession = Depends(get_session)) -> dict:
+    if input_kind not in MODEL_INPUTS or output_kind not in PRINT_OUTPUTS:
+        raise HTTPException(422, "Choose a model input and a printable output format")
+    plugin_id = body.provider_plugin_id
+    if plugin_id is not None:
+        producer = gcode_producer_for(plugin_id)
+        if producer is None or input_kind not in producer.accepted_inputs or output_kind not in producer.output_kinds:
+            raise HTTPException(422, "Choose an enabled service that supports both formats")
+        await session.merge(PrintConversionDefault(input_kind=input_kind, output_kind=output_kind, provider_plugin_id=plugin_id))
+    else:
+        row = await session.get(PrintConversionDefault, (input_kind, output_kind))
+        if row is not None:
+            await session.delete(row)
+    await session.commit()
+    return {"provider_plugin_id": plugin_id}
+
+
+@router.put("/print-conversion/brands/{manufacturer_id}", summary="Set the preferred print conversion service for a printer brand",
+            dependencies=[Depends(require_scope("settings:write"))])
+async def set_brand_converter(manufacturer_id: str, body: ConversionProviderChoice,
+                              session: AsyncSession = Depends(get_session)) -> dict:
+    known = await session.scalar(select(PrinterModelRecord.id).where(
+        PrinterModelRecord.manufacturer_id == manufacturer_id).limit(1))
+    if known is None:
+        raise HTTPException(404, "Unknown printer brand")
+    plugin_id = body.provider_plugin_id
+    if plugin_id is not None:
+        if plugin_id not in enabled_provider_ids():
+            raise HTTPException(422, "Choose an enabled print conversion service")
+        await session.merge(BrandConversionPreference(manufacturer_id=manufacturer_id, provider_plugin_id=plugin_id))
+    else:
+        row = await session.get(BrandConversionPreference, manufacturer_id)
+        if row is not None:
+            await session.delete(row)
+    await session.commit()
+    return {"provider_plugin_id": plugin_id}
 
 
 MAX_DEAD_AFTER_MINUTES = 1440
@@ -289,6 +364,7 @@ async def fleet_backup(
                 ),
                 "orca_printer_profiles": p.orca_printer_profiles or [],
                 "machine_profile_override": p.machine_profile_override,
+                "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
                 "nozzle_variant": p.nozzle_variant,
                 "loaded_filaments": p.loaded_filaments or [],
                 "build_plate_type": p.build_plate_type,
@@ -299,6 +375,11 @@ async def fleet_backup(
             for p in printers
         ],
         "slicer_profiles": mappings,
+        "model_slicer_defaults": [
+            {"plugin_id": m.plugin_id, "manufacturer_id": m.manufacturer_id, "model_id": m.model_id,
+             "default_slicer_plugin_id": m.default_slicer_plugin_id}
+            for m in models.values() if m.default_slicer_plugin_id is not None
+        ],
     }
 
     payload = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
@@ -390,6 +471,22 @@ async def fleet_import(
             is_default=not mine or (bool(m.get("is_default")) and not any(r.is_default for r in mine))))
         await session.flush()
 
+    for item in data.get("model_slicer_defaults") or []:
+        try:
+            provider_id = item["default_slicer_plugin_id"]
+            if not isinstance(provider_id, str) or not provider_id or len(provider_id) > 64:
+                raise ValueError("invalid slicer plugin id")
+            uuid_ = await model_registry.model_uuid_for(session, item["plugin_id"], item["manufacturer_id"], item["model_id"])
+            model = await model_registry.get_model(session, uuid_) if uuid_ else None
+            if model is None or not any(r.provider_plugin_id == provider_id and r.is_default
+                                       for r in await slicer_profiles.mapping_rows(session, uuid_)):
+                raise ValueError("unknown model or missing default mapping")
+        except (KeyError, TypeError, ValueError):
+            warnings.append("Model slicer default skipped because its model or mapping is missing or invalid")
+            continue
+        if model.default_slicer_plugin_id is None:
+            model.default_slicer_plugin_id = provider_id
+
     for pr in data.get("printers", []):
         pname = pr.get("name") or "Unnamed Printer"
         ptype = pr.get("printer_type", "")
@@ -439,6 +536,10 @@ async def fleet_import(
             except IdentityError:               # a type with no legacy mapping (only a hand-edited file): no identity to invent
                 identity = (None, None, None)
         model_uuid = await model_registry.model_uuid_for(session, *identity) if identity[0] else None
+        preferred_slicer = pr.get("preferred_slicer_plugin_id")
+        if preferred_slicer is not None and (not isinstance(preferred_slicer, str) or not 0 < len(preferred_slicer) <= 64):
+            warnings.append(f"'{pname}': invalid preferred slicer ignored")
+            preferred_slicer = None
         printer = Printer(
             name=pname,
             printer_type=ptype,
@@ -449,6 +550,7 @@ async def fleet_import(
             connection_config=printer_setup.strip_blank(conn_cfg),   # a redacted secret is absent, never ""
             orca_printer_profiles=orca_profiles,
             machine_profile_override=current_profile,
+            preferred_slicer_plugin_id=preferred_slicer,
             nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()
             if slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")) else None,
             loaded_filaments=inventory_refs.normalize_slots(loaded),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchPrinterModels, setPrinterModelEnabled, type PrinterModelEntry } from '../api/printers';
+import { fetchPrinterModels, setPrinterModelEnabled, updatePrinterModel, type PrinterModelEntry } from '../api/printers';
 import { ModelSlicerProfiles } from '../components/ModelSlicerProfiles';
 
 const REASON: Record<NonNullable<PrinterModelEntry['dormant_reason']>, string> = {
@@ -60,6 +60,11 @@ export function PrinterModelsPanel() {
                 {open === m.id && (
                   <div className="card" style={{ padding: 12, marginLeft: 24 }}>
                     <ModelSlicerProfiles modelUuid={m.id} modelLabel={`${m.manufacturer_name} ${m.display_name}`}
+                                         defaultSlicerId={m.default_slicer_plugin_id}
+                                         onDefaultSlicerChange={async id => {
+                                           const updated = await updatePrinterModel(m.id, { default_slicer_plugin_id: id });
+                                           setModels(prev => prev?.map(x => x.id === m.id ? { ...x, ...updated } : x) ?? null);
+                                         }}
                                          onChange={rows => setModels(prev => (prev ?? []).map(x => (x.id === m.id && x.slicer_profile_count !== rows.length
                                            ? { ...x, slicer_profile_count: rows.length } : x)))} />
                   </div>

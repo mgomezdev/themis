@@ -1,14 +1,17 @@
 """Model -> slicer machine profile mapping (BIZ-294): CRUD, variant validation, default uniqueness, a printer's nozzle variant, the
 resolved profile on printers, and suggestions from the provider (stubbed to the Laminus profiles contract)."""
 from tests.printer_ips import ip_config
+from dataclasses import replace
 from unittest.mock import patch
 
 import httpx
 import pytest
 from sqlalchemy import select
 
-from app.models import PrinterModelSlicerProfile
-from tests.fake_providers import FakeSlicingProvider
+from app.models import Printer, PrinterModelSlicerProfile
+from app.plugins import get_plugin, register_plugin
+from app.services import slice_resolution, slicer_profiles
+from tests.fake_providers import FakeGcodeProducer, FakeSlicingProvider, make_catalog
 from tests.services.test_slicing_provider_contract import sidecar  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.asyncio
@@ -177,6 +180,54 @@ async def test_a_printer_resolves_its_profile_from_the_model_default_and_a_varia
         assert [p["machine_profile"] for p in (await client.get("/api/v1/printers")).json()] == [P1S_06]
         cleared = await client.patch(f"/api/v1/printers/{pid}", json={"nozzle_variant": None})
         assert cleared.json()["nozzle_variant"] is None and cleared.json()["machine_profile"] == P1S_04
+
+
+async def test_model_default_routes_both_printers_until_one_chooses_another_slicer_and_nozzle(
+        client, p1s, session_factory, create_printer, monkeypatch):
+    printer_id, model_id = p1s
+    other_printer = await create_printer(name="Stock", machine_profile_override=None)
+    laminus = get_plugin("laminus")
+    register_plugin(replace(laminus, id="other_slicer", name="Other slicer", default_enabled=True,
+                            provides={"gcode.produce": laminus.provides["gcode.produce"]}))
+    assert (await add(client, model_id)).status_code == 201
+    assert (await add(client, model_id, P1S_04_HF, flow="high_flow")).status_code == 201
+    model_url = f"/api/v1/printer-models/{model_id}"
+    printer_url = f"/api/v1/printers/{printer_id}"
+    assert (await client.patch(model_url, json={"default_slicer_plugin_id": "other_slicer"})).status_code == 422
+    assert (await add(client, model_id, "Other P1S", provider_plugin_id="other_slicer")).status_code == 201
+    saved = await client.patch(model_url, json={"default_slicer_plugin_id": "other_slicer"})
+    assert (saved.status_code, saved.json()["default_slicer_plugin_id"], saved.json()["enabled"]) == (200, "other_slicer", True)
+
+    async def effective(pid):
+        async with session_factory() as session:
+            printer = await session.get(Printer, pid)
+            resolution = await slicer_profiles.resolve_for_printer(session, printer)
+            decision = await slice_resolution.resolve_slicing(slice_resolution.PrinterView.of(printer, resolution), "part.3mf")
+            return decision.provider_id, resolution.profile
+
+    monkeypatch.setattr(slice_resolution, "gcode_producer_for", lambda pid: FakeGcodeProducer(pid))
+    assert await effective(printer_id) == ("other_slicer", "Other P1S")
+    assert await effective(other_printer) == ("other_slicer", "Other P1S")
+    with patch.object(slice_resolution, "enabled_provider_ids", return_value=["laminus"]):
+        async with session_factory() as session:
+            printer = await session.get(Printer, printer_id)
+            resolution = await slicer_profiles.resolve_for_printer(session, printer)
+            decision = await slice_resolution.resolve_slicing(slice_resolution.PrinterView.of(printer, resolution), "part.3mf")
+        assert decision.blocked and decision.provider_id == "other_slicer"
+    catalog = FakeSlicingProvider(make_catalog(machines=(("Other P1S", "other"),),
+                                                 processes=(("Fast", "p", ["Other P1S"]),), filaments=()))
+    monkeypatch.setattr("app.api.routes.printers.slicing_provider_for", lambda pid: catalog if pid == "other_slicer" else None)
+    assert (await client.get(f"{printer_url}/profiles")).json()["print_profiles"] == ["Fast"]
+
+    nozzle = {"diameter_mm": 0.4, "flow": "high_flow"}
+    resp = await client.patch(printer_url, json={"preferred_slicer_plugin_id": "laminus", "nozzle_variant": nozzle})
+    assert (resp.status_code, resp.json()["machine_profile"]) == (200, P1S_04_HF)
+    assert await effective(printer_id) == ("laminus", P1S_04_HF)
+    assert await effective(other_printer) == ("other_slicer", "Other P1S")
+
+    resp = await client.patch(printer_url, json={"preferred_slicer_plugin_id": None, "nozzle_variant": None})
+    assert (resp.json()["slicer_plugin_id"], resp.json()["machine_profile"]) == ("other_slicer", "Other P1S")
+    assert (await client.patch(model_url, json={"default_slicer_plugin_id": None})).json()["default_slicer_plugin_id"] is None
 
 
 async def test_ten_identical_printers_need_no_per_printer_profile(client, create_printer, model_uuid_of):

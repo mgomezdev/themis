@@ -47,6 +47,18 @@ def test_preferred_provider_beats_default():
     assert out.provider_id == "b"
 
 
+def test_output_kind_is_part_of_converter_eligibility():
+    raw, archive = FakeGcodeProducer("raw"), FakeGcodeProducer("archive")
+    archive.output_kinds = frozenset({c.ArtifactKind.GCODE_3MF})
+    providers = {"raw": raw, "archive": archive}
+    statuses = ready(raw, archive)
+    item = c.WorkItem(c.InputKind.MODEL_3MF, output_kind=c.ArtifactKind.GCODE_3MF)
+    assert c.resolve_work(item, T_X1C, providers, statuses, default="archive") == c.WorkOutcome(c.Action.PRODUCE, "archive")
+    assert c.resolve_work(item, T_X1C, providers, statuses, default="archive", preferred="raw") == c.WorkOutcome(
+        c.Action.BLOCKED, "raw", c.Reason.PREFERENCE_INELIGIBLE)
+    assert c.resolve_work(MODEL, T_X1C, providers, statuses, default="archive").reason is c.Reason.DEFAULT_INELIGIBLE
+
+
 def test_gcode_is_pass_through_with_no_provider_even_when_providers_are_down():
     item = c.WorkItem(c.InputKind.GCODE, frozenset({X1C}))
     assert c.resolve_work(item, T_X1C, {}, {}) == c.WorkOutcome(c.Action.PASS_THROUGH)

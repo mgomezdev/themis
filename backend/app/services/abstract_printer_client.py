@@ -197,25 +197,15 @@ class AbstractPrinterClient(ABC):
     def gcode_supported(self) -> bool:
         return True
 
-    # --- Slicing output contract (overridable per vendor) ---
+    # --- Print artifact requirements (overridable per printer plugin) ---
+
+    print_artifact_kind = "gcode"    # preferred output when a model needs conversion
 
     # Whether the printer can be handed a plain .gcode file (pre-sliced job, BIZ-188). Vendors that only ingest a
     # sliced archive (Bambu: .gcode.3mf) set this False until a raw-gcode start has been verified on hardware.
     raw_gcode_supported: bool = True
-    # Whether the printer can be handed a pre-sliced archive (.gcode.3mf, BIZ-190). Only vendors whose own slicer
-    # output is that archive (see orca_export_args) set this True.
+    # Whether the printer also accepts pre-generated .gcode.3mf files.
     sliced_archive_supported: bool = False
-
-    def orca_export_args(self, file_base: str) -> list[str]:
-        """Extra OrcaSlicer CLI args declaring this printer's print artifact.
-
-        OrcaSlicer always writes raw gcode to ``--outputdir``; ``--export-3mf``
-        additionally emits the archive. Default ([]) → the printer prints raw
-        ``.gcode`` (Klipper/Centauri). Vendors whose printers ingest the sliced
-        3MF (e.g. Bambu) override to return ``["--export-3mf", f"{file_base}.gcode.3mf"]``.
-        ``file_base`` is a meaningful, job-derived name (no extension).
-        """
-        return []
 
     # --- Capabilities and lifecycle hooks ---
 

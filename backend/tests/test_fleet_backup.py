@@ -69,16 +69,23 @@ async def test_backup_carries_the_model_slicer_profile_mappings_and_the_nozzle_v
     for d, name, default in ((0.4, "P1S 0.4", True), (0.6, "P1S 0.6", False)):
         assert (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
             "provider_plugin_id": "laminus", "nozzle_diameter_mm": d, "machine_profile": name, "is_default": default})).status_code == 201
-    await client.patch(f"/api/v1/printers/{printer['id']}", json={"nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}})
+    model_url = f"/api/v1/printer-models/{model}"
+    assert (await client.patch(model_url, json={"default_slicer_plugin_id": "laminus"})).status_code == 200
+    await client.patch(f"/api/v1/printers/{printer['id']}", json={
+        "preferred_slicer_plugin_id": "laminus", "nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"},
+    })
 
     backup = (await client.get("/api/v1/settings/fleet-backup")).json()
 
     assert backup["printers"][0]["nozzle_variant"] == {"diameter_mm": 0.6, "flow": "standard"}
+    assert backup["printers"][0]["preferred_slicer_plugin_id"] == "laminus"
+    assert backup["model_slicer_defaults"][0]["default_slicer_plugin_id"] == "laminus"
     assert sorted((m["nozzle_diameter_mm"], m["machine_profile"], m["is_default"]) for m in backup["slicer_profiles"]) == [
         (0.4, "P1S 0.4", True), (0.6, "P1S 0.6", False)]
     assert all(m["plugin_id"] == "bambu" and m["model_id"] == "p1s" for m in backup["slicer_profiles"])
 
     await client.delete(f"/api/v1/printers/{printer['id']}")                                       # wipe, then restore from the file
+    await client.patch(model_url, json={"default_slicer_plugin_id": None})
     for m in sorted((await client.get(f"/api/v1/printer-models/{model}/slicer-profiles")).json(), key=lambda m: m["is_default"]):
         assert (await client.delete(f"/api/v1/printer-models/{model}/slicer-profiles/{m['id']}")).status_code == 204   # default last
     assert (await client.get(f"/api/v1/printer-models/{model}/slicer-profiles")).json() == []
@@ -90,6 +97,7 @@ async def test_backup_carries_the_model_slicer_profile_mappings_and_the_nozzle_v
     assert sorted((m["nozzle_diameter_mm"], m["machine_profile"], m["is_default"]) for m in restored) == [(0.4, "P1S 0.4", True), (0.6, "P1S 0.6", False)]
     (imported,) = (await client.get("/api/v1/printers")).json()
     assert imported["model_uuid"] == model and imported["nozzle_variant"] == {"diameter_mm": 0.6, "flow": "standard"}
+    assert (imported["model_slicer_plugin_id"], imported["preferred_slicer_plugin_id"]) == ("laminus", "laminus")
 
 
 async def test_import_reads_an_old_backups_current_orca_printer_profile_as_the_raw_override(client):

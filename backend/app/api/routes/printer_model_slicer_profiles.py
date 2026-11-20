@@ -141,12 +141,17 @@ async def patch_mapping(model_uuid: str, mapping_id: int, body: MappingPatch,
                dependencies=[Depends(require_scope("printers:write"))])
 async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession = Depends(get_session)) -> None:
     row = await _row_or_404(session, model_uuid, mapping_id)
+    model = await _model_or_404(session, model_uuid)
     siblings = [r for r in await slicer_profiles.mapping_rows(session, model_uuid)
                 if r.provider_plugin_id == row.provider_plugin_id and r.id != row.id]
     if row.is_default and siblings:
         raise HTTPException(409, "This is the default variant: make another variant the default before removing it")
+    if row.is_default and row.provider_plugin_id == model.default_slicer_plugin_id:
+        raise HTTPException(409, "Change the model's default slicer before removing its only mapping")
     variant = slicer_profiles.variant_of(row)
-    printers = (await session.execute(select(Printer).where(Printer.model_uuid == model_uuid))).scalars().all()
+    model_slicer = model.default_slicer_plugin_id or default_provider_id()
+    printers = [p for p in (await session.execute(select(Printer).where(Printer.model_uuid == model_uuid))).scalars()
+                if (p.preferred_slicer_plugin_id or model_slicer) == row.provider_plugin_id]
     users = [p.name for p in printers if slicer_profiles.NozzleVariant.parse(p.nozzle_variant) == variant]
     if users:
         raise HTTPException(409, f"{', '.join(users)} use the {variant.label} nozzle: change them first")

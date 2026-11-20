@@ -25,6 +25,7 @@ from ..models import (
     UploadedFile,
 )
 from .library_scanner import is_presliced_file
+from .print_artifacts import required_output
 from .printer_manager import PrinterManager
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
@@ -144,6 +145,8 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "overrides": {**((job.overrides or {}) if job else {}), **(getattr(config,"overrides",None) or {})},
         "printer_overrides": dict((printer.slice_overrides or {}) if printer else {}),
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
+        "printer_type": printer.printer_type if printer else "",
+        "model_uuid": printer.model_uuid if printer else None,
         "bed_mm": (float(printer.bed_x_mm or DEFAULT_BED_MM[0]), float(printer.bed_y_mm or DEFAULT_BED_MM[1]), DEFAULT_BED_MM[2])
                   if printer else None,
     }
@@ -157,7 +160,7 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
     stem = os.path.splitext(os.path.basename(p["original_filename"] or "model"))[0]
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
     file_base = f"{safe}_p{plate_number}_j{job_id}"
-    export_args = client.orca_export_args(file_base) if client else []
+    output_kind = required_output(p.get("printer_type"))
 
     loaded = p["loaded"]
     tool_index = p["tool_index"]
@@ -209,7 +212,9 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
         process_preset=p["print_profile"],
         filament_presets=multi_presets if filament_map else ([filament_profile] if filament_profile else []),
         filament_colours=[filament_color] if filament_color else [],
-        export_args=export_args,
+        output_kind=output_kind,
+        artifact_basename=file_base,
+        model_uuid=p.get("model_uuid"),
         extra_config=plate_config,
         printer_overrides=dict(p.get("printer_overrides") or {}),
         provider_id=provider_id,
@@ -581,10 +586,12 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
             # nozzle, say) must not print it.
             version = (await session.execute(
                 select(SlicedVersion).where(SlicedVersion.file_id == source_file.id))).scalar_one_or_none()
-            if version is not None and version.machine_preset != await slicer_profiles.machine_profile_for(session, printer):
-                await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
-                                                    "cached version was sliced for that")
-                return
+            if version is not None:
+                cached_profile = await slicer_profiles.resolve_for_printer(session, printer, version.provider_plugin_id or ...)
+                if version.machine_preset != cached_profile.profile:
+                    await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
+                                                        "cached version was sliced for that")
+                    return
 
         # Pre-flight: resolve the slicing provider for THIS printer (its preferred `gcode.produce` plugin, else the capability
         # default) and make sure it is usable before claiming this job (BIZ-291). Block (not fail) so the job auto-retries when
@@ -595,7 +602,8 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         cache_only_version: int | None = None
         provider_id: str | None = None
         if not is_presliced_file(source_file):
-            resolution = await slicer_profiles.resolve_for_printer(session, printer)
+            resolution = await slicer_profiles.resolve_for_printer(
+                session, printer, source_filename=source_file.original_filename if source_file else None)
             decision = await resolve_slicing(PrinterView.of(printer, resolution), source_file.original_filename if source_file else "")
             provider_id = decision.provider_id
             if decision.blocked:

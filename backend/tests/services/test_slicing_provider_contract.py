@@ -314,10 +314,10 @@ def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printer
 def test_slicing_provider_resolves_through_the_gcode_produce_capability(monkeypatch):
     """Core names no slicer: the provider is whichever enabled plugin serves `gcode.produce`, and its id is the cache identity."""
     from app.plugins.host import plugin_host
-    from app.services.providers.slicing import slicing_provider_name
+    from app.services.providers.slicing import default_provider_id
 
     monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
-    assert slicing_provider_name() == "laminus"
+    assert default_provider_id() == "laminus"
     assert isinstance(get_slicing_provider(), LaminusSlicingProvider)
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)       # the only provider is disabled
     assert get_slicing_provider() is None
@@ -337,7 +337,7 @@ def test_resolver_prefers_an_enabled_selection_and_refuses_ambiguity(monkeypatch
     monkeypatch.setattr(plugin_host, "selected", lambda cap: "b")
     assert slicing.default_provider_id() == "b"                       # the selection wins
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: pid == "a")
-    assert slicing.default_provider_id() == "a"                       # selected one disabled: sole enabled provider
+    assert slicing.default_provider_id() is None                       # a disabled selection blocks instead of using the other provider
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)
     assert slicing.default_provider_id() is None
 

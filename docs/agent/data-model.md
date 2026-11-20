@@ -70,18 +70,26 @@ carries), `is_default`. Unique `(model, provider, diameter, flow)`; a partial un
 moves the default atomically; the first mapping of a pair is the default; the default cannot be unset or deleted while other variants exist; a variant a printer
 uses cannot be deleted). Hardened nozzles do not change the machine preset (filament gating only) so they are not part of the variant.
 **Resolution** (`services/slicer_profiles.py`): `Printer.machine_profile_override` if set, else the model's row for the provider that will slice the printer
-(`preferred_slicer_plugin_id` or the capability default) and the printer's `nozzle_variant` (NULL = the default row). No row => no machine profile: the provider is
+(`preferred_slicer_plugin_id`, then the model's `default_slicer_plugin_id`, then the brand preference, the format-pair default, and the capability default) and the printer's
+`nozzle_variant` (NULL uses that slicer's default row). No row => no machine profile: the provider is
 **ineligible** for that printer (`preference_ineligible` / `default_ineligible`, block reason `no machine profile for <model> <variant>`), a hard block the user fixes
 under Settings → Printer models. The slice-cache key already hashes `machine_preset`, so a 0.4 and a 0.6 printer never share a slice. v052 backfills from the
 printers' distinct `(model, profile)` pairs (most common = default; a differing profile becomes a variant when its name says the nozzle, else stays the raw override;
 printers without a model keep the override; the provider is the printer's preferred slicer, else `laminus`) and re-keys `job_model_targets`; its `down()` restores the
 per-printer profiles. Written by `/printer-models/{uuid}/slicer-profiles` and fleet import.
 
+### Print conversion preferences
+
+`print_conversion_defaults` stores the chosen plugin for each model input and printable output pair.
+`brand_conversion_preferences` stores the preferred plugin by manufacturer ID. Configure both under Settings → Capabilities.
+
 ### printer_models (BIZ-262)
 Core-owned registry: `id` (UUID4 string, **never changes**), `plugin_id, manufacturer_id, model_id` (the supplying plugin's own key, unique
 together), `manufacturer_name, display_name, bed_x_mm, bed_y_mm, toolheads` (refreshed from the manifest on every sync), `enabled` (the
 user's subset for setup/eligibility pickers; default true, preserved across upgrades), `declared` (False once no registered plugin
 declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed|plugin_disabled|model_removed`) is computed, not stored.
+`default_slicer_plugin_id` (v079) selects the model's slicing provider. Set it in Settings → Printer models after mapping at least one profile
+for that slicer. A null value follows the capability default. Fleet backups preserve the model's provider and each printer's preference.
 `printers.model_uuid` points at the row (v043 backfilled from the v042 triple; set on create/identity change). Synced by
 `services/printer_model_registry.sync_registry` at startup, on `GET /printer-models`, `GET /printers/types`, printer create and discover.
 
@@ -89,7 +97,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
 `default_process_profile: str?`, `single_colour_only: bool` (v057, BIZ-358) — the process preset a "Printer default" config slices with (PATCH validates it against the machine profile's compatible presets; null clears), and a flag that keeps multicolour configs (filament_map of 2+) off the printer via `filament_matching.evaluate_for_printer` (skip, never block; the unmatched sweep blocks if no printer can take it).
 `slice_overrides: JSON?` (v072) — this printer's slicer setting overrides `{curated key: value}` (e.g. `{"brim_type": "outer_only"}`); lowest precedence: the 3MF's own preset changes and the job's overrides win (sent as `SliceRequest.printer_overrides`); API always returns `{}` for none; `PATCH` replaces the whole dict, non-curated/blank keys dropped.
-`preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
+`preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with. Null inherits the model or capability default. A dormant selection stays stored and blocks its jobs (`preference_dormant`). Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`). The resolved provider ID is part of every slice-cache key.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
 `configured: bool` + `config_error: str?` (v067, BIZ-369 — set only by a passed connection test or the first live connection; only configured printers claim; a real `connection_config` change via PATCH clears it and re-tests; rows existing at v067 back-filled 1; the ORM default is False and create / fleet import store False then `printer_setup.schedule` the test),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
@@ -233,7 +241,9 @@ A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCA
 (SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
 process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
 `SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` + the slicing provider's plugin id
-(always hashed since v051/BIZ-291, which rewrote every saved key; the row does not store it — every version came from `laminus` before)
+(always hashed since v051/BIZ-291, which rewrote every saved key). The producing plugin ID is stored in `provider_plugin_id`
+since v078. The migration attributes a legacy version to Laminus when its existing key confirms that identity and leaves other
+legacy producer IDs unknown.
 → `cache_key` = sha256 of their canonical JSON (`services/slice_cache.cache_key` over `CacheKeyInputs`; filament colour is deliberately **not** in it,
 nor is the engine version). Non-key:
 `preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (the producing provider's engine

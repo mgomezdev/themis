@@ -30,7 +30,7 @@ const SUGGESTIONS = { provider_plugin_id: 'laminus', available: true, error: nul
 
 function open(routes: Record<string, unknown>) {
   const api = stubFetch({
-    'GET /api/v1/printers/orca-machine-catalog': CATALOG,
+    'GET /api/v1/printers/orca-machine-catalog?provider_plugin_id=laminus': CATALOG,
     'GET /api/v1/plugins': PLUGINS,
     'POST /api/v1/printers': { id: 1 },
     ...routes,

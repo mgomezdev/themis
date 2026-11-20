@@ -9,14 +9,15 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
+  printerSlicerPatch,
   type ApiPrinter,
-  type NozzleVariant,
+  type PrinterSlicerDraft,
   type PrinterType,
   type ConnectionField,
   type LoadedFilament,
   type DiscoveredPrinter,
 } from '../api/printers';
-import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
+import { PrinterSlicerSettings } from '../components/PrinterSlicerSettings';
 import { ModelSlicerProfiles } from '../components/ModelSlicerProfiles';
 import type { ModelSlicerProfile } from '../api/slicerProfiles';
 import { getPrinterProfiles } from '../api/queue';
@@ -137,7 +138,11 @@ export function EditForm({
     )
   );
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
-  const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
+  const [slicing, setSlicing] = useState<PrinterSlicerDraft>({
+    nozzle_variant: printer.nozzle_variant ?? null,
+    preferred_slicer_plugin_id: printer.preferred_slicer_plugin_id ?? null,
+    machine_profile_override: printer.machine_profile_override ?? null,
+  });
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
   const [sliceOverrides, setSliceOverrides] = useState<Record<string, string>>(printer.slice_overrides ?? {});
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
@@ -179,7 +184,7 @@ export function EditForm({
       await updatePrinter(printer.id, {
         name,
         connection_config: config,
-        nozzle_variant: nozzle,
+        ...printerSlicerPatch(slicing, printer),
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
         slice_overrides: sliceOverrides,
@@ -217,8 +222,7 @@ export function EditForm({
           </div>
         ))}
 
-        <NozzleVariantPicker modelUuid={printer.model_uuid} value={nozzle} onChange={setNozzle}
-                             resolvedProfile={printer.machine_profile} reason={printer.machine_profile_reason} />
+        <PrinterSlicerSettings printer={printer} value={slicing} onChange={setSlicing} />
 
         <div>
           <label className="label" htmlFor={`default-process-${printer.id}`}>Default process profile</label>

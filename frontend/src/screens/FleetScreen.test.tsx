@@ -852,7 +852,7 @@ describe('FleetScreen — edit printer nozzle variant', () => {
     const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING });
     const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
     await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(
-      ['Model default (0.4mm)', '0.4mm', '0.4mm high-flow', '0.6mm']));
+      ['Model default (0.4mm)', '0.4mm · ECC 0.4', '0.4mm high-flow · ECC 0.4 HF', '0.6mm · ECC 0.6']));
     expect(screen.getByText('ECC 0.4')).toBeInTheDocument();                 // what it slices with now
 
     fireEvent.change(select, { target: { value: '0.6|standard' } });

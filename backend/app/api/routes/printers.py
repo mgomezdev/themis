@@ -14,11 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
+from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
 from ...plugins import providers_of
 from ...services import catalog_service
+from ...services.print_artifacts import required_output
+from ...services.library_scanner import is_presliced_file
 from ...services.inventory import refs as inventory_refs
-from ...services.providers.slicing import Catalog, default_compatible_presets, get_slicing_provider
+from ...services.providers.slicing import Catalog, SlicingProvider, SlicingProviderError, default_compatible_presets, gcode_producer_for, get_slicing_provider, slicing_provider_for
+from ...services.providers.contract import ProviderError
+from ...services.slice_resolution import PrinterView, target_of
 from ...services.printer_client_factory import (
     client_class, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
@@ -37,6 +41,39 @@ async def _fetch_sidecar_catalog() -> Catalog | None:
         import logging
         logging.getLogger(__name__).warning("Could not get catalog: %s", e)
         return None
+
+
+async def _profile_catalog(provider_id: str | None) -> tuple[Catalog | None, SlicingProvider | None]:
+    """Use the selected plugin's own catalog for an explicit printer or model preference."""
+    if provider_id is None:
+        catalog = await _fetch_sidecar_catalog()
+        return catalog, get_slicing_provider() if catalog is not None else None
+    provider = slicing_provider_for(provider_id)
+    if provider is not None:
+        try:
+            return await asyncio.to_thread(provider.get_catalog), provider
+        except SlicingProviderError:
+            pass
+    return None, provider
+
+
+async def _compatible_profiles(printer: Printer, resolution: slicer_profiles.MachineProfileResolution) -> dict | None:
+    source = resolution.preferred_provider_id(printer) or resolution.conversion_default_id
+    catalog, adapter = await _profile_catalog(source)
+    if catalog is not None:
+        compatible = adapter.compatible_presets if adapter else default_compatible_presets
+        return {"print_profiles": sorted(p.name for p in compatible(catalog, resolution.profile, "process")),
+                "filament_profiles": sorted(p.name for p in compatible(catalog, resolution.profile, "filament"))}
+    producer = gcode_producer_for(resolution.provider_id)
+    if producer is None or adapter is not None:
+        return None
+    target = target_of(PrinterView.of(printer, resolution))
+    try:
+        processes, filaments = await asyncio.gather(asyncio.to_thread(producer.profiles, "process", target),
+                                                    asyncio.to_thread(producer.profiles, "filament", target))
+    except ProviderError:
+        return None
+    return {"print_profiles": sorted(p.name for p in processes), "filament_profiles": sorted(p.name for p in filaments)}
 
 
 # Collaborators the modules imported at the bottom of this file call as `_printers.<name>` rather than importing
@@ -178,15 +215,14 @@ async def _check_default_process(session: AsyncSession, printer: Printer, name: 
     """A default process profile must be one of the process presets compatible with the printer's machine profile (BIZ-358)."""
     if not name:
         return None
-    machine = await slicer_profiles.machine_profile_for(session, printer)
+    resolution = await slicer_profiles.resolve_for_printer(session, printer)
+    machine = resolution.profile
     if not machine:
         raise HTTPException(422, f"{printer.name} has no machine profile yet: map its model in Settings > Printer models first")
-    cat = await _fetch_sidecar_catalog()
-    if cat is None:
+    profiles = await _compatible_profiles(printer, resolution)
+    if profiles is None:
         raise HTTPException(422, "The slicer's profile catalog is unavailable, so the process profile can't be checked; try again later")
-    slicer = get_slicing_provider()
-    compat = slicer.compatible_presets if slicer else default_compatible_presets
-    if name not in {p.name for p in compat(cat, machine, "process")}:
+    if name not in profiles["print_profiles"]:
         raise HTTPException(422, f"Process profile {name!r} is not compatible with {machine!r}")
     return name
 
@@ -209,6 +245,10 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         # The machine profile this printer slices with right now (override, else model mapping + variant); null + reason when unmapped.
         "machine_profile": res.profile if res else None,
         "machine_profile_reason": res.reason if res else None,
+        "model_slicer_plugin_id": res.model_provider_id if res else None,
+        "brand_slicer_plugin_id": res.brand_provider_id if res else None,
+        "print_artifact_kind": required_output(p.printer_type),
+        "slicer_plugin_id": res.provider_id if res else None,
         "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
@@ -452,10 +492,10 @@ async def list_orca_printer_presets() -> list[str]:
 
 @router.get("/orca-machine-catalog", summary="OrcaSlicer machine catalog",
            dependencies=[Depends(require_scope("printers:read"))])
-async def orca_machine_catalog() -> list[dict]:
+async def orca_machine_catalog(provider_plugin_id: str | None = None) -> list[dict]:
     """Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,
     source, uuid}]. Sourced exclusively from the Orca sidecar."""
-    cat = await _fetch_sidecar_catalog()
+    cat, _ = await _profile_catalog(provider_plugin_id)
     if cat is None:
         return []
     return sorted(
@@ -469,7 +509,7 @@ async def orca_machine_catalog() -> list[dict]:
                 "uuid": m.ref,
             }
             for m in cat.machines
-            if m.name and m.raw.get("model") and m.raw.get("nozzle")
+            if m.name and (provider_plugin_id or (m.raw.get("model") and m.raw.get("nozzle")))
         ],
         key=lambda m: (m["vendor"], m["printer_model"], m["nozzle"], m["name"]),
     )
@@ -610,23 +650,22 @@ async def test_connection(body: TestConnectionRequest) -> dict:
 )
 async def get_profiles(
     printer_id: int,
+    file_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """OrcaSlicer print and filament profiles compatible with this printer's active machine preset."""
+    """Profiles for the selected converter and printer. A model file selects the applicable format rule."""
     printer = await _get_or_404(printer_id, session)
-    machine_name = await slicer_profiles.machine_profile_for(session, printer)
+    source = await session.get(UploadedFile, file_id) if file_id is not None else None
+    if file_id is not None and source is None:
+        raise HTTPException(404, "File not found")
+    if source is not None and is_presliced_file(source):
+        return {"print_profiles": [], "filament_profiles": []}
+    resolution = await slicer_profiles.resolve_for_printer(session, printer, source_filename=source.original_filename if source else None)
+    machine_name = resolution.profile
     if not machine_name:
         return {"print_profiles": [], "filament_profiles": []}
 
-    cat = await _fetch_sidecar_catalog()
-    if cat is None:
-        return {"print_profiles": [], "filament_profiles": []}
-
-    slicer = get_slicing_provider()   # may be None: the catalog is a cached copy, matching needs no live server
-    compat = slicer.compatible_presets if slicer else default_compatible_presets
-    processes = sorted(p.name for p in compat(cat, machine_name, "process"))
-    filaments = sorted(f.name for f in compat(cat, machine_name, "filament"))
-    return {"print_profiles": processes, "filament_profiles": filaments}
+    return await _compatible_profiles(printer, resolution) or {"print_profiles": [], "filament_profiles": []}
 
 
 @router.get(

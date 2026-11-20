@@ -16,7 +16,7 @@ from tests.services.test_slice_save import (  # noqa: F401 — `env` is a fixtur
 CACHED = b"; cached\n; filament used [g] = 3.0\n; estimated printing time (normal mode) = 10m 0s\nG28\n"
 INPUTS = slice_cache.CacheKeyInputs(
     source_content_hash="srchash", plate_number=1, machine_preset=MACHINE, process_preset="0.20mm Standard",
-    filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+    filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
 
 
 def _now() -> str:

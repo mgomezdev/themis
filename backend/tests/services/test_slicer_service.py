@@ -8,20 +8,19 @@ from unittest.mock import patch
 import pytest
 
 from app.services.providers.slicing import SlicingProviderError
-from app.services.providers.contract import CancelToken
+from app.services.providers.contract import ArtifactKind, CancelToken
 from app.services.slicer_service import SlicerService, SliceRequest, SliceCancelled, SliceError
 from tests.fake_providers import FakeSlicingProvider, make_catalog
 from tests.slicing_env import slicing_provider
 
 
-def _req(tmp_path, export_args=None, **kw):
+def _req(tmp_path, **kw):
     src = tmp_path / "model.3mf"
     src.write_bytes(b"dummy")
     return SliceRequest(
         job_id=1, source_3mf=str(src), plate_number=1,
         machine_preset="Elegoo Centauri Carbon", process_preset="0.20mm Standard",
         filament_presets=["Generic PLA"], filament_colours=["#FFFFFF"],
-        export_args=export_args or [],
         **kw,
     )
 
@@ -206,14 +205,14 @@ def test_default_returns_raw_gcode(tmp_path):
     assert spec.source_file == tmp_path / "model.3mf"
 
 
-def test_export_3mf_flag_forwarded(tmp_path):
+def test_archive_request_reaches_the_provider(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
 
     fake, use = _fake_provider()
     fake.artifact_name = "model.gcode.3mf"
     with use:
-        path = svc.slice(_req(tmp_path, export_args=["--export-3mf", "model.gcode.3mf"]))
+        path = svc.slice(_req(tmp_path, output_kind=ArtifactKind.GCODE_3MF))
 
     assert path.endswith("model.gcode.3mf")
     assert _slice_spec(fake).export_3mf is True
@@ -419,3 +418,6 @@ def test_unconfigured_message_names_the_provider_the_request_was_routed_to():
         with pytest.raises(SliceError, match="Laminus is not configured"):
             svc.slice(req)
     for_default.assert_called_once_with("laminus")
+    with patch("app.services.slicer_service.default_provider_id", return_value=None):
+        with pytest.raises(SliceError, match="No slicing provider is configured"):
+            svc.slice(req)

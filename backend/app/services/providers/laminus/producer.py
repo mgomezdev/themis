@@ -60,13 +60,13 @@ class LaminusGcodeProducer(GcodeProducer):
             return False
         from ...catalog_service import cached_catalog
 
-        catalog = cached_catalog()
+        catalog = cached_catalog(self._slicing)
         return catalog is None or target.machine_profile in catalog.names("machine")
 
     def profiles(self, kind: str, target: TargetPrinter) -> Sequence[Profile]:
         from ...catalog_service import cached_catalog
 
-        catalog = cached_catalog()
+        catalog = cached_catalog(self._slicing)
         if catalog is None or kind not in ("process", "filament"):
             return []
         if not target.machine_profile:

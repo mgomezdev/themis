@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from ..models import Printer
 from ..plugins import get_plugin
 from .slicer_profiles import MachineProfileResolution
+from .print_artifacts import SUFFIXES, model_input, required_output
 from .providers.contract import (
-    DEFAULT_HEALTH_TIMEOUT_S, Action, InputKind, Reason, Readiness, TargetPrinter, WorkItem, WorkOutcome, resolve_work,
+    DEFAULT_HEALTH_TIMEOUT_S, Action, ArtifactKind, Reason, Readiness, TargetPrinter, WorkItem, WorkOutcome, resolve_work,
 )
 from .providers.slicing import default_provider_id, enabled_provider_ids, gcode_producer_for
 
@@ -33,11 +34,15 @@ class PrinterView:
     # caller with a session; None = no mapping for its model/variant, which makes the provider ineligible (`profile_reason` says why).
     machine_profile: str | None = None
     profile_reason: str | None = None
+    output_kind: ArtifactKind = ArtifactKind.GCODE
+    resolved_provider_id: str | None = None
 
     @classmethod
     def of(cls, printer: Printer, resolution: MachineProfileResolution | None = None) -> "PrinterView":
-        return cls(printer.name, printer.preferred_slicer_plugin_id, float(printer.bed_x_mm), float(printer.bed_y_mm),
-                   printer.model_uuid, resolution.profile if resolution else None, resolution.reason if resolution else None)
+        preferred = resolution.preferred_provider_id(printer) if resolution else printer.preferred_slicer_plugin_id
+        return cls(printer.name, preferred, float(printer.bed_x_mm), float(printer.bed_y_mm),
+                   printer.model_uuid, resolution.profile if resolution else None, resolution.reason if resolution else None,
+                   required_output(printer.printer_type), resolution.provider_id if resolution else None)
 
 
 @dataclass(frozen=True)
@@ -62,10 +67,6 @@ def _label(plugin_id: str | None) -> str:
     return m.name if m else (plugin_id or "The slicing provider")
 
 
-def _input_kind(filename: str) -> InputKind:
-    return InputKind.STL if (filename or "").lower().endswith(".stl") else InputKind.MODEL_3MF
-
-
 def target_of(printer: "Printer | PrinterView") -> TargetPrinter:
     return TargetPrinter(bed_mm=(float(printer.bed_x_mm), float(printer.bed_y_mm), _BED_Z_MM), model_uuid=printer.model_uuid,
                          machine_profile=getattr(printer, "machine_profile", None))
@@ -86,44 +87,44 @@ async def resolve_slicing(printer: PrinterView, filename: str, *, timeout: float
     """Resolve the slicing provider for `filename` (an unsliced model) on `printer`. Never raises for an unusable provider.
     An enabled provider with no machine profile mapped for the printer's model/variant is INELIGIBLE (hard block, the user maps it)."""
     preferred = printer.preferred_slicer_plugin_id or None
-    default = default_provider_id()
+    default = getattr(printer, "resolved_provider_id", None) or default_provider_id()
     enabled = enabled_provider_ids()
-    producers = {pid: p for pid in enabled if (p := gcode_producer_for(pid)) is not None}   # unconfigured ones are absent
     chosen = preferred or default
 
-    if chosen in enabled and printer.machine_profile is None:    # BIZ-294: no machine profile for this model/variant
+    if preferred and preferred not in enabled:
+        return SliceDecision(WorkOutcome(Action.BLOCKED, preferred, Reason.PREFERENCE_DORMANT),
+                             f"{printer.name} is set to slice with {_label(preferred)}, which is disabled or removed — slicing paused")
+    if chosen and chosen not in enabled:
+        return SliceDecision(WorkOutcome(Action.BLOCKED, chosen, Reason.DEFAULT_UNAVAILABLE),
+                             f"The configured converter {_label(chosen)} is disabled or removed. Check Settings → Capabilities.")
+    if chosen not in enabled:
+        msg = ("No enabled slicing provider is configured as the default" if enabled else "No slicing provider is enabled")
+        return SliceDecision(WorkOutcome(Action.BLOCKED, reason=Reason.NO_PROVIDER), f"{msg} — slicing paused")
+    if printer.machine_profile is None:    # BIZ-294: no machine profile for this model/variant
         reason = Reason.PREFERENCE_INELIGIBLE if preferred else Reason.DEFAULT_INELIGIBLE
         return SliceDecision(WorkOutcome(Action.BLOCKED, chosen, reason),
                              f"{printer.profile_reason or 'no machine profile for ' + printer.name} — slicing paused", recoverable=False)
 
-    if chosen in enabled and chosen not in producers:    # enabled but no URL / invalid settings: down, not missing
+    producer = gcode_producer_for(chosen)
+    if producer is None:
         reason = Reason.PREFERENCE_UNAVAILABLE if preferred else Reason.DEFAULT_UNAVAILABLE
         return _unavailable(printer, WorkOutcome(Action.BLOCKED, chosen, reason), None)
 
-    statuses = {}
-    if chosen in producers:                              # probe only the provider this printer would use
-        statuses[chosen] = await asyncio.to_thread(producers[chosen].status, timeout)
-    outcome = resolve_work(WorkItem(_input_kind(filename)), target_of(printer), producers, statuses,
+    input_kind = model_input(filename)
+    output_kind = getattr(printer, "output_kind", ArtifactKind.GCODE)
+    if input_kind not in producer.accepted_inputs or output_kind not in producer.output_kinds:
+        reason = Reason.PREFERENCE_INELIGIBLE if preferred else Reason.DEFAULT_INELIGIBLE
+        return SliceDecision(WorkOutcome(Action.BLOCKED, chosen, reason),
+                             f"{_label(chosen)} can't convert this file to {SUFFIXES[output_kind]} for {printer.name}")
+    status = await asyncio.to_thread(producer.status, timeout)
+    outcome = resolve_work(WorkItem(input_kind, output_kind=output_kind), target_of(printer), {chosen: producer}, {chosen: status},
                            preferred=preferred, default=default)
     if outcome.action is Action.PRODUCE:
         return SliceDecision(outcome)
     r = outcome.reason
     if r in (Reason.PREFERENCE_UNAVAILABLE, Reason.DEFAULT_UNAVAILABLE):
-        st = statuses.get(outcome.provider_id)
-        return _unavailable(printer, outcome, st.state if st else None)
-    if r is Reason.PREFERENCE_DORMANT:
-        msg = f"{printer.name} is set to slice with {_label(outcome.provider_id)}, which is disabled or removed — slicing paused"
-    elif r in (Reason.PREFERENCE_INELIGIBLE, Reason.DEFAULT_INELIGIBLE):
-        label, p = _label(outcome.provider_id), producers.get(outcome.provider_id)
-        if p is not None and _input_kind(filename) in p.accepted_inputs and printer.machine_profile:
-            # The input is fine, so the provider refused the TARGET: for a mapped printer that is its machine profile (renamed or
-            # removed on the provider's side since it was mapped). Name it and the fix, as the slice-time "not found" error did.
-            msg = (f"{label} can't slice for {printer.name} with machine profile {printer.machine_profile!r} — Refresh the profile "
-                   f"sync, and re-map the printer model if that profile was renamed or removed — slicing paused")
-        else:
-            msg = f"{label} can't slice for {printer.name} — slicing paused"
-    elif not enabled:
-        msg = "No slicing provider is enabled — slicing paused"
-    else:
-        msg = "Several slicing providers are enabled and none is the default — slicing paused"
-    return SliceDecision(outcome, msg, recoverable=False)
+        return _unavailable(printer, outcome, status.state)
+    label = _label(chosen)
+    msg = (f"{label} can't slice for {printer.name} with machine profile {printer.machine_profile!r} — Refresh the profile "
+           f"sync, and re-map the printer model if that profile was renamed or removed — slicing paused")
+    return SliceDecision(outcome, msg)

@@ -1461,18 +1461,46 @@
         "summary": "OrcaSlicer machine catalog",
         "description": "Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,\nsource, uuid}]. Sourced exclusively from the Orca sidecar.",
         "operationId": "orca_machine_catalog_api_v1_printers_orca_machine_catalog_get",
+        "parameters": [
+          {
+            "name": "provider_plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Plugin Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
                   "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "title": "Response Orca Machine Catalog Api V1 Printers Orca Machine Catalog Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1587,7 +1615,7 @@
           "printers"
         ],
         "summary": "Get printer profiles",
-        "description": "OrcaSlicer print and filament profiles compatible with this printer's active machine preset.",
+        "description": "Profiles for the selected converter and printer. A model file selects the applicable format rule.",
         "operationId": "get_profiles_api_v1_printers__printer_id__profiles_get",
         "parameters": [
           {
@@ -1597,6 +1625,22 @@
             "schema": {
               "type": "integer",
               "title": "Printer Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "File Id"
             }
           }
         ],
@@ -3419,7 +3463,7 @@
         "tags": [
           "printers"
         ],
-        "summary": "Enable or disable a model for setup and eligibility pickers",
+        "summary": "Update model availability or its default slicer",
         "operationId": "patch_printer_model_api_v1_printer_models__model_uuid__patch",
         "parameters": [
           {
@@ -4536,7 +4580,7 @@
           "files"
         ],
         "summary": "List a model's cached sliced versions",
-        "description": "The cached slices of this model (BIZ-193), newest first, optionally for one `plate`; versions whose file is\nmissing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model\nchanged since), `stale` (`true`/`false`/`null` = unknown \u2014 presets or OrcaSlicer changed since, with\n`stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file).",
+        "description": "The cached slices of this model, newest first, optionally filtered by plate and producing plugin. Versions whose file is\nmissing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model\nchanged since), `stale` (`true`/`false`/`null` = unknown \u2014 presets or OrcaSlicer changed since, with\n`stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file).",
         "operationId": "list_sliced_versions_api_v1_files__file_id__sliced_versions_get",
         "parameters": [
           {
@@ -4562,6 +4606,22 @@
                 }
               ],
               "title": "Plate"
+            }
+          },
+          {
+            "name": "provider_plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Plugin Id"
             }
           }
         ],
@@ -9283,6 +9343,144 @@
         }
       }
     },
+    "/api/v1/settings/print-conversion": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "List print conversion defaults and available services",
+        "operationId": "get_print_conversion_api_v1_settings_print_conversion_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Print Conversion Api V1 Settings Print Conversion Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/print-conversion/routes/{input_kind}/{output_kind}": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the default service for a print format pair",
+        "operationId": "set_conversion_default_api_v1_settings_print_conversion_routes__input_kind___output_kind__put",
+        "parameters": [
+          {
+            "name": "input_kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/InputKind"
+            }
+          },
+          {
+            "name": "output_kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversionProviderChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Conversion Default Api V1 Settings Print Conversion Routes  Input Kind   Output Kind  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/print-conversion/brands/{manufacturer_id}": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the preferred print conversion service for a printer brand",
+        "operationId": "set_brand_converter_api_v1_settings_print_conversion_brands__manufacturer_id__put",
+        "parameters": [
+          {
+            "name": "manufacturer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Manufacturer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversionProviderChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Brand Converter Api V1 Settings Print Conversion Brands  Manufacturer Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/costs": {
       "get": {
         "tags": [
@@ -12398,6 +12596,15 @@
         "type": "object",
         "title": "ArchiveBody"
       },
+      "ArtifactKind": {
+        "type": "string",
+        "enum": [
+          "project_3mf",
+          "gcode",
+          "gcode_3mf"
+        ],
+        "title": "ArtifactKind"
+      },
       "BedTempBody": {
         "properties": {
           "celsius": {
@@ -12639,6 +12846,26 @@
           "choice"
         ],
         "title": "ConflictChoice"
+      },
+      "ConversionProviderChoice": {
+        "properties": {
+          "provider_plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Plugin Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider_plugin_id"
+        ],
+        "title": "ConversionProviderChoice"
       },
       "CostConfigModel": {
         "properties": {
@@ -13558,6 +13785,17 @@
         },
         "type": "object",
         "title": "HomeBody"
+      },
+      "InputKind": {
+        "type": "string",
+        "enum": [
+          "model_3mf",
+          "stl",
+          "gcode",
+          "gcode_3mf"
+        ],
+        "title": "InputKind",
+        "description": "What a provider may be handed. G-code kinds are listed for the resolver only; no provider accepts them."
       },
       "InventoryResolutionEntry": {
         "properties": {
@@ -14498,14 +14736,29 @@
       "ModelPatch": {
         "properties": {
           "enabled": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Enabled"
+          },
+          "default_slicer_plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Slicer Plugin Id"
           }
         },
         "type": "object",
-        "required": [
-          "enabled"
-        ],
         "title": "ModelPatch"
       },
       "ModelTargetInput": {

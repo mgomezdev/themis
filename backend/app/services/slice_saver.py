@@ -58,7 +58,8 @@ def default_display_name(source: UploadedFile, inputs: slice_cache.CacheKeyInput
 
 
 def inputs_from_dict(d: dict) -> slice_cache.CacheKeyInputs:
-    return slice_cache.CacheKeyInputs(**{**d, "filament_presets": tuple(d.get("filament_presets") or ())})
+    # The only producer of persisted slice inputs before the provider field was added was Laminus.
+    return slice_cache.CacheKeyInputs(**{"provider": "laminus", **d, "filament_presets": tuple(d.get("filament_presets") or ())})
 
 
 async def _find_duplicate(
@@ -168,7 +169,7 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
             return existing
         digest = published.sha256   # computed while the bytes streamed in: no second read
         est = await asyncio.to_thread(
-            _parse_estimates, library, dest_key, inputs.plate_number)
+            _parse_estimates, library, dest_key, inputs.plate_number, inputs.provider)
         grams, secs = est.grams, est.seconds
         rel = dest_key
         record = UploadedFile(
@@ -186,7 +187,7 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
             plate_number=inputs.plate_number, machine_preset=inputs.machine_preset,
             process_preset=inputs.process_preset, filament_presets=list(inputs.filament_presets),
             extra_config=inputs.extra_config, tool_index=inputs.tool_index, filament_map=inputs.filament_map,
-            artifact_kind=inputs.artifact_kind, cache_key=key,
+            artifact_kind=inputs.artifact_kind, cache_key=key, provider_plugin_id=inputs.provider,
             preset_content_hash=fingerprint.preset_content_hash, slicer_version=fingerprint.slicer_version,
             filament_type=filament_type, filament_color=filament_color,
             estimated_seconds=secs, filament_grams=grams, filament_breakdown=job.actual_filament_breakdown,
@@ -224,10 +225,10 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
             _cleanup(library, filecache, dest_key, file_id)
 
 
-def _parse_estimates(library: ArtifactStore, key: str, plate_number: int):
+def _parse_estimates(library: ArtifactStore, key: str, plate_number: int, provider_id: str):
     """Grams / seconds of a library artifact: the format provider reads a path, so the artifact is materialized."""
     with library.materialize(key) as local:
-        return get_format_provider().parse_estimates(str(local), plate_number)
+        return get_format_provider(provider_id).parse_estimates(str(local), plate_number)
 
 
 def _cleanup(library: ArtifactStore, filecache: ArtifactStore, dest_key: str | None, file_id: int | None) -> None:

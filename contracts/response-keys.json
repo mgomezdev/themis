@@ -50,6 +50,10 @@
     "nozzle_variant",
     "machine_profile",
     "machine_profile_reason",
+    "model_slicer_plugin_id",
+    "brand_slicer_plugin_id",
+    "print_artifact_kind",
+    "slicer_plugin_id",
     "model_label",
     "enabled",
     "queue_on",
@@ -426,7 +430,8 @@
     "stale",
     "stale_reasons",
     "printable_now",
-    "model_uuids"
+    "model_uuids",
+    "provider_plugin_id"
   ],
   "plugin_summary": [
     "id",

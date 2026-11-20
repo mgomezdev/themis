@@ -22,7 +22,7 @@ const version = (over: Record<string, unknown> = {}) => ({
   id: 5, file_id: 77, name: 'model - PETG - 0.20mm - ECC.gcode', kind: 'gcode', plate_number: 1,
   machine_preset: MACHINE, process_preset: PROFILE, filament_presets: ['Generic PETG'], filament_type: 'PETG',
   filament_color: '#112233', bed_type: null, overrides: {}, estimated_seconds: 3600, filament_grams: 12.5,
-  created_at: '2026-10-01T00:00:00Z', source_changed: false, stale: false, stale_reasons: [], printable_now: true, model_uuids: [MODEL],
+  created_at: '2026-10-01T00:00:00Z', source_changed: false, stale: false, stale_reasons: [], provider_plugin_id: 'laminus', printable_now: true, model_uuids: [MODEL],
   ...over,
 });
 
@@ -39,7 +39,7 @@ function open(versions: unknown[] = [], over: Record<string, unknown> = {}) {
     'GET /api/v1/files/42/embedded-settings': [],
     'GET /api/v1/files/42/sliced-versions?plate=1': versions,
     'GET /api/v1/files/77/plates': { filename: 'cached.gcode', plates: [plate(1)] },
-    'GET /api/v1/printers/1/profiles': { print_profiles: [PROFILE], filament_profiles: [] },
+    'GET /api/v1/printers/1/profiles?file_id=42': { print_profiles: [PROFILE], filament_profiles: [] },
     'POST /api/v1/jobs/check-overrides': { has_embedded_settings: false, has_findings: false, setting_changes: [], slot_warning: null },
     'POST /api/v1/jobs': { id: 1, status: 'queued' },
     ...over,

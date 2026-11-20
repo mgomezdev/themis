@@ -49,7 +49,7 @@ async def test_stl_is_a_model_input_too(world):
     a2 = FakeGcodeProducer("a", accepted=[c.InputKind.MODEL_3MF])      # a provider that takes only 3MF
     world(["a"], "a", {"a": a2})
     d = await sr.resolve_slicing(printer(), "part.stl")
-    assert d.outcome.reason is Reason.DEFAULT_INELIGIBLE and "can't slice for P1" in d.message and not d.recoverable
+    assert d.outcome.reason is Reason.DEFAULT_INELIGIBLE and "can't convert this file to .gcode for P1" in d.message and not d.recoverable
 
 
 async def test_preference_wins_over_the_default(world):
@@ -124,7 +124,7 @@ async def test_an_input_the_provider_never_takes_keeps_the_plain_ineligible_mess
     a = FakeGcodeProducer("a", accepted=[c.InputKind.MODEL_3MF])
     world(["a"], "a", {"a": a})
     d = await sr.resolve_slicing(printer(), "part.stl")
-    assert d.message == "A can't slice for P1 — slicing paused"
+    assert d.message == "A can't convert this file to .gcode for P1"
 
 
 async def test_no_provider_enabled(world):
@@ -137,7 +137,7 @@ async def test_no_provider_enabled(world):
 async def test_several_enabled_and_no_default_is_a_hard_block(world):
     world(["a", "b"], None, {"a": FakeGcodeProducer("a"), "b": FakeGcodeProducer("b")})
     d = await sr.resolve_slicing(printer(), "m.3mf")
-    assert d.blocked and not d.recoverable and "none is the default" in d.message
+    assert d.blocked and not d.recoverable and "No enabled slicing provider is configured as the default" in d.message
     assert (await sr.resolve_slicing(printer(preferred="b"), "m.3mf")).outcome.action is Action.PRODUCE   # a preference needs no default
 
 

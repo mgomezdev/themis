@@ -33,7 +33,7 @@ from ...services.library_store import (
     folder_key, get_filecache_store, get_library_store, is_reserved_name, join_key, key_name, move_unique, unique_key, with_local_path,
 )
 from ...services.queue_engine import queue_engine
-from ...services.providers.slicing import get_slicing_provider
+from ...services.providers.slicing import slicing_provider_for
 
 logger = logging.getLogger(__name__)
 
@@ -697,9 +697,10 @@ async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     dependencies=[Depends(require_scope("files:read"))],
 )
 async def list_sliced_versions(
-    file_id: int, plate: int | None = None, session: AsyncSession = Depends(get_session),
+    file_id: int, plate: int | None = None, provider_plugin_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    """The cached slices of this model (BIZ-193), newest first, optionally for one `plate`; versions whose file is
+    """The cached slices of this model, newest first, optionally filtered by plate and producing plugin. Versions whose file is
     missing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model
     changed since), `stale` (`true`/`false`/`null` = unknown — presets or OrcaSlicer changed since, with
     `stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file)."""
@@ -711,6 +712,8 @@ async def list_sliced_versions(
          .order_by(SlicedVersion.id.desc()))
     if plate is not None:
         q = q.where(SlicedVersion.plate_number == plate)
+    if provider_plugin_id is not None:
+        q = q.where(SlicedVersion.provider_plugin_id == provider_plugin_id)
     rows = (await session.execute(q)).all()
     printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
     profiles = await slicer_profiles.resolve_many(session, list(printers))
@@ -719,15 +722,17 @@ async def list_sliced_versions(
         models_by_profile.setdefault(m.machine_profile, [])
         if m.model_uuid not in models_by_profile[m.machine_profile]:
             models_by_profile[m.machine_profile].append(m.model_uuid)
-    slicing = get_slicing_provider()
-    fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
-    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), slicing)
-                                     for m, pr, fl in fkeys))
+    providers = {pid: slicing_provider_for(pid) for pid in {v.provider_plugin_id for v, _ in rows} if pid}
+    fkeys = list(dict.fromkeys((v.provider_plugin_id, v.machine_preset, v.process_preset, tuple(v.filament_presets or []))
+                              for v, _ in rows if providers.get(v.provider_plugin_id) is not None))
+    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), providers[pid],
+                                                       provider_id=pid) for pid, m, pr, fl in fkeys))
     fingerprints = dict(zip(fkeys, results))
+    unknown = slice_cache.SlicerFingerprint(None, None)
     out = []
     for v, f in rows:
-        fkey = (v.machine_preset, v.process_preset, tuple(v.filament_presets or []))
-        stale, reasons = slice_cache.staleness(v.preset_content_hash, v.slicer_version, fingerprints[fkey])
+        fkey = (v.provider_plugin_id, v.machine_preset, v.process_preset, tuple(v.filament_presets or []))
+        stale, reasons = slice_cache.staleness(v.preset_content_hash, v.slicer_version, fingerprints.get(fkey, unknown))
         overrides = {k: val for k, val in (v.extra_config or {}).items() if k != "curr_bed_type"}
         out.append({
             "id": v.id, "file_id": f.id, "name": f.original_filename, "kind": file_kind(f.original_filename),
@@ -735,7 +740,7 @@ async def list_sliced_versions(
             "filament_presets": v.filament_presets, "filament_type": v.filament_type,
             "filament_color": v.filament_color, "bed_type": (v.extra_config or {}).get("curr_bed_type"),
             "overrides": overrides, "estimated_seconds": v.estimated_seconds, "filament_grams": v.filament_grams,
-            "created_at": v.created_at,
+            "created_at": v.created_at, "provider_plugin_id": v.provider_plugin_id,
             "source_changed": bool(model.content_hash) and model.content_hash != v.source_content_hash,
             "stale": stale, "stale_reasons": reasons,
             "model_uuids": models_by_profile.get(v.machine_preset, []),

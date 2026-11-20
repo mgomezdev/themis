@@ -341,6 +341,7 @@ class CompleteManuallyBody(BaseModel):
 
 def _build_slice_request(
     job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile, machine_preset: str | None,
+    provider_id: str | None = None,
 ) -> SliceRequest:
     """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
     matched `config` - shared by verify-slice and complete-manually, both of which
@@ -351,7 +352,7 @@ def _build_slice_request(
     params = _slice_params(job, config, printer, uploaded_file, machine_preset, fit.plan)
     client = _jobs.printer_manager._clients.get(printer.id)
     try:
-        req, _ = build_slice_request(job.id, printer.id, job.plate_number, params, client)
+        req, _ = build_slice_request(job.id, printer.id, job.plate_number, params, client, provider_id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return req
@@ -395,11 +396,11 @@ async def verify_slice(
     if is_presliced_file(uploaded_file):
         raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
-    resolution = await slicer_profiles.resolve_for_printer(session, printer)
+    resolution = await slicer_profiles.resolve_for_printer(session, printer, source_filename=uploaded_file.original_filename)
     if not resolution.profile:
         return {"ok": False, "error": resolution.reason or "Printer has no slicer machine profile"}
 
-    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile, resolution.provider_id)
 
     # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
@@ -473,7 +474,7 @@ async def complete_job_manually(
     if is_presliced_file(uploaded_file):
         raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
-    resolution = await slicer_profiles.resolve_for_printer(session, printer)
+    resolution = await slicer_profiles.resolve_for_printer(session, printer, source_filename=uploaded_file.original_filename)
     if not resolution.profile:
         raise HTTPException(422, resolution.reason or "Printer has no slicer machine profile")
 
@@ -485,13 +486,13 @@ async def complete_job_manually(
         raise HTTPException(409, f"Job {job_id} is already being manually completed")
     _jobs._manual_complete_in_flight.add(job_id)
 
-    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile, resolution.provider_id)
     output_dir = _jobs.queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
     try:
         gcode_path = await _jobs.queue_engine.run_verify_slice(req, output_dir)
         # Parse before the `finally` cleanup below removes output_dir - the gcode
         # file must be read while it still exists.
-        est = _jobs.get_format_provider().parse_estimates(gcode_path)
+        est = _jobs.get_format_provider(req.provider_id).parse_estimates(gcode_path)
         grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
     except SliceError as exc:
         raise HTTPException(422, f"Slicing failed: {exc}")

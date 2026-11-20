@@ -128,6 +128,7 @@ export function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers,
                       onChange={patch => onSetPerPrinter(pid, patch)}
                       modelFilaments={isModelKey(pid) ? undefined : modelFilaments}
                       gcode={gcode}
+                      fileId={plate.fileId}
                     />
                   );
                 })}

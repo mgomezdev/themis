@@ -357,7 +357,8 @@ class FakeGcodeProducer(_c.GcodeProducer):
         if request.input_kind not in self.accepted_inputs:
             raise _c.ProviderError(_c.ErrorCode.UNSUPPORTED_INPUT)
         self.calls.append(request)
-        out = output_dir / "out.gcode"
+        suffix = ".gcode.3mf" if request.want is _c.ArtifactKind.GCODE_3MF else ".gcode"
+        out = output_dir / f"out{suffix}"
         out.write_text("; fake\n")
         return _c.Artifact(out, request.want, self.identity)
 

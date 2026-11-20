@@ -23,7 +23,6 @@ from ..artifact_store import ArtifactError
 from ..library_scanner import (
     fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
-from ..providers.slicing import effective_provider_id
 from ..slice_resolution import PrinterView
 from ..providers.contract import CancelToken
 from ..slicer_service import SliceCancelled, SliceError, SliceRequest
@@ -43,7 +42,10 @@ class SlicingMixin:
         Only asked while Laminus is down, so staleness can't be checked (unknown counts as usable, as at dispatch).
         Never raises: any doubt means no version, and the job waits for Laminus as before."""
         try:
-            machine_preset = await slicer_profiles.machine_profile_for(session, printer)
+            resolution = await slicer_profiles.resolve_for_printer(
+                session, printer, provider_id if provider_id is not None else ...,
+                source_filename=source_file.original_filename if source_file else None)
+            machine_preset = resolution.profile
             if source_file is None or not machine_preset:
                 return None
             if await refresh_content_hash(source_file, _qe.get_library_store()):   # the key hashes the model's bytes
@@ -67,7 +69,7 @@ class SlicingMixin:
             use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
             current = await asyncio.to_thread(
                 slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-                list(inputs.filament_presets), _qe.slicing_provider_for(inputs.provider))
+                list(inputs.filament_presets), _qe.slicing_provider_for(inputs.provider), provider_id=inputs.provider)
             stale, _ = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
             if stale and use_latest:
                 return None
@@ -131,13 +133,14 @@ class SlicingMixin:
                 ams_tray_id, ams_error = None, str(exc)
             source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
-            resolution = (await slicer_profiles.resolve_for_printer(session, printer, provider_id or effective_provider_id(
-                printer.preferred_slicer_plugin_id))) if printer else None
+            is_gcode = is_presliced_file(uploaded_file)
+            resolution = (await slicer_profiles.resolve_for_printer(
+                session, printer, provider_id if provider_id is not None else ..., source_filename=original_filename)
+            ) if printer and not is_gcode else None
             machine_preset = resolution.profile if resolution else None
             printer_view = PrinterView.of(printer, resolution) if printer else None
             params = _qe._slice_params(job, config, printer, uploaded_file, machine_preset, plan)
             cfg_tool_index = params["tool_index"]
-            is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
             if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
                 # The slicing cache keys on the model's bytes: never trust an index entry the file has outgrown.
@@ -178,7 +181,7 @@ class SlicingMixin:
                 return
 
             try:
-                req, cfg_filament_map = self._slice_request(job_id, printer_id, plate_number, params, provider_id)
+                req, cfg_filament_map = self._slice_request(job_id, printer_id, plate_number, params, resolution.provider_id)
             except ValueError as exc:   # a catalog filament in the map isn't loaded
                 await self._handle_slice_failure(job_id, printer_id, f"printer {printer_id}: {exc}")
                 return
@@ -254,7 +257,7 @@ class SlicingMixin:
                 except OSError:
                     pass
                 return
-            est = _qe.get_format_provider().parse_estimates(gcode_path, plate_number)
+            est = _qe.get_format_provider(req.provider_id if not is_gcode else None).parse_estimates(gcode_path, plate_number)
             grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
@@ -348,7 +351,7 @@ class SlicingMixin:
         version, cached_file = found
         current = await asyncio.to_thread(
             slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), _qe.slicing_provider_for(inputs.provider))
+            list(inputs.filament_presets), _qe.slicing_provider_for(inputs.provider), provider_id=inputs.provider)
         stale, reasons = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
         policy = slice_cache.policy_name(use_latest)
         detail = {"sliced_version_id": version.id, "cached_file_id": cached_file.id,

@@ -59,6 +59,7 @@ async def test_a_printers_preferred_provider_does_the_slice_and_keys_the_cache(s
         from app.models import SlicedVersion
         (v,) = (await s.execute(select(SlicedVersion))).scalars().all()
     assert v.cache_key == slice_cache.cache_key(slice_cache.CacheKeyInputs(**{**INPUTS.__dict__, "provider": "b"}))
+    assert v.provider_plugin_id == "b"
 
 
 @pytest.mark.asyncio

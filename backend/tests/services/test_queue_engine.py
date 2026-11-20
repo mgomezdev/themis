@@ -438,7 +438,6 @@ def _make_mock_printer_manager_with_offline(ready_ids: list[int], offline_ids: l
     mock_client = MagicMock()
     mock_client.file_upload_supported = False
     mock_client.start_print.return_value = True
-    mock_client.orca_export_args.return_value = []
     mgr.get_client.return_value = mock_client
     return mgr
 
@@ -858,6 +857,7 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
         job.estimate_token = 1
         printer = await session.get(Printer, printer_id)
         printer.machine_profile_override = "Test Machine"
+        printer.preferred_slicer_plugin_id = "another-slicer"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -876,8 +876,10 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
     fake = FakeFormatProvider()
     fake.estimate = PlateEstimate(77.5, 4242, (77.5,))
     with patch.object(slicer, "slice", return_value=artifact), \
-         patch("app.services.queue_engine.get_format_provider", return_value=fake):
+         patch("app.services.queue_engine.get_format_provider", return_value=fake) as get_format_provider:
         await engine.run_estimate(job_id)
+        assert slicer.slice.call_args.args[0].provider_id == "another-slicer"
+    get_format_provider.assert_called_once_with("another-slicer")
 
     async with db() as session:
         job = await session.get(Job, job_id)

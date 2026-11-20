@@ -178,12 +178,12 @@ def test_set_bed_temp_default_returns_false():
     assert _Dummy().set_bed_temp(60) is False
 
 
-def test_orca_export_args_default_is_raw_gcode():
+def test_default_artifact_is_raw_gcode():
     # Default printer (Klipper/Centauri) reports no extra args -> raw gcode output.
-    assert _Dummy().orca_export_args("mymodel_p1_j7") == []
+    assert _Dummy.print_artifact_kind == "gcode"
 
 
-def test_bambu_orca_export_args_names_3mf_after_job():
+def test_bambu_declares_gcode_archive():
     from app.plugins.bambu.client import BambuMQTTClient
     client = BambuMQTTClient.__new__(BambuMQTTClient)  # method is pure; skip __init__
-    assert client.orca_export_args("mymodel_p1_j7") == ["--export-3mf", "mymodel_p1_j7.gcode.3mf"]
+    assert client.print_artifact_kind == "gcode_3mf"

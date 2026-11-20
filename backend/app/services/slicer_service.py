@@ -9,16 +9,14 @@ from pathlib import Path
 from ..config import get_data_dir
 from .artifact_store import ArtifactError, ArtifactNotFound
 from .library_store import get_library_store
+from .print_artifacts import SUFFIXES, model_input
 from .providers.contract import (
-    ArtifactKind, CancelToken, ErrorCode, FilamentChoice, InputKind, ProduceRequest, ProviderError, SliceSettings, TargetPrinter,
+    ArtifactKind, CancelToken, ErrorCode, FilamentChoice, ProduceRequest, ProviderError, SliceSettings, TargetPrinter,
 )
 from .providers.slicing import SlicingProvider, default_provider_id, gcode_producer_for
 from .three_mf_parser import plate_thumbnail_bytes
 
 logger = logging.getLogger(__name__)
-
-_EXPORT_3MF = "--export-3mf"
-
 
 class SliceError(Exception):
     pass
@@ -32,14 +30,6 @@ class SliceCancelled(SliceError):
     """The slice was cancelled (job cancelled / printer stopped) while it ran. Not a failure: never marks the printer config."""
 
 
-def _export_3mf_name(export_args: list[str]) -> str | None:
-    """Return the --export-3mf filename from export_args, or None for raw gcode."""
-    try:
-        return export_args[export_args.index(_EXPORT_3MF) + 1]
-    except (ValueError, IndexError):
-        return None
-
-
 DEFAULT_BED_MM = (256.0, 256.0, 250.0)   # the printer row's default bed; produce() does not place by bed
 
 
@@ -48,11 +38,8 @@ class SliceRequest:
     """What a single (job, printer) slice needs.
 
     ``machine_preset`` is the printer's resolved machine profile (model mapping + nozzle variant, BIZ-294);
-    ``process_preset``/``filament_presets`` are OrcaSlicer preset names resolved
-    by the Orca sidecar catalog. ``export_args`` are the printer-specific output
-    args: ``[]`` yields raw gcode, ``["--export-3mf", "<name>.gcode.3mf"]`` yields
-    the archive. ``extra_config`` carries runtime overrides (bed type, job-level
-    setting overrides) merged by the sidecar after profile resolution.
+    ``process_preset`` and ``filament_presets`` are names understood by the selected provider.
+    ``output_kind`` comes from the printer's declared file requirements.
 
     The source model is either a local path (``source_3mf``) or, preferably, a library
     artifact key (``source_key``): ``SlicerService.slice`` then materializes that artifact
@@ -65,7 +52,6 @@ class SliceRequest:
     process_preset: str
     filament_presets: list[str]
     filament_colours: list[str] = field(default_factory=list)
-    export_args: list[str] = field(default_factory=list)
     extra_config: dict = field(default_factory=dict)
     source_key: "str | None" = None
     # The `gcode.produce` plugin to slice with (BIZ-291: the one the queue resolved for this printer). None = the capability default.
@@ -78,6 +64,9 @@ class SliceRequest:
     # The printer's own curated overrides (lowest precedence; the provider puts the project file's changes and then
     # `extra_config`'s job overrides over them).
     printer_overrides: dict = field(default_factory=dict)
+    output_kind: ArtifactKind = ArtifactKind.GCODE
+    artifact_basename: str | None = None
+    model_uuid: str | None = None
 
 
 def slice_side_mapping(client, tool_index, filament_map) -> "tuple[int | None, list | None]":
@@ -101,11 +90,11 @@ def resolve_preset_uuids(
     # Prefer the Themis-side catalog cache (populated at boot) over a fresh
     # sidecar call. Falls back to a direct fetch only if not yet warmed.
     from . import catalog_service
-    catalog = catalog_service.cached_catalog()
+    catalog = catalog_service.cached_catalog(provider)
     if catalog is None:
         try:
             catalog = provider.get_catalog()
-            catalog_service.remember_catalog(catalog)
+            catalog_service.remember_catalog(catalog, provider)
         except Exception as exc:
             logger.warning("Could not fetch sidecar catalog: %s", exc)
             raise ProfileCatalogUnavailable(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
@@ -144,10 +133,6 @@ def resolve_preset_uuids(
     return machine_uuid, process_uuid, filament_uuids
 
 
-def _input_kind(path: Path) -> InputKind:
-    return InputKind.STL if path.suffix.lower() == ".stl" else InputKind.MODEL_3MF
-
-
 def _settings_of(req: SliceRequest) -> SliceSettings:
     """The neutral settings for `req`: the plate type and the curated overrides travel separately (the provider maps both)."""
     extra = dict(req.extra_config or {})
@@ -179,11 +164,15 @@ class SlicerService:
         production gcode. The directory is created if it does not exist.
         """
         pid = req.provider_id or default_provider_id()
-        producer = gcode_producer_for(pid) if pid else None
+        if pid is None:
+            raise SliceError("No slicing provider is configured")
+        producer = gcode_producer_for(pid)
         if producer is None:
             from ..plugins import get_plugin
-            plugin = get_plugin(req.provider_id) if req.provider_id else None
-            label = plugin.name if plugin else "Laminus"
+            plugin = get_plugin(pid)
+            if plugin is None:
+                raise SliceError(f"Slicing provider {pid} is unavailable")
+            label = plugin.name
             raise SliceError(f"{label} is not configured — set its URL in Settings -> {label}; it is required for slicing")
 
         if req.source_key is not None:
@@ -195,7 +184,7 @@ class SlicerService:
                     raise SliceError(f"the source model {req.source_key!r} is missing from the library") from exc
                 except ArtifactError as exc:
                     raise SliceError(f"could not read the source model {req.source_key!r}: {exc}") from exc
-                return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local)), output_dir, cancel)
+                return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local), provider_id=pid), output_dir, cancel)
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -203,20 +192,28 @@ class SlicerService:
             stale.unlink(missing_ok=True)
 
         source = Path(req.source_3mf)
-        export_3mf = _export_3mf_name(req.export_args) is not None
+        kind = req.output_kind
         request = ProduceRequest(
-            source=source, input_kind=_input_kind(source), plate=req.plate_number,
-            target=TargetPrinter(req.bed_mm, machine_profile=req.machine_preset or None),
-            settings=_settings_of(req), want=ArtifactKind.GCODE_3MF if export_3mf else ArtifactKind.GCODE,
+            source=source, input_kind=model_input(source.name), plate=req.plate_number,
+            target=TargetPrinter(req.bed_mm, model_uuid=req.model_uuid, machine_profile=req.machine_preset or None),
+            settings=_settings_of(req), want=kind,
         )
+        if request.input_kind not in producer.accepted_inputs or kind not in producer.output_kinds:
+            raise SliceError(f"{pid} cannot convert {request.input_kind.value} to {SUFFIXES[kind]}")
         try:
-            result = str(producer.produce(request, out_dir, cancel=cancel).path)
+            artifact = producer.produce(request, out_dir, cancel=cancel)
         except ProviderError as e:
             if e.code is ErrorCode.CANCELLED:
                 raise SliceCancelled(e.message or "the slice was cancelled") from e
             raise SliceError(e.message or str(e)) from e
 
-        if not export_3mf and source.suffix.lower() == ".3mf":
+        suffix = SUFFIXES[kind]
+        if artifact.kind != kind or not artifact.path.name.lower().endswith(suffix):
+            raise SliceError(f"{pid} did not return the requested {suffix} artifact")
+        result = str(artifact.path)
+        if req.artifact_basename and kind is ArtifactKind.GCODE_3MF:
+            result = str(artifact.path.rename(out_dir / f"{req.artifact_basename}{suffix}"))
+        if kind is ArtifactKind.GCODE and source.suffix.lower() == ".3mf":
             self._inject_thumbnail(result, req.source_3mf, req.plate_number)
         return result
 

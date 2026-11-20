@@ -214,7 +214,9 @@ async def _check_version_printers(
         return
     for cfg in configs:
         printer = await session.get(Printer, cfg.printer_id)
-        if printer is not None and await slicer_profiles.machine_profile_for(session, printer) != version.machine_preset:
+        if printer is not None and (await slicer_profiles.resolve_for_printer(
+            session, printer, version.provider_plugin_id or ...
+        )).profile != version.machine_preset:
             raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
                                      "sliced for that printer model")
     for t in targets:

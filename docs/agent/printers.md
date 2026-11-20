@@ -15,7 +15,7 @@ The vendor-abstraction is the most-extended part of the codebase. Adding a print
 `serial_number`, `access_code`; `connects=False` marks a per-print option (Bambu `use_ams/bed_leveling/flow_cali/timelapse`,
 Elegoo `bed_type/bed_leveling/timelapse`, Moonraker `toolheads`) whose edit never voids setup; `required` fields missing from a saved config keep the printer unconfigured, no client built — BIZ-369), `get_capabilities()` (`PrinterCapabilities` flags drive UI controls),
 `is_idle`/`is_printing` (props), `file_upload_supported`, `upload_file(data, filename)`,
-`orca_export_args(file_base)` (slicing artifact — `[]` = raw `.gcode`; Bambu = `["--export-3mf", f"{base}.gcode.3mf"]`),
+`print_artifact_kind` (`gcode` or `gcode_3mf`, the driver’s required print file),
 `raw_gcode_supported` / `sliced_archive_supported` (which pre-sliced library files the vendor prints as-is — `.gcode` /
 `.gcode.3mf`; Bambu = False / True, others True / False),
 `get_loaded_filaments()` (AMS), `camera_rtsp_url`/`camera_mjpeg_url`, `home`/`jog_z`/`set_bed_temp`/`list_files`/`delete_file`/`download_file` (capabilities `file_browser`/`file_delete`/`file_download`; Bambu = FTPS `LIST`/`DELE`/`RETR` over root + `/cache`, Snapmaker = Moonraker `/server/files/directory?extended=true` + `/server/files/gcodes/<path>` with inline metadata, Elegoo = SDCP list + delete only; ids are vendor paths — `PrinterFile.id` — handed back verbatim; verified against virtual printers in CI and real ones via `backend/protocol_verification`)/`jog`/`home_axes`/`set_nozzle_temp`/`set_chamber_temp` (console capabilities `axis_jog`/`home_axes`/`nozzle_temp`/`chamber_temp`/`direct_upload`; Bambu + Snapmaker via G-code, Elegoo only `direct_upload` until its SDCP axis/setpoint commands are verified on hardware)/
@@ -225,7 +225,7 @@ Optional `api_key` → `X-Api-Key` header on the WS handshake + every httpx call
 printer). `connection_fields` = `ip_address, port (7125), api_key`. Reconnect: bg-thread `run_forever`
 loop + `check_staleness` closes the WS to force reconnect on silence. RPC ids via `itertools.count`
 (atomic — `request_status_update` is called from the asyncio thread). **Slicing**: default
-`orca_export_args` (`[]` = raw `.gcode`; Klipper ingests plain gcode). **State** map (`_NORM_STATE`):
+`print_artifact_kind = "gcode"`. **State** map (`_NORM_STATE`):
 `standby→IDLE, printing→RUNNING, paused→PAUSE, complete→FINISH, cancelled→FAILED, error→FAILED` (app
 vocab is IDLE/RUNNING/PAUSE/FINISH/FAILED only). **Filaments**: 4 **manual** slots (slot 0-3 ↔
 extruder0-3); `get_loaded_filaments` is unused — slots are user-set in the DB `loaded_filaments`, no
