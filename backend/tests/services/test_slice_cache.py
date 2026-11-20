@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services import slice_cache as sc
+from app.services.providers.contract import ArtifactKind
 from app.services.slicer_service import SliceRequest
 from tests.fake_providers import FakeSlicingProvider
 
@@ -14,7 +15,7 @@ def _req(**kw) -> SliceRequest:
     base = dict(
         job_id=1, source_3mf="/lib/m.3mf", plate_number=2, machine_preset="Bambu Lab P1S 0.4",
         process_preset="0.20mm Standard @BBL P1S", filament_presets=["Bambu PETG Basic @BBL P1S"],
-        filament_colours=["#FF0000"], export_args=["--export-3mf", "m_p2_j1.gcode.3mf"],
+        filament_colours=["#FF0000"], output_kind=ArtifactKind.GCODE_3MF,
         extra_config={"curr_bed_type": "Textured PEI Plate", "sparse_infill_density": "15%"},
     )
     base.update(kw)
@@ -39,7 +40,7 @@ def test_same_inputs_give_the_same_key_regardless_of_dict_order():
     {"plate_number": 1},
     {"extra_config": {"curr_bed_type": "Textured PEI Plate", "sparse_infill_density": "20%"}},   # override
     {"extra_config": {"curr_bed_type": "Cool Plate", "sparse_infill_density": "15%"}},           # bed type
-    {"export_args": []},                                                                        # raw gcode vs archive
+    {"output_kind": ArtifactKind.GCODE},                                                                        # raw gcode vs archive
     {"filament_presets": ["Bambu PETG Basic @BBL P1S", "Bambu PLA Basic @BBL P1S"]},            # extra filament
 ])
 def test_each_output_changing_input_changes_the_key(change):
@@ -57,9 +58,9 @@ def test_filament_colour_and_job_id_do_not_change_the_key():
     assert _key(_req(job_id=99, source_3mf="/elsewhere.3mf")) == _key()
 
 
-def test_artifact_kind_follows_the_export_args():
+def test_artifact_kind_follows_the_requested_output():
     assert sc.key_inputs(_req(), "h", None, None).artifact_kind == "gcode_3mf"
-    assert sc.key_inputs(_req(export_args=[]), "h", None, None).artifact_kind == "gcode"
+    assert sc.key_inputs(_req(output_kind=ArtifactKind.GCODE), "h", None, None).artifact_kind == "gcode"
 
 
 def test_key_fields_hash_the_bulky_inputs():
@@ -205,7 +206,7 @@ def test_an_unreachable_sidecar_is_remembered_briefly_not_for_the_full_minute():
     with patch("app.services.slice_cache.current_fingerprint", return_value=FP(None, None)) as fp, \
          patch("time.monotonic", side_effect=[100.0, 105.0, 111.0]):
         for _ in range(3):
-            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"))
+            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"), provider_id="fake")
     assert fp.call_count == 2   # cached at +5s, refetched at +11s
 
 
@@ -213,7 +214,7 @@ def test_a_good_fingerprint_is_remembered_for_a_minute():
     with patch("app.services.slice_cache.current_fingerprint", return_value=FP("h", "2.3.1")) as fp, \
          patch("time.monotonic", side_effect=[100.0, 150.0, 161.0]):
         for _ in range(3):
-            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"))
+            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"), provider_id="fake")
     assert fp.call_count == 2
 
 
@@ -223,7 +224,7 @@ def test_the_fingerprint_memo_is_keyed_per_provider_identity():
         a2 = FakeSlicingProvider(identity="fake://a")    # same identity, different instance: shares the memo
         b = FakeSlicingProvider(identity="fake://b")
         for provider in (a1, a2, b, None):
-            sc.cached_fingerprint("M", "P", ["F"], provider)
+            sc.cached_fingerprint("M", "P", ["F"], provider, provider_id="fake")
     assert fp.call_count == 3
 
 
@@ -231,7 +232,7 @@ def test_the_fingerprint_memo_is_keyed_per_provider_identity():
 
 def _inputs(**over):
     base = dict(source_content_hash="h", plate_number=1, machine_preset="M", process_preset="P", filament_presets=("F",),
-                extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+                extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
     return sc.CacheKeyInputs(**{**base, **over})
 
 
@@ -252,7 +253,7 @@ def test_the_provider_is_always_part_of_the_key_even_the_default():
 
 def test_key_inputs_takes_the_provider_from_the_request_then_the_argument_then_the_default(monkeypatch):
     req = _req()
-    monkeypatch.setattr(sc, "slicing_provider_name", lambda: "the_default")
+    monkeypatch.setattr(sc, "default_provider_id", lambda: "the_default")
     assert sc.key_inputs(req, "h", None, None).provider == "the_default"
     req.provider_id = "from_request"
     assert sc.key_inputs(req, "h", None, None).provider == "from_request"

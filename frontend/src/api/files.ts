@@ -90,6 +90,7 @@ export const rescanLibrary = () =>
     '/api/v1/files/rescan', { method: 'POST' });
 /** A cached sliced version of a model (BIZ-193): what it was sliced with, and whether it's still a good match. */
 export interface SlicedVersion {
+  provider_plugin_id: string | null;
   id: number;
   file_id: number;
   name: string;

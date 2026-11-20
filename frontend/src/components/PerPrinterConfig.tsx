@@ -48,18 +48,19 @@ const entryAsk = (e: FilamentMapEntry): FilamentAsk => ({
 
 const UNCHOSEN = '__unchosen__';
 
-function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
+function usePrinterProfiles(printerId: number | null, fileId?: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
   const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
     printProfiles: [], filamentProfiles: [],
   });
   useEffect(() => {
     if (printerId == null) return;
     let alive = true;
-    getPrinterProfiles(printerId)
+    setData({ printProfiles: [], filamentProfiles: [] });
+    getPrinterProfiles(printerId, fileId)
       .then(p => { if (alive) setData({ printProfiles: p.print_profiles, filamentProfiles: p.filament_profiles }); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [printerId]);
+  }, [printerId, fileId]);
   return data;
 }
 
@@ -78,7 +79,7 @@ function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots:
   );
 }
 
-export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments, gcode, unmatchedFilaments = [] }: {
+export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments, gcode, fileId, unmatchedFilaments = [] }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
@@ -86,11 +87,12 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   modelFilaments?: ModelFilament[];
   /** Pre-sliced .gcode job: there is no slicing, so no print profile to choose. */
   gcode?: boolean;
+  fileId?: number | null;
   unmatchedFilaments?: number[];
 }) {
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
-  const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
+  const { printProfiles, filamentProfiles } = usePrinterProfiles(gcode ? null : pid, fileId);
   const inventory = useInventory();
   const catalogActive = !!inventory.plugin;          // "a material catalog is available" (only to fill the tuple from)
   const materials = useMaterials(catalogActive);

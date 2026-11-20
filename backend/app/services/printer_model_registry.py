@@ -105,7 +105,8 @@ async def list_models(session: AsyncSession, *, enabled: bool | None = None, plu
 def model_view(r: PrinterModelRecord, reason: str | None, printer_count: int = 0) -> dict:
     return {"id": r.id, "plugin_id": r.plugin_id, "manufacturer_id": r.manufacturer_id, "manufacturer_name": r.manufacturer_name,
             "model_id": r.model_id, "display_name": r.display_name, "bed_mm": [r.bed_x_mm, r.bed_y_mm], "toolheads": r.toolheads,
-            "enabled": r.enabled, "dormant": reason is not None, "dormant_reason": reason, "printer_count": printer_count}
+            "enabled": r.enabled, "dormant": reason is not None, "dormant_reason": reason, "printer_count": printer_count,
+            "default_slicer_plugin_id": r.default_slicer_plugin_id}
 
 
 async def set_enabled(session: AsyncSession, model_uuid: str, enabled: bool) -> PrinterModelRecord | None:

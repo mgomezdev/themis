@@ -22,7 +22,7 @@ const VERSIONS = [{
   id: 7, file_id: 2, name: 'benchy PETG.gcode.3mf', kind: 'gcode_3mf', plate_number: 1,
   machine_preset: 'Bambu Lab P1S 0.4', process_preset: '0.20mm', filament_presets: ['Generic PETG'],
   filament_type: 'PETG', filament_color: '#000000', bed_type: null, overrides: {}, estimated_seconds: 60,
-  filament_grams: 2, created_at: 't', source_changed: false, stale: false, stale_reasons: [], printable_now: true,
+  filament_grams: 2, created_at: 't', source_changed: false, stale: false, stale_reasons: [], provider_plugin_id: 'laminus', printable_now: true,
 }];
 
 type Handler = (url: string, init?: RequestInit) => Response | undefined;
@@ -68,6 +68,7 @@ describe('FilesScreen — cached sliced versions', () => {
 
     const list = await screen.findByTestId('sliced-versions');
     expect(within(list).getByText('benchy PETG.gcode.3mf')).toBeTruthy();
+    expect(within(list).getByText(/laminus/)).toBeTruthy();
     expect(calls(api, 'GET')).toContain('/api/v1/files/1/sliced-versions');
   });
 

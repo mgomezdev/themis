@@ -13,22 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
 from . import gcode_eligibility, bed_requirement
 from .library_scanner import file_kind
+from .print_artifacts import accepts_output
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
 _SYNCABLE = ("queued", "blocked")
 
 
 def accepts_file(printer_type: str, filename: str | None) -> bool:
-    """Whether this vendor can print the file as-is. Sliceable models: always (the slicer targets the printer). A raw
-    .gcode needs `raw_gcode_supported`; a .gcode.3mf sliced archive needs `sliced_archive_supported` (BIZ-190)."""
+    """Check an already printable artifact against the driver's accepted formats."""
     kind = file_kind(filename)
     if kind not in ("gcode", "gcode_3mf"):
         return True
-    from .printer_client_factory import client_class   # lazy: the factory imports models
-    cls = client_class(printer_type)
-    if kind == "gcode":
-        return True if cls is None else bool(getattr(cls, "raw_gcode_supported", True))
-    return False if cls is None else bool(getattr(cls, "sliced_archive_supported", False))
+    return accepts_output(printer_type, kind)
 
 
 ANY_PRINTER_LABEL = "Any printer"

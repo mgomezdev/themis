@@ -91,6 +91,22 @@ class PrinterModelRecord(Base):
     toolheads: Mapped[int] = mapped_column(Integer, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     declared: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class PrintConversionDefault(Base):
+    __tablename__ = "print_conversion_defaults"
+
+    input_kind: Mapped[str] = mapped_column(String(24), primary_key=True)
+    output_kind: Mapped[str] = mapped_column(String(24), primary_key=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64))
+
+
+class BrandConversionPreference(Base):
+    __tablename__ = "brand_conversion_preferences"
+
+    manufacturer_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64))
 
 
 class PrinterModelSlicerProfile(Base):
@@ -178,6 +194,7 @@ class SlicedVersion(Base):
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     artifact_kind: Mapped[str] = mapped_column(String(16))   # gcode | gcode_3mf
     cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    provider_plugin_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     preset_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     slicer_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     filament_type: Mapped[str] = mapped_column(String(100), default="any")

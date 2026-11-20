@@ -27,7 +27,7 @@ function open(plates = [plate(1)], over: Record<string, unknown> = {}, entry = '
     'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates },
     'GET /api/v1/files/42/model-filaments': [],
     'GET /api/v1/files/42/embedded-settings': [],
-    'GET /api/v1/printers/1/profiles': { print_profiles: [PROFILE], filament_profiles: [] },
+    'GET /api/v1/printers/1/profiles?file_id=42': { print_profiles: [PROFILE], filament_profiles: [] },
     'POST /api/v1/jobs/check-overrides': { has_embedded_settings: false, has_findings: false, setting_changes: [], slot_warning: null },
     'POST /api/v1/jobs': { id: 1, status: 'queued' },
     'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: true },

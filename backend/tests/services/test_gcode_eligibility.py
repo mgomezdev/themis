@@ -283,11 +283,16 @@ async def test_queue_pull_prints_a_confirmed_unknown_file_and_blocks_it_unconfir
     await wait_until(lambda: _is_printing(session_factory, blocked), what="confirmed unknown-eligibility job to print")
 
 
-async def test_dispatching_gcode_never_touches_the_slicing_provider_even_with_laminus_unavailable(session_factory, tmp_path, monkeypatch):
+@pytest.mark.parametrize(("printer_type", "filename"), [("elegoo_centauri", "part.gcode"), ("bambu", "part.gcode.3mf")])
+async def test_dispatching_gcode_never_touches_the_slicing_provider_even_with_laminus_unavailable(
+        session_factory, tmp_path, monkeypatch, printer_type, filename):
     models = await seed_models(session_factory)
     qe, mgr, slicer = await _engine(session_factory, tmp_path, monkeypatch, [1])
     await seed_printer(session_factory, 1, models["x1"])
-    fid = await seed_file(session_factory, tmp_path / "library", known_for=[models["x1"]])
+    async with session_factory() as session:
+        (await session.get(Printer, 1)).printer_type = printer_type
+        await session.commit()
+    fid = await seed_file(session_factory, tmp_path / "library", name=filename, known_for=[models["x1"]])
     jid = await _queue_job(session_factory, fid, 1)
 
     def boom(*a, **k):

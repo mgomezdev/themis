@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useCapabilityList, type CapabilityInfo } from '../api/capabilities';
 import { setCapabilityProvider } from '../api/plugins';
 import { FieldRow, PageHeader } from '../components/settingsUi';
+import { PrintConversionSettings } from '../components/PrintConversionSettings';
 
 function chip(c: CapabilityInfo): { text: string; tone: string } {
   switch (c.status) {
@@ -91,6 +92,7 @@ export function CapabilitiesPage() {
           </FieldRow>
         );
       })}
+      {items.some(c => c.id === 'gcode.produce') && <PrintConversionSettings />}
     </div>
   );
 }

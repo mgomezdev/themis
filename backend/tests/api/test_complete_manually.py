@@ -251,7 +251,7 @@ async def test_complete_manually_sends_no_printer_commands(client, tmp_path, upl
         mock_client.start_print.assert_not_called()
         mock_client.upload_file.assert_not_called()
         mock_client.stop_print.assert_not_called()
-        # orca_export_args (local file-naming, no printer I/O) IS expected to be
+        # The driver declaration needs no printer I/O. Tool routing may still be
         # called by _build_slice_request - that's not a printer command.
     finally:
         printer_manager._clients.pop(printer_id, None)

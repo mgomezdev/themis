@@ -44,8 +44,10 @@ class CatalogUnavailable(Exception):
 # Cache access
 # ---------------------------------------------------------------------------
 
-def cached_catalog() -> Catalog | None:
+def cached_catalog(provider=None) -> Catalog | None:
     """The cached catalog if loaded; never fetches."""
+    if provider is not None and _catalog is not None and _catalog.provider_identity not in (None, (type(provider), provider.identity)):
+        return None
     return _catalog
 
 
@@ -67,11 +69,13 @@ def commit_catalog(raw: bytes, catalog: Catalog) -> None:
     logger.info("Catalog cached: %d bytes", len(raw))
 
 
-def remember_catalog(catalog: Catalog) -> None:
+def remember_catalog(catalog: Catalog, provider) -> None:
     """Cache a catalog fetched outside the HTTP flow (sync callers in the slice thread pool) without
     touching the serialized bytes / fetch timestamp."""
     global _catalog
-    _catalog = catalog
+    catalog.provider_identity = (type(provider), provider.identity)
+    if _catalog is None or _catalog.provider_identity == catalog.provider_identity:
+        _catalog = catalog
 
 
 def pending_sync() -> dict | None:
@@ -92,6 +96,7 @@ async def fetch_catalog() -> tuple[bytes, Catalog]:
         catalog = await asyncio.to_thread(provider.get_catalog)
     except SlicingProviderError as exc:
         raise CatalogUnavailable(f"Laminus sidecar unreachable: {exc}", 502) from exc
+    catalog.provider_identity = (type(provider), provider.identity)
     return json.dumps(catalog.raw).encode(), catalog
 
 
@@ -103,8 +108,9 @@ async def fetch_and_cache() -> bytes:
 
 async def get_cached_catalog() -> Catalog:
     """The cached catalog, fetching from the provider only if it isn't loaded yet."""
-    if _catalog is not None:
-        return _catalog
+    catalog = cached_catalog(get_slicing_provider())
+    if catalog is not None:
+        return catalog
     await fetch_and_cache()
     assert _catalog is not None
     return _catalog
@@ -198,7 +204,8 @@ async def _apply_drift_gate(raw: bytes, new_catalog: Catalog, session: AsyncSess
     global _pending_sync
     old_catalog = _catalog
 
-    if old_catalog is None:
+    if old_catalog is None or (old_catalog.provider_identity and new_catalog.provider_identity
+                               and old_catalog.provider_identity != new_catalog.provider_identity):
         # Cold cache — first sync ever, commit directly.
         commit_catalog(raw, new_catalog)
         return {"status": "ok", "bytes": len(raw)}

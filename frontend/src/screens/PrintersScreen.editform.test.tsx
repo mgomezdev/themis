@@ -94,7 +94,7 @@ describe('EditForm nozzle variant (BIZ-294)', () => {
   it('replaces the per-printer make/model picker with the nozzles its model has a profile for, and saves the chosen one', async () => {
     render(<EditForm printer={PRINTER} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
     const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
-    await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(['Model default (0.4mm)', '0.4mm', '0.6mm']));
+    await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(['Model default (0.4mm)', '0.4mm · Bambu Lab P1S 0.4 nozzle', '0.6mm · Bambu Lab P1S 0.6 nozzle']));
     expect(screen.queryByLabelText('Make')).toBeNull();
 
     fireEvent.change(select, { target: { value: '0.6|standard' } });
@@ -112,6 +112,45 @@ describe('EditForm nozzle variant (BIZ-294)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
     await waitFor(() => expect(patchBody()).toBeTruthy());
     expect(patchBody().nozzle_variant).toBeNull();
+  });
+
+  it('switches the available mappings to the chosen slicer and saves a high-flow override for this printer', async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/plugins') return Response.json({
+        plugins: ['laminus', 'alternate'].map(id => ({ id, name: id, enabled: true, provides: [{ capability: 'gcode.produce' }] })),
+        selections: { 'gcode.produce': 'alternate' },
+      });
+      if (url.endsWith('/slicer-profiles')) return Response.json([
+        ...ROWS, { ...row(3, 0.4, 'high_flow', 'Alt high-flow', true), provider_plugin_id: 'alternate' },
+      ]);
+      return base(url, init);
+    }));
+    render(<EditForm printer={{ ...PRINTER, slicer_plugin_id: 'laminus', model_slicer_plugin_id: 'laminus' }}
+                     types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const slicer = await screen.findByLabelText('Slice jobs for this printer with');
+    await screen.findByRole('option', { name: /Model default slicer \(laminus\)/ });
+    expect(screen.queryByRole('option', { name: /Alt high-flow/ })).toBeNull();
+    fireEvent.change(slicer, { target: { value: 'alternate' } });
+    expect(await screen.findByRole('option', { name: '0.4mm high-flow · Alt high-flow' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /0.6mm · Bambu Lab/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Nozzle fitted'), { target: { value: '0.4|high_flow' } });
+    expect(screen.getByText('Alt high-flow')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toMatchObject({
+      preferred_slicer_plugin_id: 'alternate', nozzle_variant: { diameter_mm: 0.4, flow: 'high_flow' },
+    }));
+  });
+
+  it('keeps a custom machine profile on the slicer it was entered for', async () => {
+    const printer = { ...PRINTER, slicer_plugin_id: 'laminus', model_slicer_plugin_id: 'laminus' };
+    render(<EditForm printer={printer} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByText('Machine profile override'));
+    fireEvent.change(screen.getByLabelText('Custom machine profile'), { target: { value: 'P1S High Flow Lab' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    await waitFor(() => expect(patchBody()).toMatchObject({
+      preferred_slicer_plugin_id: 'laminus', machine_profile_override: 'P1S High Flow Lab',
+    }));
   });
 });
 

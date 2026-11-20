@@ -17,7 +17,8 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Printer, PrinterModelRecord, PrinterModelSlicerProfile
+from ..models import BrandConversionPreference, PrintConversionDefault, Printer, PrinterModelRecord, PrinterModelSlicerProfile
+from .print_artifacts import model_input, required_output
 from .providers.slicing import effective_provider_id
 
 FLOWS = ("standard", "high_flow")
@@ -63,6 +64,12 @@ class MachineProfileResolution:
     provider_id: str | None = None
     from_override: bool = False
     model_label: str | None = None      # "<manufacturer> <model>" of the printer's registry model, for pickers ("Any Bambu Lab P1S")
+    model_provider_id: str | None = None
+    brand_provider_id: str | None = None
+    conversion_default_id: str | None = None
+
+    def preferred_provider_id(self, printer: Printer) -> str | None:
+        return printer.preferred_slicer_plugin_id or self.model_provider_id or self.brand_provider_id
 
 
 def _no_profile(model_name: str | None, variant: NozzleVariant | None, provider_id: str | None) -> MachineProfileResolution:
@@ -115,17 +122,33 @@ async def mapping_rows(session: AsyncSession, model_uuid: str | None = None) -> 
     return list((await session.execute(q)).scalars().all())
 
 
-async def resolve_for_printer(session: AsyncSession, printer: Printer, provider_id: str | None = ...) -> MachineProfileResolution:  # type: ignore[assignment]
-    """The machine profile `printer` slices with. `provider_id` defaults to the provider that would slice it (its preferred
-    `gcode.produce` plugin, else the capability default)."""
-    if provider_id is ...:
-        provider_id = effective_provider_id(printer.preferred_slicer_plugin_id)
+async def resolve_for_printer(session: AsyncSession, printer: Printer, provider_id: str | None = ...,  # type: ignore[assignment]
+                              *, source_filename: str | None = None) -> MachineProfileResolution:
+    """Resolve the chosen service's profile. For a job, include the source filename to apply format-pair defaults."""
     rows = await mapping_rows(session, printer.model_uuid) if printer.model_uuid else []
     rec = await session.get(PrinterModelRecord, printer.model_uuid) if printer.model_uuid else None
-    return resolve_from_rows(override=printer.machine_profile_override, model_uuid=printer.model_uuid,
-                             model_name=(rec.display_name or rec.model_id) if rec else printer.model_uuid,
-                             nozzle_variant=printer.nozzle_variant, provider_id=provider_id, rows=rows,
-                             model_label=_label(rec) if rec else None)
+    manufacturer_id = printer.manufacturer_id or (rec.manufacturer_id if rec else None)
+    brand = await session.get(BrandConversionPreference, manufacturer_id) if manufacturer_id else None
+    route = None
+    if source_filename and provider_id is ... and not (printer.preferred_slicer_plugin_id or (rec and rec.default_slicer_plugin_id) or brand):
+        route = await session.get(PrintConversionDefault, (model_input(source_filename), required_output(printer.printer_type)))
+    return _resolve_printer(printer, rec, rows, provider_id, brand=brand, route=route)
+
+
+def _resolve_printer(printer, model, rows, provider_id=..., *, brand=None, route=None) -> MachineProfileResolution:
+    model_provider_id = model.default_slicer_plugin_id if model else None
+    brand_provider_id = brand.provider_plugin_id if brand else None
+    conversion_default_id = route.provider_plugin_id if route else None
+    if provider_id is ...:
+        provider_id = effective_provider_id(printer.preferred_slicer_plugin_id or model_provider_id or brand_provider_id or conversion_default_id)
+    resolution = resolve_from_rows(
+        override=printer.machine_profile_override, model_uuid=printer.model_uuid,
+        model_name=(model.display_name or model.model_id) if model else printer.model_uuid,
+        nozzle_variant=printer.nozzle_variant, provider_id=provider_id, rows=rows,
+        model_label=_label(model) if model else None,
+    )
+    return replace(resolution, model_provider_id=model_provider_id, brand_provider_id=brand_provider_id,
+                   conversion_default_id=conversion_default_id)
 
 
 async def machine_profile_for(session: AsyncSession, printer: Printer | None) -> str | None:
@@ -141,13 +164,12 @@ async def resolve_many(session: AsyncSession, printers: list[Printer]) -> dict[i
     if uuids:
         recs = {rec.id: rec for rec in (await session.execute(
             select(PrinterModelRecord).where(PrinterModelRecord.id.in_(uuids)))).scalars()}
-    return {p.id: resolve_from_rows(override=p.machine_profile_override, model_uuid=p.model_uuid,
-                                    model_name=(recs[p.model_uuid].display_name or recs[p.model_uuid].model_id) if p.model_uuid in recs
-                                    else p.model_uuid,
-                                    nozzle_variant=p.nozzle_variant,
-                                    provider_id=effective_provider_id(p.preferred_slicer_plugin_id), rows=rows,
-                                    model_label=_label(recs[p.model_uuid]) if p.model_uuid in recs else None)
-            for p in printers}
+    brands = {p.id: p.manufacturer_id or (recs[p.model_uuid].manufacturer_id if p.model_uuid in recs else None)
+              for p in printers}
+    brand_ids = {brand for brand in brands.values() if brand}
+    preferences = {r.manufacturer_id: r for r in (await session.execute(
+        select(BrandConversionPreference).where(BrandConversionPreference.manufacturer_id.in_(brand_ids)))).scalars()} if brand_ids else {}
+    return {p.id: _resolve_printer(p, recs.get(p.model_uuid), rows, brand=preferences.get(brands[p.id])) for p in printers}
 
 
 async def profiles_of_model(session: AsyncSession, model_uuid: str) -> set[str]:

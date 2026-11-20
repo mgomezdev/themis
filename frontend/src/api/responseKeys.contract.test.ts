@@ -33,7 +33,7 @@ const FLEET = {
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
-  machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, queue_paused_reason: 1, configured: 1, config_error: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
+  machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_slicer_plugin_id: 1, brand_slicer_plugin_id: 1, print_artifact_kind: 1, slicer_plugin_id: 1, model_label: 1, enabled: 1, queue_on: 1, queue_paused_reason: 1, configured: 1, config_error: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
   no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, slice_overrides: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
@@ -105,7 +105,7 @@ const LIBRARY_FILE = {
 } satisfies Record<keyof LibraryFile, 1>;
 
 const SLICED_VERSION = {
-  id: 1, file_id: 1, name: 1, kind: 1, plate_number: 1, machine_preset: 1, process_preset: 1, filament_presets: 1, filament_type: 1, filament_color: 1, bed_type: 1, overrides: 1, estimated_seconds: 1, filament_grams: 1, created_at: 1, source_changed: 1, stale: 1, stale_reasons: 1, printable_now: 1, model_uuids: 1,
+  id: 1, file_id: 1, name: 1, kind: 1, plate_number: 1, machine_preset: 1, process_preset: 1, filament_presets: 1, filament_type: 1, filament_color: 1, bed_type: 1, overrides: 1, estimated_seconds: 1, filament_grams: 1, created_at: 1, source_changed: 1, stale: 1, stale_reasons: 1, printable_now: 1, model_uuids: 1, provider_plugin_id: 1,
 } satisfies Record<keyof SlicedVersion, 1>;
 
 const MODEL_SLICER_PROFILE = {

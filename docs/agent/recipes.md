@@ -9,7 +9,7 @@ A vendor is a bundled plugin package; core names none (`tests/test_vendor_extrac
 
 1. `backend/app/plugins/<vendor>/client.py` — subclass `AbstractPrinterClient`. Implement the
    abstract methods; override `connection_fields()` (form + ctor kwargs), `get_capabilities()`,
-   `is_idle`, `orca_export_args()` (raw vs `--export-3mf`), `serialize_state(printer_id)` (the normalized status dict; module-level
+   `is_idle`, `print_artifact_kind` (raw G-code or G-code archive), `serialize_state(printer_id)` (the normalized status dict; module-level
    `serialize_<vendor>(state, id)` + a one-line method is the pattern), and if AMS-like, `get_loaded_filaments()` + an
    `_on_ams_change` attr. Read per-printer flags from `self._*` in `start_print` (options always present). Set `printer_type` ClassVar;
    optional `SSDP_PORTS`, `discover_host`/`parse_announcement` (discovery), `slice_tool_mapping = True` (tool changers).

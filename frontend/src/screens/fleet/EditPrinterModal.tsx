@@ -7,12 +7,12 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
+  printerSlicerPatch,
   type PrinterType,
   type ApiPrinter,
-  type NozzleVariant,
+  type PrinterSlicerDraft,
 } from '../../api/printers';
-import { fetchPlugins, type PluginSummary } from '../../api/plugins';
-import { NozzleVariantPicker } from '../../components/NozzleVariantPicker';
+import { PrinterSlicerSettings } from '../../components/PrinterSlicerSettings';
 
 export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClose }: {
   printer: Printer;
@@ -23,15 +23,12 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
 }) {
   const [draftName, setDraftName] = useState(p.name);
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
-  const [nozzle, setNozzle] = useState<NozzleVariant | null>(null);   // null = the model's default nozzle
+  const [slicing, setSlicing] = useState<PrinterSlicerDraft>({});
   const [apiPrinter, setApiPrinter] = useState<ApiPrinter | null>(null);
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
   const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
   const [quietEnd, setQuietEnd] = useState('');
   const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
-  const [slicer, setSlicer] = useState('');   // '' = the default slicing provider
-  const [slicerTouched, setSlicerTouched] = useState(false);   // only a changed choice is sent, so an unloaded list can never wipe it
-  const [slicers, setSlicers] = useState<PluginSummary[]>([]);   // enabled plugins that provide gcode.produce
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
@@ -51,19 +48,19 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
         }
         setDraftConn(conn);
         setApiPrinter(api);
-        setNozzle(api.nozzle_variant ?? null);
+        setSlicing({
+          nozzle_variant: api.nozzle_variant ?? null,
+          preferred_slicer_plugin_id: api.preferred_slicer_plugin_id ?? null,
+          machine_profile_override: api.machine_profile_override ?? null,
+        });
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
         setQuietStart(api.quiet_start ?? '');
         setQuietEnd(api.quiet_end ?? '');
         setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
-        setSlicer(api.preferred_slicer_plugin_id ?? '');
         setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-    fetchPlugins()
-      .then(list => setSlicers((list?.plugins ?? []).filter(pl => pl.enabled && pl.provides.some(x => x.capability === 'gcode.produce'))))
-      .catch(console.error);
   }, [p.id]);
 
   const runTestConnection = async () => {
@@ -81,16 +78,16 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
   };
 
   const save = async () => {
+    if (!apiPrinter) return;
     setSaving(true);
     setError(null);
     try {
       await updatePrinter(Number(p.id), {
         name: draftName,
         connection_config: draftConn,
-        nozzle_variant: nozzle,
+        ...printerSlicerPatch(slicing, apiPrinter),
         no_snapshots_while_idle: noSnapshotsWhileIdle,
         machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
-        ...(slicerTouched ? { preferred_slicer_plugin_id: slicer || null } : {}),
         // Both or neither: a half-filled window is treated as none.
         quiet_start: quietStart && quietEnd ? quietStart : null,
         quiet_end: quietStart && quietEnd ? quietEnd : null,
@@ -206,8 +203,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
           </div>
 
           {loaded && apiPrinter && (
-            <NozzleVariantPicker modelUuid={apiPrinter.model_uuid} value={nozzle} onChange={setNozzle}
-                                 resolvedProfile={apiPrinter.machine_profile} reason={apiPrinter.machine_profile_reason} />
+            <PrinterSlicerSettings printer={apiPrinter} value={slicing} onChange={setSlicing} />
           )}
 
           <div className="col gap-2">
@@ -219,22 +215,6 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
               Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
             </div>
           </div>
-
-          {(slicers.length > 1 || slicer) && (
-            <div className="col gap-2">
-              <div className="tag-key">Slicer</div>
-              <label className="label" htmlFor="preferred-slicer">Slice jobs for this printer with</label>
-              <select id="preferred-slicer" className="input" style={{ maxWidth: 260 }} value={slicer}
-                      onChange={e => { setSlicer(e.target.value); setSlicerTouched(true); }}>
-                <option value="">Default slicer</option>
-                {slicer && !slicers.some(s => s.id === slicer) && <option value={slicer}>{slicer} (disabled or removed)</option>}
-                {slicers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <div className="tiny muted">
-                A chosen slicer is never swapped for another: if it is off or down, this printer&apos;s jobs wait (Settings → Plugins).
-              </div>
-            </div>
-          )}
 
           <div className="col gap-2">
             <div className="tag-key">Quiet hours</div>

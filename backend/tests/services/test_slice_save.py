@@ -66,15 +66,13 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
 
 def _engine(factory, tmp_path, *, archive=False):
     mgr = _make_mock_printer_manager([1])
-    client = mgr.get_client.return_value
-    client.orca_export_args.side_effect = (lambda base: ["--export-3mf", f"{base}.gcode.3mf"]) if archive else (lambda base: [])
     slicer = MagicMock()
     slicer._data_dir = tmp_path / "data"
 
     def fake_slice(req: SliceRequest, *_):
         out = tmp_path / "data" / "gcode" / str(req.job_id)
         out.mkdir(parents=True, exist_ok=True)
-        path = out / (req.export_args[1] if req.export_args else f"out_j{req.job_id}.gcode")
+        path = out / (f"{req.artifact_basename}.gcode.3mf" if req.output_kind.value == "gcode_3mf" else f"out_j{req.job_id}.gcode")
         if archive:
             import zipfile
             with zipfile.ZipFile(path, "w") as z:
@@ -123,7 +121,7 @@ async def test_a_flagged_job_saves_its_slice_next_to_the_model(session_factory, 
     assert f.content_hash and f.plates and f.plates[0]["estimated_time"] == 3723
     expected_inputs = slice_cache.CacheKeyInputs(
         source_content_hash="srchash", plate_number=1, machine_preset=MACHINE, process_preset="0.20mm Standard",
-        filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+        filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
     assert gcode.slice_inputs == expected_inputs.as_dict()
     assert version.cache_key == slice_cache.cache_key(expected_inputs)
     assert (version.source_content_hash, version.machine_preset, version.process_preset, version.filament_presets,
@@ -352,7 +350,7 @@ async def test_turning_the_flag_off_after_slicing_cancels_the_background_save(se
             s, job_id=job_id, printer_id=1, artifact_path=str(artifact), require_flag=True,
             inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1, machine_preset=MACHINE,
                                               process_preset="p", filament_presets=("f",), extra_config={},
-                                              tool_index=None, filament_map=None, artifact_kind="gcode"))
+                                              tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus"))
     assert result is None and await _versions(session_factory) == []
     async with session_factory() as s:
         assert (await s.get(Job, job_id)).slice_cache_info is None
@@ -378,7 +376,7 @@ async def test_the_copy_is_taken_before_the_slow_steps(session_factory, tmp_path
                 inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1,
                                                   machine_preset=MACHINE, process_preset="p", filament_presets=("f",),
                                                   extra_config={}, tool_index=None, filament_map=None,
-                                                  artifact_kind="gcode"))
+                                                  artifact_kind="gcode", provider="laminus"))
     assert version is not None
 
 

@@ -13,6 +13,7 @@ from app.models import GcodeFile, Job, JobPrinterConfig, SlicedVersion, Uploaded
 from app.services import slice_cache
 from app.services.library_scanner import library_abs_path
 from tests.conftest import make_sliced_archive, slice_info_xml
+from tests.fake_providers import FakeSlicingProvider
 
 # These tests exercise packing at generate: pin new groups to "fixed" (the shipped default is "pool").
 pytestmark = pytest.mark.usefixtures("fixed_groups")
@@ -135,7 +136,7 @@ async def _sliced_job(client, create_job, session_factory, tmp_path, *, inputs=T
         slice_inputs = slice_cache.CacheKeyInputs(
             source_content_hash=source.content_hash, plate_number=1, machine_preset="Bambu Lab P1S 0.4",
             process_preset="0.20mm", filament_presets=("Generic PLA",), extra_config={}, tool_index=None,
-            filament_map=None, artifact_kind="gcode")
+            filament_map=None, artifact_kind="gcode", provider="laminus")
         s.add(GcodeFile(job_id=job_id, printer_id=(await s.execute(select(JobPrinterConfig.printer_id).where(
             JobPrinterConfig.job_id == job_id))).scalar_one(), path=str(artifact),
             slice_inputs=slice_inputs.as_dict() if inputs else None))
@@ -268,7 +269,7 @@ P1S = "Bambu Lab P1S 0.4"
 
 async def _version_for(session_factory, library, model_id, *, plate=1, name="cached.gcode.3mf", machine=P1S,
                        preset_hash="ph", version="2.3.1", on_disk=True, filament_type="PETG",
-                       extra_config=None, source_hash=None) -> tuple[int, int]:
+                       extra_config=None, source_hash=None, provider_plugin_id="laminus") -> tuple[int, int]:
     """A cached version of `model_id` -> (version id, cached file id)."""
     async with session_factory() as s:
         model = await s.get(UploadedFile, model_id)
@@ -284,6 +285,7 @@ async def _version_for(session_factory, library, model_id, *, plate=1, name="cac
                           plate_number=plate, machine_preset=machine, process_preset="0.20mm",
                           filament_presets=["Generic PETG"], extra_config=extra_config or {"curr_bed_type": "Cool Plate"},
                           artifact_kind="gcode_3mf", cache_key=f"k{plate}{name}", preset_content_hash=preset_hash,
+                          provider_plugin_id=provider_plugin_id,
                           slicer_version=version, filament_type=filament_type, filament_color="#112233",
                           estimated_seconds=300, filament_grams=2.0, created_at="2026-10-03T00:00:00")
         s.add(v)
@@ -307,7 +309,8 @@ async def test_sliced_versions_lists_a_models_versions_with_their_flags(
         f.missing = True
         await s.commit()
 
-    body = (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()
+    with patch("app.api.routes.files.slicing_provider_for", return_value=FakeSlicingProvider()):
+        body = (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()
     assert [v["name"] for v in body] == ["plate2.gcode.3mf", "stale.gcode.3mf", "fresh.gcode.3mf"]
     by = {v["name"]: v for v in body}
     assert {k: by["fresh.gcode.3mf"][k] for k in ("id", "file_id", "kind", "plate_number", "machine_preset",
@@ -323,6 +326,29 @@ async def test_sliced_versions_lists_a_models_versions_with_their_flags(
     assert by["fresh.gcode.3mf"]["model_uuids"] == []         # no model maps that machine profile
     assert [v["name"] for v in (await client.get(f"/api/v1/files/{model}/sliced-versions?plate=2")).json()] == [
         "plate2.gcode.3mf"]
+
+
+async def test_sliced_versions_report_and_filter_the_producer_and_check_its_fingerprint(
+        client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    for pid in ("slicer_a", "slicer_b", "removed"):
+        await _version_for(session_factory, library, model, name=f"{pid}.gcode.3mf", provider_plugin_id=pid)
+    await _version_for(session_factory, library, model, name="legacy.gcode.3mf", provider_plugin_id=None)
+    adapters = {pid: FakeSlicingProvider() for pid in ("slicer_a", "slicer_b")}
+    fingerprints = {adapters["slicer_a"]: slice_cache.SlicerFingerprint("ph", "2.3.1"),
+                    adapters["slicer_b"]: slice_cache.SlicerFingerprint("changed", "2.3.1")}
+
+    url = f"/api/v1/files/{model}/sliced-versions"
+    with patch("app.api.routes.files.slicing_provider_for", side_effect=adapters.get), \
+         patch("app.services.slice_cache.current_fingerprint", side_effect=lambda m, p, f, adapter: fingerprints[adapter]):
+        by_provider = {v["provider_plugin_id"]: v for v in (await client.get(url)).json()}
+        filtered = (await client.get(url, params={"plate": 1, "provider_plugin_id": "slicer_b"})).json()
+
+    assert by_provider["slicer_a"]["stale"] is False
+    assert by_provider["slicer_b"]["stale_reasons"] == ["presets_changed"]
+    assert by_provider["removed"]["stale"] is None
+    assert by_provider[None]["stale"] is None
+    assert filtered == [by_provider["slicer_b"]]
 
 
 async def test_a_version_is_printable_now_on_a_printer_whose_model_maps_to_its_machine_profile(

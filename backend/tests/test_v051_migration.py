@@ -24,7 +24,7 @@ def _inputs(c, provider=None):
     kw = dict(source_content_hash="srchash", plate_number=c["plate_number"], machine_preset=c["machine_preset"],
               process_preset=c["process_preset"], filament_presets=tuple(c["filament_presets"]), extra_config=c["extra_config"],
               tool_index=c["tool_index"], filament_map=c["filament_map"], artifact_kind=c["artifact_kind"])
-    return slice_cache.CacheKeyInputs(**kw, **({"provider": provider} if provider else {}))
+    return slice_cache.CacheKeyInputs(**kw, provider=provider or "laminus")
 
 
 def _legacy_key(c):
@@ -69,5 +69,28 @@ async def test_v051_is_idempotent_and_a_noop_on_an_empty_table(tmp_path):
             await mig.up(conn)
             await mig.up(conn)
             assert (await conn.execute(text("SELECT count(*) FROM sliced_versions"))).scalar() == 0
+    finally:
+        await engine.dispose()
+
+
+async def test_v075_backfills_only_attributable_versions_and_preserves_both_keys(tmp_path):
+    case = CASES[0]
+    keys = [slice_cache.cache_key(_inputs(case, provider)) for provider in ("laminus", "test-slicer")]
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'upgrade.db'}")
+    try:
+        async with engine.begin() as conn:
+            await run_migrations(conn)
+        async with async_sessionmaker(engine)() as s:
+            for i, key in enumerate(keys):
+                f = UploadedFile(original_filename=f"v{i}.gcode", relative_path=f"v{i}.gcode", uploaded_at="t")
+                s.add(f)
+                await s.flush()
+                s.add(SlicedVersion(file_id=f.id, source_content_hash="srchash", cache_key=key, created_at="t", **case))
+            await s.commit()
+        async with engine.begin() as conn:
+            await rollback_to(conn, 74)
+            await run_migrations(conn)
+            rows = (await conn.execute(text("SELECT cache_key, provider_plugin_id FROM sliced_versions ORDER BY id"))).all()
+            assert rows == [(keys[0], "laminus"), (keys[1], None)]
     finally:
         await engine.dispose()

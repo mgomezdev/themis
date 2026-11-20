@@ -22,8 +22,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .providers.slicing import SlicingProvider, slicing_provider_name
-from .slicer_service import SliceRequest, _export_3mf_name
+from .providers.slicing import SlicingProvider, default_provider_id
+from .slicer_service import SliceRequest
 
 logger = logging.getLogger("app.services.slice_cache")
 
@@ -53,9 +53,6 @@ def sha256_of(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
-DEFAULT_PROVIDER = "laminus"      # the bundled slicing provider; only the dataclass default (a key always carries its provider)
-
-
 @dataclass(frozen=True)
 class CacheKeyInputs:
     """Everything that changes a slice's output. Build it with `key_inputs` from the exact `SliceRequest` the queue
@@ -73,7 +70,7 @@ class CacheKeyInputs:
     # provider never serves another's slice). Always part of the hash (BIZ-291): the default is no longer omitted, so a key never
     # depends on which provider happens to be the default. The engine version is deliberately NOT in the key (it is `slicer_version`
     # staleness): a key must be computable with the engine down (BIZ-201) and a stale version must stay reusable by policy.
-    provider: str = DEFAULT_PROVIDER
+    provider: str
     # The printer's own overrides (SliceRequest.printer_overrides): hashed only when set, so keys of printers without any are
     # unchanged. The project file's own preset changes need no field: they are a function of `source_content_hash`.
     printer_overrides: dict = field(default_factory=dict)
@@ -94,9 +91,9 @@ def key_inputs(
     they change the output, so they're part of the key. `filament_map` must be the RESOLVED map (slot indices, after
     `queue_engine._resolve_filament_map`) — exactly what the remap used — or save and lookup drift apart.
 
-    Returns None (uncacheable) when the source has no content hash: without it two different models with the same
-    settings would share a key and one would print the other's gcode."""
-    if not source_content_hash:
+    A cache key requires both a source content hash and the selected provider's stable plugin ID."""
+    provider_id = provider or req.provider_id or default_provider_id()
+    if not source_content_hash or not provider_id:
         return None
     return CacheKeyInputs(
         source_content_hash=source_content_hash,
@@ -107,8 +104,8 @@ def key_inputs(
         extra_config=dict(req.extra_config or {}),
         tool_index=tool_index,
         filament_map=list(filament_map) if filament_map else None,
-        artifact_kind="gcode_3mf" if _export_3mf_name(req.export_args) is not None else "gcode",
-        provider=provider or req.provider_id or slicing_provider_name(),
+        artifact_kind=req.output_kind.value,
+        provider=provider_id,
         printer_overrides=dict(getattr(req, "printer_overrides", None) or {}),
     )
 
@@ -184,11 +181,12 @@ _fingerprints: dict[tuple, tuple[float, SlicerFingerprint]] = {}
 
 def cached_fingerprint(
     machine_preset: str, process_preset: str, filament_presets: list[str], provider: "SlicingProvider | None",
+    *, provider_id: str,
 ) -> SlicerFingerprint:
     """`current_fingerprint`, memoised for a minute per preset set — listing a model's versions or a burst of claims
     shouldn't each pay the sidecar round-trips. Blocking; call via asyncio.to_thread."""
     import time
-    key = (machine_preset, process_preset, tuple(filament_presets), provider.identity if provider else None)
+    key = (provider_id, machine_preset, process_preset, tuple(filament_presets), provider.identity if provider else None)
     hit = _fingerprints.get(key)
     now = time.monotonic()
     if hit and now - hit[0] < (_FINGERPRINT_TTL if (hit[1].preset_content_hash or hit[1].slicer_version)

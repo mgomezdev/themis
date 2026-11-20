@@ -387,10 +387,11 @@ class WorkOutcome:
 class WorkItem:
     input_kind: InputKind
     gcode_models: frozenset[str] | None = None   # pass-through only: eligible model UUIDs; None/empty = unknown
+    output_kind: ArtifactKind = ArtifactKind.GCODE
 
 
 def _eligible(p: GcodeProducer, item: WorkItem, target: TargetPrinter) -> bool:
-    return item.input_kind in p.accepted_inputs and p.supports_target(target)
+    return item.input_kind in p.accepted_inputs and item.output_kind in p.output_kinds and p.supports_target(target)
 
 
 def resolve_work(
@@ -425,10 +426,12 @@ def resolve_work(
     if default is None:
         return WorkOutcome(Action.BLOCKED, reason=Reason.NO_PROVIDER)
     p = providers.get(default)
-    if p is None or not ready(default):
+    if p is None:
         return WorkOutcome(Action.BLOCKED, default, Reason.DEFAULT_UNAVAILABLE)
     if not _eligible(p, item, target):
         return WorkOutcome(Action.BLOCKED, default, Reason.DEFAULT_INELIGIBLE)
+    if not ready(default):
+        return WorkOutcome(Action.BLOCKED, default, Reason.DEFAULT_UNAVAILABLE)
     return WorkOutcome(Action.PRODUCE, default)
 
 

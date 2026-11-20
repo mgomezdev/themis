@@ -29,7 +29,7 @@ function open(rows: ModelSlicerProfile[], sugg: ProfileSuggestions, extra: Recor
   return stubFetch({
     'GET /api/v1/printer-models': [entry({ slicer_profile_count: rows.length })],
     'GET /api/v1/plugins': PLUGINS,
-    'GET /api/v1/printers/orca-machine-catalog': catalog,
+    'GET /api/v1/printers/orca-machine-catalog?provider_plugin_id=laminus': catalog,
     [`GET ${MAPPINGS}`]: () => current,
     [`GET ${SUGGEST}`]: sugg,
     [`POST ${MAPPINGS}`]: () => { if (created) current = [...current, created]; return created; },
@@ -143,5 +143,24 @@ describe('PrinterModelsPanel — slicer profile per model', () => {
     render(<PrinterModelsPanel />);
     await expand();
     expect(await screen.findByText(/No slicing provider is enabled/)).toBeTruthy();
+  });
+
+  it('lets a brand and model choose a default from its mapped slicers', async () => {
+    const modelUrl = `/api/v1/printer-models/${MODEL}`;
+    const others = ['alternate', 'unmapped'].map(id => ({
+      id, name: id, enabled: true, provides: [{ capability: 'gcode.produce' }],
+    }));
+    const api = open([row(1, 0.4, 'P1S 0.4', true),
+                      { ...row(2, 0.4, 'Other P1S', true), provider_plugin_id: 'alternate' }], suggestions(), {
+      'GET /api/v1/plugins': { ...PLUGINS, plugins: [...PLUGINS.plugins, ...others] },
+      [`PATCH ${modelUrl}`]: entry({ default_slicer_plugin_id: 'alternate' }),
+    });
+    render(<PrinterModelsPanel />);
+    await expand();
+    const select = await screen.findByLabelText('Default slicer for this model');
+    expect(within(select).queryByRole('option', { name: 'unmapped' })).toBeNull();
+    await userEvent.selectOptions(select, 'alternate');
+    await waitFor(() => expect(api.to('PATCH', modelUrl)[0]?.body).toEqual({ default_slicer_plugin_id: 'alternate' }));
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('alternate'));
   });
 });

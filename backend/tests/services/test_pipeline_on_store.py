@@ -110,7 +110,7 @@ async def _seed(factory) -> int:
 def _inputs():
     return slice_cache.CacheKeyInputs(
         source_content_hash="srchash", plate_number=1, machine_preset="M", process_preset="P",
-        filament_presets=("F",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+        filament_presets=("F",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
 
 
 async def _save(factory, tmp_path, job_id, name="out.gcode"):

@@ -235,7 +235,10 @@ function SlicedVersionsList({ fileId }: { fileId: number }) {
         {versions.map(v => (
           <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-0)' }}>
             <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{v.name}</div>
-            <div className="muted">Plate {v.plate_number} · {v.process_preset} · {versionSummary(v)}</div>
+            <div className="muted">
+              Plate {v.plate_number} · {v.process_preset} · {versionSummary(v)}
+              {v.provider_plugin_id && <> · {v.provider_plugin_id}</>}
+            </div>
           </div>
         ))}
       </div>

@@ -64,6 +64,7 @@ class Catalog:
     # Legacy vendor payload ({"machine": [...], "process": [...], "filament": [...]}), kept so routes can
     # re-serialize the exact shape they always returned.
     raw: dict = field(default_factory=dict)
+    provider_identity: tuple[type, str] | None = field(default=None, compare=False, repr=False)
 
     def presets_of(self, kind: str) -> list[Preset]:
         return {"machine": self.machines, "process": self.processes, "filament": self.filaments}[kind]
@@ -162,22 +163,18 @@ class SlicingProvider(ABC):
 # The slicing provider is whichever plugin the host resolves for the `gcode.produce` capability (BIZ-290): core names none. The plugin
 # id is the provider name in cache keys, so a second slicing plugin is selected on the capability and the keys follow.
 _CAP = "gcode.produce"
-# TODO(follow-up): the offline FormatProvider is not a capability yet, so it (and the cache-name fallback) still names the bundled plugin;
-# a second slicing plugin needs FormatProvider resolved the same way.
+# Offline operations also support files with no known producer or no configured slicer.
 _FORMAT_PLUGIN = "laminus"
 
 
 def default_provider_id() -> str | None:
-    """The plugin serving `gcode.produce` by default: the host's selection row (capability default) when it is enabled, else the
-    one enabled provider, else None (none, or several with no choice made). Reads manifests + stored config only, so it also
-    answers before the host has loaded (startup, tests)."""
-    from ...plugins import providers_of
+    """Use the enabled capability default, or the sole enabled provider when no choice has been recorded."""
     from ...plugins.host import plugin_host
 
     chosen = plugin_host.selected(_CAP)
-    if chosen and plugin_host.is_enabled(chosen):
-        return chosen
-    enabled = [m.id for m in providers_of(_CAP) if plugin_host.is_enabled(m.id)]
+    enabled = enabled_provider_ids()
+    if chosen is not None or plugin_host.is_explicit(_CAP):
+        return chosen if chosen in enabled else None
     return enabled[0] if len(enabled) == 1 else None
 
 
@@ -194,18 +191,15 @@ def enabled_provider_ids() -> list[str]:
     return [m.id for m in providers_of(_CAP) if plugin_host.is_enabled(m.id)]
 
 
-def slicing_provider_name() -> str:
-    """The plugin id of the default slicing provider (the cache-key identity); the bundled one when none resolves."""
-    return default_provider_id() or _FORMAT_PLUGIN
-
-
 def provider_url(plugin_id: str | None) -> str | None:
     """A slicing plugin's service URL as the host resolves it (BIZ-289): saved setting > deprecated env override read by core >
     the plugin's defaults.toml. None when the plugin is unknown, disabled or unconfigured. Read at call time."""
     from .laminus.connection import clean_url
+    from ...plugins import get_plugin
     from ...plugins.host import plugin_host
 
-    if not plugin_id or not plugin_host.is_enabled(plugin_id):
+    manifest = get_plugin(plugin_id) if plugin_id else None
+    if manifest is None or _CAP not in manifest.provides or not plugin_host.is_enabled(plugin_id):
         return None
     return clean_url(plugin_host.effective_settings(plugin_id).get("url"))
 
@@ -215,27 +209,26 @@ def configured_server_url() -> str | None:
     return provider_url(default_provider_id())
 
 
-def _plugin_part(plugin_id: str, what: str, url: str | None = None):
-    """The throw-away plugin instance's accessor `what` (`slicing_provider` | `gcode_producer`) called with the resolved URL (given,
-    else `provider_url`), or None when the plugin is unconfigured, has invalid settings, or lacks the accessor."""
-    from ...plugins import PluginError
+def _plugin_part(plugin_id: str, what: str):
+    """Ask an enabled slicing plugin for its adapter. The plugin decides which settings it needs."""
+    from ...plugins import PluginError, get_plugin
     from ...plugins.host import plugin_host
 
-    url = url or provider_url(plugin_id)
-    if not url:
+    manifest = get_plugin(plugin_id)
+    if manifest is None or _CAP not in manifest.provides or not plugin_host.is_enabled(plugin_id):
         return None
     # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
     # adapter and its connection options (timeouts); core only asks the host for it (BIZ-288).
     try:
         instance = plugin_host.build_candidate(plugin_id)
     except PluginError as e:                        # invalid saved settings: treat like unconfigured rather than crash the caller
-        logger.warning("Laminus settings are invalid, slicing is unavailable until they are fixed: %s", e)
+        logger.warning("%s settings are invalid, slicing is unavailable until they are fixed: %s", manifest.name, e)
         return None
     make = getattr(instance, what, None)
     if make is None:                                # a plugin that declares gcode.produce but lacks the accessor: unavailable
         logger.warning("Plugin %s provides gcode.produce but exposes no %s(); slicing is unavailable", plugin_id, what)
         return None
-    return make(url)
+    return make()
 
 
 def slicing_provider_for(plugin_id: str | None) -> SlicingProvider | None:
@@ -251,20 +244,17 @@ def gcode_producer_for(plugin_id: str | None):
 
 def get_slicing_provider() -> SlicingProvider | None:
     """The default slicing provider, or None when none is configured."""
-    pid = default_provider_id()
-    return _plugin_part(pid, "slicing_provider", configured_server_url()) if pid else None
+    return slicing_provider_for(default_provider_id())
 
 
-def get_format_provider() -> FormatProvider:
+def get_format_provider(provider_id: str | None = None) -> FormatProvider:
     """The offline `FormatProvider` for local file-format work (curated settings, estimates, override inspection).
     Unlike `get_slicing_provider()` it never returns None and never needs a configured server: it is a different
     object from the slicing provider (no URL, no network). `compatible_presets` needs a catalog, so it stays on
     `SlicingProvider` (use `get_slicing_provider()`)."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    # The format reader follows the default slicing plugin (it speaks that engine's vocabulary); a plugin with no reader of its own
-    # falls back to the bundled one, so this never returns None.
-    cls = _FORMAT_REGISTRY.get(default_provider_id() or "") or _FORMAT_REGISTRY[_FORMAT_PLUGIN]
+    cls = _FORMAT_REGISTRY.get(provider_id or default_provider_id() or "") or _FORMAT_REGISTRY[_FORMAT_PLUGIN]
     return cls()
 
 

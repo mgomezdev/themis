@@ -55,6 +55,7 @@ export interface PrinterModelEntry {
   dormant_reason: 'plugin_removed' | 'plugin_disabled' | 'model_removed' | null;
   printer_count: number;              // printers that reference this model (a dormant model stays while referenced)
   slicer_profile_count?: number;      // slicer machine profiles mapped for this model (BIZ-294); absent on a PATCH response
+  default_slicer_plugin_id?: string | null;
 }
 
 export interface LoadedFilament {
@@ -124,6 +125,10 @@ export interface ApiPrinter {
   bed_z_mm: number | null;               // BIZ-363: build height; null = the machine profile's (Review fit check)
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
   preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
+  model_slicer_plugin_id?: string | null;
+  brand_slicer_plugin_id?: string | null;
+  print_artifact_kind?: 'gcode' | 'gcode_3mf';
+  slicer_plugin_id?: string | null;
   /** Slicer setting overrides for every job this printer slices; the job's and the 3MF's own changes win over them. */
   slice_overrides: Record<string, string>;
   default_process_profile: string | null;   // what a "Printer default" job config slices with; null = none set
@@ -184,8 +189,9 @@ export interface MachinePreset {
   source: 'system' | 'user';
 }
 
-export function fetchMachineCatalog(): Promise<MachinePreset[]> {
-  return request(`${BASE}/orca-machine-catalog`);
+export function fetchMachineCatalog(providerId?: string): Promise<MachinePreset[]> {
+  const query = providerId ? `?provider_plugin_id=${encodeURIComponent(providerId)}` : '';
+  return request(`${BASE}/orca-machine-catalog${query}`);
 }
 
 export function rescanProfiles(): Promise<{ machine_presets: number }> {
@@ -201,9 +207,25 @@ export function fetchPrinterModels(): Promise<PrinterModelEntry[]> {
 }
 
 export function setPrinterModelEnabled(id: string, enabled: boolean): Promise<PrinterModelEntry> {
+  return updatePrinterModel(id, { enabled });
+}
+
+export function updatePrinterModel(id: string, body: { enabled?: boolean; default_slicer_plugin_id?: string | null }): Promise<PrinterModelEntry> {
   return request(`/api/v1/printer-models/${encodeURIComponent(id)}`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
+}
+
+export type PrinterSlicerDraft = Pick<UpdatePrinterBody, 'preferred_slicer_plugin_id' | 'nozzle_variant' | 'machine_profile_override'>;
+
+export function printerSlicerPatch(draft: PrinterSlicerDraft, printer: ApiPrinter): PrinterSlicerDraft {
+  const override = draft.machine_profile_override?.trim() || null;
+  return {
+    nozzle_variant: draft.nozzle_variant ?? null,
+    ...(draft.preferred_slicer_plugin_id !== (printer.preferred_slicer_plugin_id ?? null)
+      ? { preferred_slicer_plugin_id: draft.preferred_slicer_plugin_id } : {}),
+    ...(override !== (printer.machine_profile_override || null) ? { machine_profile_override: override } : {}),
+  };
 }
 
 export function fetchPrinters(): Promise<ApiPrinter[]> {

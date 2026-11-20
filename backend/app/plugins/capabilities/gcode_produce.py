@@ -15,15 +15,12 @@ CAPABILITY = "gcode.produce"
 
 @runtime_checkable
 class SlicingPlugin(Protocol):
-    def slicing_provider(self, url: str | None = None) -> Any:
-        """The plugin's `SlicingProvider` adapter carrying its connection options; None while the plugin is unconfigured."""
-
     def gcode_producer(self, url: str | None = None) -> Any:
-        """The plugin's neutral `GcodeProducer` (identity, `status`, `supports_target`) over that adapter; None while unconfigured."""
+        """Return the plugin's print artifact producer, or None while unconfigured."""
 
 
 DEFINITION = CapabilityDef(
-    id=CAPABILITY, version=1, label="G-code producer", mode="choose_one", protocol=SlicingPlugin,
-    description="Slices a model into G-code for a target printer (Laminus today); one enabled provider is the default.")
+    id=CAPABILITY, version=1, label="Print artifact converter", mode="choose_one", protocol=SlicingPlugin,
+    description="Converts a model to the file format requested by its target printer. The capability default is used when no specific rule applies.")
 
 GCODE_PRODUCE: RoutedCapability[SlicingPlugin] = RoutedCapability(CAPABILITY)

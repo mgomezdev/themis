@@ -78,6 +78,39 @@ describe('CapabilitiesPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('missing scope');
   });
 
+  it('filters converters by the printer artifact and saves a separate brand preference', async () => {
+    const path = '/api/v1/settings/print-conversion';
+    const api = stubFetch({
+      'GET /api/v1/plugins': PLUGINS,
+      'GET /api/v1/capabilities': { capabilities: [cap({ id: 'gcode.produce', mode: 'choose_one' })] },
+      [`GET ${path}`]: {
+        providers: [
+          { id: 'raw', name: 'Raw converter', inputs: ['stl'], outputs: ['gcode'] },
+          { id: 'archive', name: 'Archive converter', inputs: ['stl'], outputs: ['gcode_3mf'] },
+        ],
+        routes: [
+          { input_kind: 'stl', output_kind: 'gcode', provider_plugin_id: null },
+          { input_kind: 'stl', output_kind: 'gcode_3mf', provider_plugin_id: null },
+        ],
+        brands: [{ id: 'bambu', name: 'Bambu Lab', provider_plugin_id: null }],
+      },
+      [`PUT ${path}/routes/stl/gcode_3mf`]: { provider_plugin_id: 'archive' },
+      [`PUT ${path}/brands/bambu`]: { provider_plugin_id: 'archive' },
+    });
+    render(<CapabilitiesPage />);
+
+    const archive = await screen.findByRole('combobox', { name: '.stl → .gcode.3mf' });
+    expect([...archive.querySelectorAll('option')].map(o => o.textContent)).toEqual(['Capability default', 'Archive converter']);
+    await userEvent.selectOptions(archive, 'archive');
+    await waitFor(() => expect(archive).toHaveValue('archive'));
+    expect(api.to('PUT', `${path}/routes/stl/gcode_3mf`)[0].body).toEqual({ provider_plugin_id: 'archive' });
+    expect(screen.getByRole('combobox', { name: '.stl → .gcode' })).toHaveValue('');
+
+    await userEvent.click(screen.getByText('Brand preferences'));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Preferred converter for Bambu Lab' }), 'archive');
+    await waitFor(() => expect(api.to('PUT', `${path}/brands/bambu`)[0].body).toEqual({ provider_plugin_id: 'archive' }));
+  });
+
   describe('resolution modes (BIZ-250)', () => {
     const slicers = (over: Record<string, unknown> = {}) => cap({
       id: 'acme.slicing', label: 'Slicing', mode: 'choose_one', selected: 'laminus', status: 'serving',

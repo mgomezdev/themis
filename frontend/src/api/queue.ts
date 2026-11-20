@@ -243,8 +243,8 @@ export async function getEmbeddedSettings(fileId: number): Promise<EmbeddedSetti
   return request(`/api/v1/files/${fileId}/embedded-settings`);
 }
 
-export async function getPrinterProfiles(printerId: number): Promise<PrinterProfiles> {
-  return request(`/api/v1/printers/${printerId}/profiles`);
+export async function getPrinterProfiles(printerId: number, fileId?: number | null): Promise<PrinterProfiles> {
+  return request(`/api/v1/printers/${printerId}/profiles${fileId == null ? '' : `?file_id=${fileId}`}`);
 }
 
 export async function createJob(body: {
