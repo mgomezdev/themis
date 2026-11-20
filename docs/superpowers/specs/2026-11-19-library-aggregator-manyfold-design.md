@@ -48,10 +48,11 @@ content hash and revision; job/project creation materializes before linking it. 
 local library with catalog records without requiring remote I/O to list previously synchronized metadata.
 
 Canonicalization is provider-owned: resolve accepted file-page and raw-download forms to the stable file-page URL;
-strip query/fragment/trailing slash and normalize scheme/host. BIZ-348 calls for an HTTPS canonical identity even where
-transport uses an explicitly configured local HTTP origin: retain the configured transport origin separately and never
-rewrite a download to a different host. Reject URL userinfo; preserve case-sensitive paths and opaque IDs. Hostname changes
-remain an accepted identity break; do not silently merge across hosts.
+strip query/fragment/trailing slash and normalize scheme/host. Preserve the configured HTTP/HTTPS scheme: the recorded
+local Manyfold deployment uses HTTP and a forced HTTPS link would not work without a TLS endpoint. Reject URL userinfo;
+preserve case-sensitive paths and opaque IDs. Source hostname/scheme changes remain an identity break; do not silently
+merge across origins. The adapter never forwards credentials to a foreign content URL or follows redirects.
+
 
 ## Sync and cache lifecycle
 

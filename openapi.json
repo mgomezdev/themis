@@ -4891,6 +4891,183 @@
         }
       }
     },
+    "/api/v1/library/sources": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Sources",
+        "operationId": "sources_api_v1_library_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/sources/{plugin_id}/sync": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Sync Source",
+        "operationId": "sync_source_api_v1_library_sources__plugin_id__sync_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/entries": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Entries",
+        "operationId": "entries_api_v1_library_entries_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogListOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/entries/{entry_id}": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Entry Detail",
+        "operationId": "entry_detail_api_v1_library_entries__entry_id__get",
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogEntryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "tags": [
@@ -12238,6 +12415,83 @@
         ],
         "title": "Body_upload_to_printer_api_v1_printers__printer_id__upload_post"
       },
+      "CatalogEntryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "provider_plugin_id": {
+            "type": "string",
+            "title": "Provider Plugin Id"
+          },
+          "source_file_id": {
+            "type": "string",
+            "title": "Source File Id"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "missing": {
+            "type": "boolean",
+            "title": "Missing"
+          },
+          "cached_file_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached File Id"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "provider_plugin_id",
+          "source_file_id",
+          "source_url",
+          "name",
+          "missing",
+          "cached_file_id",
+          "metadata"
+        ],
+        "title": "CatalogEntryOut"
+      },
+      "CatalogListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogEntryOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "CatalogListOut"
+      },
       "ChamberTempBody": {
         "properties": {
           "celsius": {
@@ -16795,6 +17049,74 @@
         ],
         "title": "SlicerSendInput"
       },
+      "SourceOut": {
+        "properties": {
+          "plugin_id": {
+            "type": "string",
+            "title": "Plugin Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plugin_id",
+          "name",
+          "enabled",
+          "active",
+          "error",
+          "last_sync_at"
+        ],
+        "title": "SourceOut"
+      },
+      "SourcesOut": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceOut"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "title": "SourcesOut"
+      },
       "SpoolIn": {
         "properties": {
           "material_ref": {
@@ -16973,6 +17295,24 @@
           "sync_interval_minutes"
         ],
         "title": "SpoolmanConfigOut"
+      },
+      "SyncOut": {
+        "properties": {
+          "entries": {
+            "type": "integer",
+            "title": "Entries"
+          },
+          "full_scan": {
+            "type": "boolean",
+            "title": "Full Scan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entries",
+          "full_scan"
+        ],
+        "title": "SyncOut"
       },
       "SyncStatusResponse": {
         "properties": {

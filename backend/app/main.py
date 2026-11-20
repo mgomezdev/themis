@@ -29,6 +29,7 @@ from .api.routes.cameras import router as cameras_router
 from .api.routes.customers import router as customers_router
 from .api.routes.project_groups import router as project_groups_router
 from .api.routes.files import router as files_router
+from .api.routes.library_catalog import router as library_catalog_router
 from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
@@ -238,6 +239,7 @@ app.include_router(printer_models_router)
 app.include_router(printer_model_slicer_profiles_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
+app.include_router(library_catalog_router)
 app.include_router(jobs_router)
 app.include_router(job_fields_router)
 app.include_router(alarms_router)
