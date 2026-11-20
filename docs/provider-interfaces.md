@@ -245,9 +245,9 @@ suites. Those remain the owners of behaviour; the shared suite only checks what 
 | Capability | Mode | Required operations (a provider without one is rejected) | Optional: feature flags (each gates specific operations; claim only what works) |
 |---|---|---|---|
 | `inventory.filament` | exclusive | `get_spool`, `list_materials`, `list_spools`, `test_connection` | `LABEL_SCAN`, `MANAGE_MATERIALS`, `MANAGE_SPOOLS`, `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `REMOTE`, `TRACKS_WEIGHT`, `WRITE_WEIGHT` |
-| `printer.client` | routed | `connect`, `connected`, `delete_file`, `disconnect`, `download_file`, `get_alarms`, `get_capabilities`, `home`, `home_axes`, `is_idle`, `is_printing`, `jog`, `jog_z`, `list_files`, `orca_export_args`, `pause_print`, `request_status_update`, `resume_print`, `send_gcode`, `set_bed_temp`, `set_chamber_light`, `set_chamber_temp`, `set_fan_speeds`, `set_nozzle_temp`, `start_print`, `stop_print`, `upload_file` | none defined |
+| `printer.client` | routed | `connect`, `connected`, `delete_file`, `disconnect`, `download_file`, `get_alarms`, `get_capabilities`, `home`, `home_axes`, `is_idle`, `is_printing`, `jog`, `jog_z`, `list_files`, `pause_print`, `request_status_update`, `resume_print`, `send_gcode`, `set_bed_temp`, `set_chamber_light`, `set_chamber_temp`, `set_fan_speeds`, `set_nozzle_temp`, `start_print`, `stop_print`, `upload_file` | none defined |
 | `notify.channel` | fan_out | `deliver`, `test_connection` | none defined |
-| `gcode.produce` | choose_one | `gcode_producer`, `slicing_provider` | none defined |
+| `gcode.produce` | choose_one | `gcode_producer` | none defined |
 | `3mf.construct` | exclusive | `project_constructor` | none defined |
 | `library.source` | routed | `describe`, `download`, `list_catalog`, `test_connection` | `BACKLINK`, `BROWSE` |
 
@@ -261,6 +261,9 @@ capability does not define is rejected; a plugin-defined capability that lists n
 `UiContribution`; events (`subscribes`/`defines_events`); `optional` capabilities. Printer vendor plugins serve `printer.client`
 through their client class (the plugin's `factory`) instead of a `provides` entry; `test_every_bundled_printer_plugin_satisfies_the_printer_client_contract`
 holds that class to the same operation list.
+
+Printer clients declare their required print file with `print_artifact_kind`. The default is `gcode`, and archive-based printers can
+declare `gcode_3mf`. The job handler uses this format to choose a compatible `gcode.produce` provider for a model file.
 
 ### What the shared suite asserts, per capability
 
