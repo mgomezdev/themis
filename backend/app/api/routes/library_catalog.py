@@ -180,3 +180,59 @@ async def materialize_entry(
         ) from None
     except (MaterializationError, CatalogSyncError) as exc:
         raise HTTPException(502, str(exc)) from None
+
+
+class FileSourceOriginOut(BaseModel):
+    file_id: int
+    entry_id: str
+    provider_plugin_id: str
+    source_url: str
+    revision: str | None
+    downloaded_at: str
+    metadata: dict
+    is_latest: bool
+    source_missing: bool
+
+
+class FileSourceOriginResponse(BaseModel):
+    origin: FileSourceOriginOut | None
+
+
+@router.get(
+    "/files/{file_id}/origin",
+    response_model=FileSourceOriginResponse,
+    dependencies=[Depends(require_scope("files:read"))],
+)
+async def file_source_origin(
+    file_id: int, session: AsyncSession = Depends(get_session)
+):
+    from ...models import LibrarySourceRevision, UploadedFile
+
+    if await session.get(UploadedFile, file_id) is None:
+        raise HTTPException(404, "Local file not found")
+    result = (
+        await session.execute(
+            select(LibrarySourceRevision, LibraryCatalogEntry)
+            .join(
+                LibraryCatalogEntry,
+                LibraryCatalogEntry.id == LibrarySourceRevision.entry_id,
+            )
+            .where(LibrarySourceRevision.file_id == file_id)
+        )
+    ).first()
+    if result is None:
+        return FileSourceOriginResponse(origin=None)
+    revision, entry = result
+    return FileSourceOriginResponse(
+        origin=FileSourceOriginOut(
+            file_id=file_id,
+            entry_id=entry.id,
+            provider_plugin_id=entry.provider_plugin_id,
+            source_url=revision.descriptor["source_url"],
+            revision=revision.revision,
+            downloaded_at=revision.downloaded_at,
+            metadata=revision.descriptor,
+            is_latest=entry.cached_file_id == file_id,
+            source_missing=entry.missing,
+        )
+    )

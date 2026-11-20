@@ -205,3 +205,57 @@ describe('FilesScreen', () => {
     expect(screen.getByRole('button', { name: 'Delete folder' })).toBeDisabled();
   });
 });
+
+
+it('opens a local file from a deep link and closes it without reopening', async () => {
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  await screen.findByText('File details');
+  fireEvent.click(screen.getByTitle('Close'));
+  await waitFor(() => expect(screen.queryByText('File details')).not.toBeInTheDocument());
+});
+
+it('shows historical source attribution and keeps source failures separate from local file actions', async () => {
+  const baseFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/v1/library/files/1/origin') return new Response(JSON.stringify({ origin: {
+      file_id: 1, entry_id: 'entry', provider_plugin_id: 'fixture', source_url: 'https://source.test/one', revision: 'v1',
+      downloaded_at: '2026-11-20T00:00:00Z', metadata: { creator: { name: 'Original artist' }, license_code: 'CC-BY-4.0' },
+      is_latest: false, source_missing: true,
+    } }), { status: 200 });
+    return baseFetch(url, init);
+  }));
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  const origin = await screen.findByTestId('source-attribution');
+  expect(origin).toHaveTextContent('Original artist');
+  expect(origin).toHaveTextContent('CC-BY-4.0');
+  expect(origin).toHaveTextContent('Earlier local revision');
+  expect(origin).toHaveTextContent('Missing at source; local file retained.');
+  expect(screen.getByRole('link', { name: 'Open in source' })).toHaveAttribute('href', 'https://source.test/one');
+});
+
+it('retries attribution errors while leaving local file actions available', async () => {
+  const baseFetch = globalThis.fetch;
+  let attempts = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/v1/library/files/1/origin') {
+      attempts++;
+      return attempts === 1
+        ? new Response(JSON.stringify({ detail: 'Temporary attribution failure' }), { status: 503 })
+        : new Response(JSON.stringify({ origin: null }), { status: 200 });
+    }
+    return baseFetch(url, init);
+  }));
+  render(<MemoryRouter initialEntries={['/files?file=1']}><FilesScreen /></MemoryRouter>);
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: /Use in new job/i })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry source attribution' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  expect(attempts).toBe(2);
+});
+
+
+it.each(['-1', '0', 'bad', '99999'])('ignores an invalid or absent local file deep link: %s', async id => {
+  render(<MemoryRouter initialEntries={[`/files?file=${id}`]}><FilesScreen /></MemoryRouter>);
+  await screen.findByText('arm.3mf');
+  expect(screen.queryByText('File details')).not.toBeInTheDocument();
+});

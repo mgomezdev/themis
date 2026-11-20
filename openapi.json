@@ -5110,6 +5110,48 @@
         }
       }
     },
+    "/api/v1/library/files/{file_id}/origin": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "File Source Origin",
+        "operationId": "file_source_origin_api_v1_library_files__file_id__origin_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileSourceOriginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "tags": [
@@ -13054,6 +13096,86 @@
           "file_id"
         ],
         "title": "FileRef"
+      },
+      "FileSourceOriginOut": {
+        "properties": {
+          "file_id": {
+            "type": "integer",
+            "title": "File Id"
+          },
+          "entry_id": {
+            "type": "string",
+            "title": "Entry Id"
+          },
+          "provider_plugin_id": {
+            "type": "string",
+            "title": "Provider Plugin Id"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "downloaded_at": {
+            "type": "string",
+            "title": "Downloaded At"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "is_latest": {
+            "type": "boolean",
+            "title": "Is Latest"
+          },
+          "source_missing": {
+            "type": "boolean",
+            "title": "Source Missing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id",
+          "entry_id",
+          "provider_plugin_id",
+          "source_url",
+          "revision",
+          "downloaded_at",
+          "metadata",
+          "is_latest",
+          "source_missing"
+        ],
+        "title": "FileSourceOriginOut"
+      },
+      "FileSourceOriginResponse": {
+        "properties": {
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FileSourceOriginOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin"
+        ],
+        "title": "FileSourceOriginResponse"
       },
       "FleetImportReport": {
         "properties": {

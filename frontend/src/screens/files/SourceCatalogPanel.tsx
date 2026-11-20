@@ -73,6 +73,7 @@ export function SourceCatalogPanel() {
       {prepared[entry.id] && <div>
         {prepared[entry.id].warning && <p role="alert">{prepared[entry.id].warning}</p>}
         <span>{prepared[entry.id].fresh ? 'Local file ready. ' : 'Last-known local file ready. '}</span>
+        <Link to={`/files?file=${prepared[entry.id].file_id}`}>Open local details</Link>{' · '}
         <Link to="/queue/new" state={{ libraryFileId: prepared[entry.id].file_id }}>Use in job</Link>
         <p className="small muted">Also available in the local library for projects.</p>
       </div>}</td>

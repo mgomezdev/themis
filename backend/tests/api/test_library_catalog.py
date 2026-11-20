@@ -87,6 +87,9 @@ async def test_catalog_read_and_sync_have_separate_file_scopes(client, session_f
             await reader.post("/api/v1/library/sources/none/sync")
         ).status_code == 403
         assert (await unrelated.get("/api/v1/library/entries")).status_code == 403
+        assert (
+            await unrelated.get("/api/v1/library/files/1/origin")
+        ).status_code == 403
 
 
 async def test_source_errors_are_redacted_in_response_and_persisted_catalog_state(
@@ -169,7 +172,15 @@ async def test_materialization_routes_real_local_file_and_reports_disabled_sourc
     downloaded = await client.get(f"/api/v1/files/{result['file_id']}/download")
     assert downloaded.status_code == 200
     assert downloaded.content == b"solid part\nendsolid part\n"
+    origin = (
+        await client.get(f"/api/v1/library/files/{result['file_id']}/origin")
+    ).json()["origin"]
+    assert_carries("file_source_origin", origin)
+    assert origin["source_url"] == "https://source.test/one" and origin["is_latest"]
     await client.put("/api/v1/plugins/downloads", json={"enabled": False})
+    assert (
+        await client.get(f"/api/v1/library/files/{result['file_id']}/origin")
+    ).json()["origin"] == origin
     cached = await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
     assert cached.status_code == 200 and not cached.json()["fresh"]
     assert (
@@ -179,3 +190,21 @@ async def test_materialization_routes_real_local_file_and_reports_disabled_sourc
     assert (
         await client.post("/api/v1/library/entries/absent/materialize")
     ).status_code == 404
+
+
+async def test_local_files_have_no_invented_source_and_missing_file_is_404(
+    client, session_factory
+):
+    from app.models import UploadedFile
+
+    async with session_factory() as session:
+        file = UploadedFile(
+            original_filename="local.stl", relative_path="local.stl", uploaded_at="now"
+        )
+        session.add(file)
+        await session.commit()
+        file_id = file.id
+    assert (await client.get(f"/api/v1/library/files/{file_id}/origin")).json() == {
+        "origin": None
+    }
+    assert (await client.get("/api/v1/library/files/99999/origin")).status_code == 404

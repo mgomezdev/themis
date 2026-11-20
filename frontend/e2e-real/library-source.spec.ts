@@ -60,4 +60,10 @@ test('source catalog materializes revisioned local files and stays usable after 
   await expect(row.getByRole('link', { name: 'Use in job' })).toBeVisible();
   const retained = await api('GET', `/library/entries/${catalog.id}`);
   expect(retained.cached_file_id).toBe(second.cached_file_id);
+  await row.getByRole('link', { name: 'Open local details' }).click();
+  await expect(page).toHaveURL(new RegExp(`/files\\?file=${second.cached_file_id}$`));
+  await expect(page.getByTestId('source-attribution')).toContainText('Browser fixture artist');
+  await expect(page.getByTestId('source-attribution')).toContainText('CC-BY-4.0');
+  await page.goto(`/files?file=${first.cached_file_id}`);
+  await expect(page.getByTestId('source-attribution')).toContainText('Earlier local revision');
 });

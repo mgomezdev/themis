@@ -400,3 +400,13 @@ sync remains available). Busy sources retry on the next poll. Sources run in
 separate retained tasks, so a slow catalog does not block another provider.
 Shutdown cancels and reaps all source tasks. Scheduled sync never materializes
 bytes or writes backlinks.
+
+
+Prepared source entries offer **Open local details**, linking to `/files?file=<id>`.
+The file drawer shows the creator, raw source license and source URL recorded at
+download, without contacting the source. Older local revisions remain addressable
+and are labeled when another revision is the catalog's current local copy. Source
+absence and disabled plugins do not erase this attribution. Ordinary local uploads
+have no invented source attribution. An attribution-read failure can be retried
+without preventing local file actions. These source facts are separate from the
+shared license assignments and warning badges still being implemented.
