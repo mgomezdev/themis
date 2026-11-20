@@ -385,6 +385,10 @@ async def _parked(session_factory):
 
 async def test_a_delivery_that_already_used_all_its_attempts_is_dead_without_running_again(hub, session_factory, monkeypatch):
     monkeypatch.setattr(hubmod, "MAX_ATTEMPTS", 3)
+    # This test constructs a post-crash row. A running dispatcher can consume it
+    # between _stage() and _set(), before its exhausted attempt count is written.
+    hub._s.loop_task.cancel()
+    await asyncio.gather(hub._s.loop_task, return_exceptions=True)
     calls = []
 
     async def handler(e):
@@ -394,8 +398,8 @@ async def test_a_delivery_that_already_used_all_its_attempts_is_dead_without_run
     await _stage(hub, session_factory, complete(1))
     (d,) = await deliveries(session_factory)
     await _set(session_factory, EventDelivery, d.id, attempts=3)   # as left by a handler that killed the process three times
-    hub.wake()
-    (d,) = await wait_until(lambda: _with_status(session_factory, "dead"), what="dead delivery")
+    await hub.deliver_pending()
+    (d,) = await _with_status(session_factory, "dead")
     assert calls == [] and "attempts exhausted" in d.last_error
 
 
