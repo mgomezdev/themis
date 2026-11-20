@@ -18,6 +18,10 @@ BACKLINK = "BACKLINK"
 BROWSE = "BROWSE"
 
 
+class SourceFileMissing(ValueError):
+    """The requested source-file identity is no longer accessible (not an outage)."""
+
+
 @dataclass(frozen=True)
 class SourceCreator:
     id: str
@@ -47,6 +51,9 @@ class CatalogPage:
     # True only for pages from an authoritative full sweep. A consumer may mark
     # missing records only after EVERY page succeeds and next_cursor is None.
     full_scan: bool = False
+    # Offset-paginated APIs can shift while being read. Before marking an unseen
+    # entry missing, confirm its identity with describe(); outages are not absence.
+    confirm_missing: bool = False
 
 
 @dataclass(frozen=True)

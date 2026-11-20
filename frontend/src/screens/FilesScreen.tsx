@@ -19,6 +19,7 @@ import {
 import type { CachedVersionRef, FileKindFilter } from '../api/files';
 import { useTags } from '../api/tags';
 import { FolderCard } from './files/FolderTree';
+import { SourceCatalogPanel } from './files/SourceCatalogPanel';
 import { FacetGroup, FilterCard } from './files/FilterCard';
 import { FileDetailPanel, FileThumb } from './files/FileDetailPanel';
 import { versionSummary } from './files/palette';
@@ -31,13 +32,13 @@ import { DeleteVersionsDialog, FolderPicker } from './files/dialogs';
 // Empty root for the folder tree before /dirs resolves.
 const EMPTY_TREE: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
 
-function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'manyfold') => void }) {
+function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'sources') => void }) {
   return (
     <div className="row gap-2" style={{ marginBottom: 14 }}>
       <button className={`btn sm ${tab === 'library' ? 'primary' : 'ghost'}`}
               onClick={() => setTab('library')}>Library</button>
-      <button className={`btn sm ${tab === 'manyfold' ? 'primary' : 'ghost'}`}
-              onClick={() => setTab('manyfold')}>Manyfold</button>
+      <button className={`btn sm ${tab === 'sources' ? 'primary' : 'ghost'}`}
+              onClick={() => setTab('sources')}>Sources</button>
     </div>
   );
 }
@@ -48,7 +49,7 @@ function FilesTabBar({ tab, setTab }: { tab: string; setTab: (t: 'library' | 'ma
 
 export function FilesScreen() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'library' | 'manyfold'>('library');
+  const [tab, setTab] = useState<'library' | 'sources'>('library');
   const [currentFolder, setCurrentFolder] = useState('');
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [sort, setSort] = useState('updated');
@@ -263,18 +264,13 @@ export function FilesScreen() {
   // keep the open detail panel in sync with the latest file data after refetch
   const selectedLive = selected ? files.find(f => f.id === selected.id) ?? null : null;
 
-  // -- manyfold tab ------------------------------------------------------
+  // -- source catalogs --------------------------------------------------
 
-  if (tab === 'manyfold') {
+  if (tab === 'sources') {
     return (
       <div>
         <FilesTabBar tab={tab} setTab={setTab} />
-        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-          <div style={{ fontSize: 18, fontWeight: 600 }}>Manyfold integration</div>
-          <div className="muted" style={{ marginTop: 8 }}>
-            Coming soon — sync this library with a Manyfold server.
-          </div>
-        </div>
+        <SourceCatalogPanel />
       </div>
     );
   }

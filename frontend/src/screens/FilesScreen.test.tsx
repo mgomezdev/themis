@@ -13,6 +13,8 @@ const TAGS = [{ id: 1, name: 'PLA', color: '#fff', category: 'Material', usage_c
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
     if (url.startsWith('/api/v1/tags')) return new Response(JSON.stringify(TAGS), { status: 200 });
     if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
       { name: 'All files', path: '', count: 1, children: {} }), { status: 200 });
@@ -29,10 +31,10 @@ describe('FilesScreen', () => {
     await waitFor(() => expect(screen.getByText('arm.3mf')).toBeInTheDocument());
   });
 
-  it('shows the Manyfold placeholder when that tab is selected', async () => {
+  it('shows generic source setup when the Sources tab is selected', async () => {
     render(<MemoryRouter><FilesScreen /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: /Manyfold/i }));
-    await waitFor(() => expect(screen.getByText(/coming soon/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Sources/i }));
+    await waitFor(() => expect(screen.getByText(/No library sources are installed/i)).toBeInTheDocument());
   });
 
   it('selects multiple files and bulk-deletes them', async () => {
@@ -43,7 +45,9 @@ describe('FilesScreen', () => {
         plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
         { name: 'All files', path: '', count: 2, children: {} }), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(
@@ -76,7 +80,9 @@ describe('FilesScreen', () => {
         plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
         { name: 'All files', path: '', count: 1,
           children: { Archive: { name: 'Archive', path: '/Archive', count: 0, children: {} } } }),
@@ -105,7 +111,9 @@ describe('FilesScreen', () => {
       children: { Empty: { name: 'Empty', path: '/Empty', count: 0, children: {} } },
     };
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 }); // no files anywhere
@@ -137,7 +145,9 @@ describe('FilesScreen', () => {
       children: { Customers: { name: 'Customers', path: '/Customers', count: 0, children: {} } },
     };
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/folders')) return new Response(
@@ -173,7 +183,9 @@ describe('FilesScreen', () => {
       },
     };
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/library/sources')) return new Response(JSON.stringify({ sources: [] }), { status: 200 });
+    if (url.startsWith('/api/v1/library/entries')) return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
       if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 });

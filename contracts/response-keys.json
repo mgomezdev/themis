@@ -530,5 +530,23 @@
   ],
   "slot_conflicts": [
     "conflicts"
+  ],
+  "library_source": [
+    "plugin_id",
+    "name",
+    "enabled",
+    "active",
+    "error",
+    "last_sync_at"
+  ],
+  "catalog_entry": [
+    "id",
+    "provider_plugin_id",
+    "source_file_id",
+    "source_url",
+    "name",
+    "missing",
+    "cached_file_id",
+    "metadata"
   ]
 }

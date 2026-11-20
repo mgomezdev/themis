@@ -22,7 +22,9 @@ const MONO = {
   progress: 0, remaining_time: 0, temperatures: { nozzle: 25, bed: 25 }, loaded_filaments: [],
 };
 const PROFILES = { print_profiles: ['0.20mm Standard', '0.08 Extra Fine'], filament_profiles: ['Generic PLA @System', 'Generic PETG @System', 'Generic TPU @System'] };
-const FILE = { id: 1, original_filename: 'multi.3mf', folder: '/', plate_count: 2, kind: '3mf', sliced_version_count: 0, sliced_version: null };
+const FILE = { id: 1, original_filename: 'multi.3mf', relative_path: 'multi.3mf', folder: '/', plate_count: 2, kind: '3mf',
+  size_bytes: 0, uploaded_at: '2026-01-01T00:00:00Z', missing: false, tags: [], thumbnail_url: null,
+  plate_thumbnails: [], sliced_version_count: 0, sliced_version: null };
 const PLATES = [
   { plate_number: 1, estimated_time: 3600, filament_g: 12, thumbnail_path: null },
   { plate_number: 2, estimated_time: 1800, filament_g: 6, thumbnail_path: null },
@@ -96,6 +98,8 @@ export async function mockApi(page: Page, over: Partial<{
     if ((m = path.match(/^\/printers\/(\d+)\/profiles$/))) return ok(route, profiles);
     if ((m = path.match(/^\/printers\/(\d+)$/))) return ok(route, printers.find(p => p.id === +m[1]) ?? {});
     if (path === '/files') return ok(route, files);
+    if (path === '/files/dirs') return ok(route, { name: 'All files', path: '', count: files.length, children: {} });
+    if (path === '/tags') return ok(route, []);
     if ((m = path.match(/^\/files\/(\d+)\/plates$/))) {
       const file = files.find(f => f.id === +m[1]) ?? files[0];
       return ok(route, { filename: file?.original_filename ?? '', plates: over.platesByFile?.[+m[1]] ?? plates });

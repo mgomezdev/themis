@@ -343,3 +343,31 @@ failure). Core never changes. `deliver(ChannelMessage)` returns `ChannelResult` 
 `test_connection()` powers the page's **Test connection** button. Secrets belong in `secret_fields` (write-only; errors are redacted).
 A channel failure shows as the plugin's `last_error`; `ChannelMessage.message_id` is stable per notification if a channel retries.
 Webhooks for companion apps are a separate mechanism (`docs/companion-apps.md`).
+
+## Manyfold library source
+
+Manyfold is bundled but disabled by default. It reads a complete catalog of accessible model files; synchronization
+fetches metadata, not model bytes. Existing local files remain under Files → Library. Files → Sources lists configured
+sources and their cached catalog, with Sync now, errors and pagination. Disabling a source retains its synchronized
+metadata and existing local files. This first source UI does not yet materialize catalog entries into new jobs/projects;
+those actions and scheduled synchronization follow the source/catalog boundary under BIZ-348.
+
+Create an OAuth application in Manyfold at `/oauth/applications`, owned by the account whose library should be visible.
+Grant `public` and `read`; this implementation never requests write/delete/upload. Follow the instance UI's redirect-URI
+requirements (client credentials do not navigate a redirect). In Themis Settings → Plugins, enable Manyfold, then open its settings and enter the base URL,
+OAuth client ID and client secret. Save and test the connection. The secret is a write-only plugin secret field.
+Use Sync now in Files → Sources to retrieve the catalog. A read error preserves the prior catalog instead of treating
+an unavailable source as an empty library.
+
+The adapter targets the [v0.153.0 API schema](https://github.com/manyfold3d/manyfold/blob/v0.153.0/app/api/v0/openapi.json)
+and [OAuth initializer](https://github.com/manyfold3d/manyfold/blob/v0.153.0/config/initializers/doorkeeper.rb).
+The initializer enables client-credentials grants, public as the default scope and read/write/delete/upload as optional
+scopes. Requests currently send client credentials as form parameters; compatibility with the operator's instance must
+be verified when credentials are configured. Tests use versioned wire shapes and a local HTTP transport, not a live account.
+
+Pagination uses Hydra `member`/`view.next`; the API has no documented `changed_since` filter. Because offset pages can
+shift while a library changes, unseen files are checked individually before being marked missing. Only an inaccessible
+file identity confirms absence; a creator lookup failure, authentication error or outage does not. Backlinks are not
+advertised or written. File downloads are explicit provider operations with size/revision checks; responses and streams
+are bounded and kept on the configured origin. Do not point this connection at a different server as an identity-migration
+shortcut: source URLs are part of catalog identity.

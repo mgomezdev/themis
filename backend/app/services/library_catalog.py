@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -12,12 +13,17 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.sqlite import insert
 
 from ..models import LibraryCatalogEntry, LibraryCatalogSyncLease
-from ..plugins.capabilities.library_source import LIBRARY_SOURCE, CatalogPage, SourceFile
+from ..plugins.capabilities.library_source import LIBRARY_SOURCE, CatalogPage, SourceFile, SourceFileMissing
 
 LEASE_SECONDS = 120.0
+PAGE_TIMEOUT_SECONDS = 600.0
 
 
 class CatalogSyncError(ValueError):
+    pass
+
+
+class CatalogSyncBusy(CatalogSyncError):
     pass
 
 
@@ -27,7 +33,11 @@ def _validate(entry):
         raise CatalogSyncError("Source returned an incomplete file descriptor")
     if len(entry.source_file_id) > 1024 or len(entry.source_url) > 2048 or len(entry.name) > 512:
         raise CatalogSyncError("Source returned an oversized file descriptor")
-    url = urlsplit(entry.source_url)
+    try:
+        url = urlsplit(entry.source_url)
+        url.port
+    except ValueError:
+        raise CatalogSyncError("Source returned an invalid canonical page URL") from None
     if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise CatalogSyncError("Source returned an invalid canonical page URL")
     if entry.size_bytes is not None and (not isinstance(entry.size_bytes, int) or isinstance(entry.size_bytes, bool) or entry.size_bytes < 0):
@@ -66,7 +76,7 @@ async def _lease(factory, provider, owner):
             LibraryCatalogSyncLease.provider_plugin_id == provider,
             LibraryCatalogSyncLease.expires_at <= now).values(owner=owner, expires_at=now + LEASE_SECONDS))
         if result.rowcount != 1:
-            raise CatalogSyncError("A catalog sync is already running for this provider")
+            raise CatalogSyncBusy("A catalog sync is already running for this provider")
         await session.commit()
     try:
         yield
@@ -86,6 +96,25 @@ async def _renew(session, provider, owner):
         raise CatalogSyncError("Catalog sync lease expired; no missing entries were marked")
 
 
+async def _read_page(factory, host, provider, cursor, sweep):
+    # A source may need many detail reads to build one page. Keep its DB lease
+    # alive without holding a SQL transaction during network I/O.
+    task = asyncio.create_task(host.call_for(LIBRARY_SOURCE, provider,
+        lambda p: p.list_catalog(cursor=cursor), timeout=PAGE_TIMEOUT_SECONDS))
+    try:
+        while not task.done():
+            done, _ = await asyncio.wait({task}, timeout=LEASE_SECONDS / 3)
+            if not done:
+                async with factory() as session:
+                    await _renew(session, provider, sweep)
+                    await session.commit()
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 async def sync_catalog(factory, host, provider: str, *, max_pages: int = 10000) -> dict:
     """Upsert metadata page by page; mark missing ONLY after a fully successful full sweep.
 
@@ -97,12 +126,12 @@ async def sync_catalog(factory, host, provider: str, *, max_pages: int = 10000) 
     sweep = str(uuid4())
     async with _lease(factory, provider, sweep):
         cursor, cursors, ids = None, set(), set()
-        full_scan = True
+        full_scan, confirm_missing = True, False
         for _ in range(max_pages):
             async with factory() as session:
                 await _renew(session, provider, sweep)
                 await session.commit()
-            result = await host.call_for(LIBRARY_SOURCE, provider, lambda p: p.list_catalog(cursor=cursor))
+            result = await _read_page(factory, host, provider, cursor, sweep)
             if not result.ok:
                 raise CatalogSyncError(result.error or "Source is unavailable")
             page = result.value
@@ -111,11 +140,29 @@ async def sync_catalog(factory, host, provider: str, *, max_pages: int = 10000) 
             if not isinstance(page.entries, (tuple, list)) or len(page.entries) > 5000:
                 raise CatalogSyncError("Source returned an invalid or oversized catalog page")
             full_scan = full_scan and page.full_scan is True
+            confirm_missing = confirm_missing or page.confirm_missing
             for entry in page.entries:
                 ids.add(await _upsert(factory, provider, entry, sweep))
             cursor = page.next_cursor
             if cursor is None:
                 if full_scan:
+                    if confirm_missing:
+                        async with factory() as session:
+                            unseen = list((await session.execute(select(LibraryCatalogEntry.source_file_id).where(
+                                LibraryCatalogEntry.provider_plugin_id == provider,
+                                LibraryCatalogEntry.last_seen_sweep != sweep))).scalars())
+                        for source_id in unseen:
+                            async with factory() as session:
+                                await _renew(session, provider, sweep)
+                                await session.commit()
+                            found = await host.call_for(LIBRARY_SOURCE, provider, lambda p: p.describe(source_id), record=False)
+                            if found.ok:
+                                _validate(found.value)
+                                if found.value.source_file_id != source_id:
+                                    raise CatalogSyncError("Source described a different file identity")
+                                ids.add(await _upsert(factory, provider, found.value, sweep))
+                            elif not isinstance(found.exception, SourceFileMissing):
+                                raise CatalogSyncError(found.error or "Could not confirm a missing source file")
                     async with factory() as session:
                         await _renew(session, provider, sweep)
                         await session.execute(update(LibraryCatalogEntry).where(
