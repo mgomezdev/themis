@@ -153,3 +153,36 @@ async def entry_detail(entry_id: str, session: AsyncSession = Depends(get_sessio
     if row is None:
         raise HTTPException(404, "Catalog entry not found")
     return _entry(row)
+
+
+class MaterializationOut(BaseModel):
+    file_id: int
+    fresh: bool
+    warning: str | None
+
+
+@router.post(
+    "/entries/{entry_id}/materialize",
+    response_model=MaterializationOut,
+    dependencies=[Depends(require_scope("files:write"))],
+)
+async def materialize_entry(
+    entry_id: str, session: AsyncSession = Depends(get_session)
+):
+    from ...services.library_materialization import (
+        CatalogEntryNotFound,
+        MaterializationError,
+        materialize,
+    )
+
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    try:
+        return await materialize(factory, plugin_host, entry_id)
+    except CatalogEntryNotFound as exc:
+        raise HTTPException(404, str(exc)) from None
+    except CatalogSyncBusy:
+        raise HTTPException(
+            409, "A source operation is already running; retry shortly"
+        ) from None
+    except (MaterializationError, CatalogSyncError) as exc:
+        raise HTTPException(502, str(exc)) from None

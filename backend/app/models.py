@@ -1085,3 +1085,13 @@ class LibraryCatalogSyncLease(Base):
     provider_plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(36))
     expires_at: Mapped[float] = mapped_column(Float)
+
+
+class LibrarySourceRevision(Base):
+    """Immutable source attribution for a materialized local file revision."""
+    __tablename__ = 'library_source_revisions'
+    file_id: Mapped[int] = mapped_column(ForeignKey('uploaded_files.id', ondelete='CASCADE'), primary_key=True)
+    entry_id: Mapped[str] = mapped_column(ForeignKey('library_catalog_entries.id', ondelete='CASCADE'), index=True)
+    revision: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    descriptor: Mapped[dict] = mapped_column(JSON)
+    downloaded_at: Mapped[str] = mapped_column(String(40))

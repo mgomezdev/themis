@@ -349,8 +349,8 @@ Webhooks for companion apps are a separate mechanism (`docs/companion-apps.md`).
 Manyfold is bundled but disabled by default. It reads a complete catalog of accessible model files; synchronization
 fetches metadata, not model bytes. Existing local files remain under Files → Library. Files → Sources lists configured
 sources and their cached catalog, with Sync now, errors and pagination. Disabling a source retains its synchronized
-metadata and existing local files. This first source UI does not yet materialize catalog entries into new jobs/projects;
-those actions and scheduled synchronization follow the source/catalog boundary under BIZ-348.
+metadata and existing local files. Prepare a catalog entry locally to select it in a job or project;
+scheduled synchronization remains follow-up work under BIZ-348.
 
 Create an OAuth application in Manyfold at `/oauth/applications`, owned by the account whose library should be visible.
 Grant `public` and `read`; this implementation never requests write/delete/upload. Follow the instance UI's redirect-URI
@@ -371,3 +371,19 @@ file identity confirms absence; a creator lookup failure, authentication error o
 advertised or written. File downloads are explicit provider operations with size/revision checks; responses and streams
 are bounded and kept on the configured origin. Do not point this connection at a different server as an identity-migration
 shortcut: source URLs are part of catalog identity.
+
+Source catalog entries can be **prepared locally** before use. The materialization
+endpoint streams through the source plugin with a core 512 MiB cap, publishes a
+complete artifact atomically, and creates an ordinary local library file. The
+source's filename cannot select folders. Repeated identical downloads with the
+same origin/metadata snapshot reuse the existing local ID; changed bytes or terms
+create a new local revision. Earlier files and their job/project references remain
+intact. Source attribution is snapshotted in `library_source_revisions`.
+
+If a refresh fails or the source is disabled, an existing local copy can still be
+prepared with a visible **last-known local copy** warning. Missing local bytes do
+not count as an offline success. **Use in job** carries the local file ID into the
+normal job flow; project builders can select it from the local library. Source
+operations are serialized per provider, including sync. Downloads have a finite
+time limit and heartbeat their database lease. No automatic eviction, source-side
+writes or print commands occur in this flow.

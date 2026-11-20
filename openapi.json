@@ -5068,6 +5068,48 @@
         }
       }
     },
+    "/api/v1/library/entries/{entry_id}/materialize": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Materialize Entry",
+        "operationId": "materialize_entry_api_v1_library_entries__entry_id__materialize_post",
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterializationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "tags": [
@@ -14267,6 +14309,36 @@
         "type": "object",
         "title": "MaterialPatch",
         "description": "Partial update: only the fields sent change; `null` clears an optional one."
+      },
+      "MaterializationOut": {
+        "properties": {
+          "file_id": {
+            "type": "integer",
+            "title": "File Id"
+          },
+          "fresh": {
+            "type": "boolean",
+            "title": "Fresh"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id",
+          "fresh",
+          "warning"
+        ],
+        "title": "MaterializationOut"
       },
       "MinBed": {
         "properties": {
