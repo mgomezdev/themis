@@ -227,11 +227,11 @@ async def test_external_local_edit_is_not_reused_as_a_fresh_source_download(
         old = await session.get(UploadedFile, first["file_id"])
     store = get_library_store()
     with store.writer(old.relative_path, overwrite=True) as writer:
-        writer.write(b"locally edited bytes")
+        writer.write(b"x" * len(catalog.source.data))
     second = await materialize(session_factory, catalog, "entry")
     assert second["fresh"] and second["file_id"] != first["file_id"]
     with store.open(old.relative_path) as content:
-        assert content.read() == b"locally edited bytes"
+        assert content.read() == b"x" * len(catalog.source.data)
     async with session_factory() as session:
         new = await session.get(UploadedFile, second["file_id"])
     with store.open(new.relative_path) as content:

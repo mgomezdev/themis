@@ -14,7 +14,7 @@ from sqlalchemy import select
 from .. import config
 from ..models import LibraryCatalogEntry, LibrarySourceRevision, UploadedFile
 from ..plugins.capabilities.library_source import LIBRARY_SOURCE, SourceDownload
-from .artifact_store import PART_SUFFIX, validate_key
+from .artifact_store import PART_SUFFIX, ArtifactNotFound, validate_key
 from .library_catalog import CatalogSyncError, _lease, _renew, _validate
 from .library_scanner import LibraryScanner, folder_of
 from .library_store import get_filecache_store, get_library_store
@@ -39,6 +39,15 @@ async def _io(fn, *args, **kwargs):
     except asyncio.CancelledError:
         await asyncio.gather(task, return_exceptions=True)
         raise
+
+
+def _matches_download(store, key, info):
+    try:
+        return store.stat(key).size == info.size and store.sha256(key) == info.sha256
+    except ArtifactNotFound:
+        return (
+            False  # deleted between the DB lookup and comparison; publish the new copy.
+        )
 
 
 async def _cached(factory, entry_id, store):
@@ -251,8 +260,7 @@ async def _materialize(
                     previous.revision == revision
                     and previous.descriptor == snapshot
                     and not file.missing
-                    and await _io(store.exists, file.relative_path)
-                    and await _io(store.sha256, file.relative_path) == info.sha256
+                    and await _io(_matches_download, store, file.relative_path, info)
                 ):
                     entry = await session.get(LibraryCatalogEntry, entry_id)
                     entry.cached_file_id, entry.descriptor, entry.missing = (
