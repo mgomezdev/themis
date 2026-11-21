@@ -219,6 +219,10 @@ async def _check_version_printers(
         )).profile != version.machine_preset:
             raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
                                      "sliced for that printer model")
+        if printer is not None:
+            nozzle_problem = slice_cache.nozzle_compatibility_reason(version, printer)
+            if nozzle_problem:
+                raise HTTPException(422, nozzle_problem)
     for t in targets:
         if t.model_uuid is None:
             raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}: pick that printer model, "

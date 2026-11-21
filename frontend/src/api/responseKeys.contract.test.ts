@@ -38,6 +38,7 @@ const FLEET = {
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
+  topology: 1, topology_revision: 1, topology_error: 1,
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_slicer_plugin_id: 1, brand_slicer_plugin_id: 1, print_artifact_kind: 1, slicer_plugin_id: 1, model_label: 1, enabled: 1, queue_on: 1, queue_paused_reason: 1, configured: 1, config_error: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
   no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, bed_z_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, slice_overrides: 1, default_process_profile: 1, single_colour_only: 1, waiver_flag_at: 1, waiver_stop_at: 1, test_print_job_id: 1, quiet_start: 1, quiet_end: 1,

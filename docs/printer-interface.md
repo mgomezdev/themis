@@ -4,6 +4,173 @@ This is the current Themis printer-client and plugin reference. The core contrac
 
 ---
 
+## Required neutral printer contract (architecture decision, 2026-11-21)
+
+The neutral per-device contract is implemented in
+`backend/app/plugins/printer_topology.py`. Registration rejects printer factories
+without live topology refresh or an explicit print-artifact declaration. Model
+metadata is not a substitute for a validated device snapshot. Printers without a
+valid snapshot can connect but cannot claim or dispatch work.
+
+A printer plugin must declare and satisfy the following through registration and
+its per-device description:
+
+* The printer has `n > 0` nozzles/toolheads.
+* Each nozzle/toolhead has its own positive nozzle size. Sizes may differ; core
+  must not substitute one printer-wide nozzle size for all tools.
+* The printer has `m > 0` configured filament positions, with `m >= n`.
+  `m` counts positions, including empty ones, not loaded spools or distinct
+  material identities. A position's filament/type/subtype can change at runtime;
+  an empty position remains configured but cannot satisfy a filament request.
+* Filaments can have different types and subtypes.
+* Equivalent filament can occupy multiple positions. Those positions retain
+  separate identities; counting distinct material identities must not collapse
+  them. Duplicate material does not itself prove automatic runout failover.
+* If `m > 1`, the printer supports filament swapping. This covers both a shared
+  nozzle changing filament and a change between tools; the mechanism belongs
+  exclusively to the plugin.
+* The user may disable swapping for a physical printer. That restriction does
+  not remove its filament choices: it can still serve a print using any one
+  available filament, but cannot serve a print requiring multiple filaments.
+
+### Live topology refresh
+
+Topology is per physical printer and mutable during its existing session. A
+manufacturer/model registration cannot fix the actual number of positions for all
+instances: for example, the owner may use a P1S with no AMS or attach up to four
+AMS units. Only the Bambu plugin interprets that hardware configuration and maps
+it to neutral positions; core must not calculate AMS counts or tray addresses.
+
+Registration must declare a live-refresh operation. The live operation
+is `POST /api/v1/printers/{id}/topology/refresh` through the checked resource client. It asks the bound plugin to refresh
+and publish one coherent per-device snapshot containing:
+
+* Tool identities and the current nozzle size of each tool.
+* Configured filament-position identities (`m`), including empty positions.
+* Each position's current contents: explicit empty state or filament identity,
+  type/subtype and other declared material properties.
+* The current swapping capability; the user's printer-level swapping policy
+  remains separate and survives a refresh.
+
+**Configured positions, filament contents and nozzle sizes must all refresh
+without dropping/reacquiring the printer, reconnecting its client, changing its
+plugin binding or deleting/recreating its saved record.** A nozzle change does
+not require a new connection. The plugin owns acquisition: hardware queries,
+notifications and plugin-owned user configuration where hardware cannot report a
+value. Core must not guess a nozzle size or invent a loaded filament.
+
+The contract must support an explicit user update/rescan during a session;
+plugin-pushed changes use the same snapshot validation/publication path. Keep
+identities stable for tools and positions that remain present. Apply a snapshot
+atomically and version it so clients and scheduling never combine new slot counts
+with old nozzle sizes or filament assignments. A failed/incomplete refresh is an
+explicit error or stale state, not evidence that positions were removed or became
+empty.
+
+Validate `n > 0`, `m > 0`, `m >= n` and per-tool positive nozzle sizes against the
+configured topology. Zero loaded spools does not invalidate that topology; it
+only means no filament request can currently be satisfied. After a successful
+refresh, update the UI and re-evaluate pending work and slicing eligibility using
+the new snapshot. Validate the relevant snapshot/assignment again before dispatch
+so a removed slot or changed nozzle cannot use an obsolete preparation. Do not
+silently rewrite the tool/filament assignment of an already-running print.
+
+Core may validate these invariants and compare neutral job requirements against
+plugin declarations. Vendor slot/tray identifiers, tool-selection commands,
+filament loading/swapping, runout behavior, wire protocols and hardware-specific
+routing remain plugin implementation details. A plugin must either satisfy a
+requested assignment or return an explicit unsupported/unavailable result;
+core must not manufacture a vendor mapping or silently assume a fallback.
+
+Everything beyond the required assumptions must be explicitly supplied through
+optional capabilities or constraints. Core must not presume cameras, lights,
+heated beds, chamber controls, a particular build volume, a protocol, or support
+for a particular command. Registration must expose the contract and validation
+hooks; a per-device description must express the actual configured tools and
+filament choices without a hardcoded manufacturer table in core.
+
+Implemented boundary changes:
+
+1. Replace scalar toolhead/nozzle assumptions with tool identities and per-tool
+   nozzle sizes, plus explicit filament-position identities and material data.
+2. Express swapping capability separately from the user's printer-level policy.
+   Enforce the policy by the print's filament requirements, not by hiding all but
+   one loaded filament or counting duplicate positions as different materials.
+3. Send neutral assignments to the selected printer plugin. Move AMS array
+   construction and hardware routing validation out of the queue engine.
+4. Centralize printer calls and lifecycle checks behind one gateway, with an
+   explicit policy for any safety controls allowed while a plugin is disabled.
+5. Move reusable protocol implementations into a plugin implementation library;
+   test that core cannot import them or encode protocol payloads.
+6. Validate registration and per-device descriptions, and add contract tests for
+   heterogeneous nozzles, duplicate materials, `m >= n`, swapping policy and
+   invalid/temporarily unavailable configurations.
+7. Live topology refresh covers configured positions, live slot contents and
+   per-tool nozzle sizes. Tests cover empty-to-loaded transitions, position expansion
+   and removal, heterogeneous nozzle updates, stable printer/tool/position
+   identity, refresh failures, stale dispatch rejection and that every refresh
+   leaves the existing connection/session intact.
+
+### Runtime use and dispatch safety
+
+`GET /api/v1/printers/{id}` and fleet rows expose `topology`,
+`topology_revision`, and `topology_error`. The refresh endpoint accepts `{}` to
+rescan with saved configuration, or `{"configuration": {"nozzle_sizes_mm": [0.4,
+0.6]}}` to explicitly supply sizes the hardware cannot report accurately. There
+is one size per tool in the plugin's reported order. No nozzle size is guessed.
+The printer edit screens provide a Refresh topology action and nozzle-size input. Fleet backup/import preserves this saved configuration; restore acquires fresh topology instead of trusting an exported snapshot or revision.
+
+Slot contents can change without changing capacity. Manual filament edits use
+the same publication path as plugin notifications. Configured positions with no
+filament remain in the snapshot; hardware-reported material data retains its
+authority over conflicting inventory bindings. The printer-level single-filament
+policy survives refresh and does not hide other configured choices.
+
+Refresh, queued dispatch, stored-file printing and direct upload-and-print share a per-printer lock. A pending/failed refresh blocks
+starts; a completed refresh cannot clear the gate for a newer pending refresh; failure retains the last snapshot. A successful snapshot is published
+atomically and versioned only when it changes, then wakes scheduling and emits
+`printer_topology` so the UI refetches authoritative data. Dispatch checks the
+assignment, snapshot revision, slot identity and plugin lifecycle before upload
+and again before start. Cancelled or removed queue assignments never start. Direct starts validate topology before upload and again before starting, and verify the same active client session. A changed
+preparation is blocked for re-evaluation, not marked as a successful print.
+
+```mermaid
+sequenceDiagram
+    participant Caller as UI or plugin notification
+    participant Core as Themis topology service
+    participant Plugin as Bound printer plugin
+    participant Device as Physical printer
+    participant Queue as Scheduler / dispatch
+    Caller->>Core: Refresh existing printer
+    Core->>Core: Block starts; acquire per-printer lock
+    Core->>Plugin: refresh_topology(saved configuration)
+    Plugin->>Device: Read current topology using its protocol
+    Device-->>Plugin: Hardware report
+    Plugin-->>Core: Neutral tools, nozzle sizes, positions, contents
+    Core->>Core: Validate; commit snapshot and revision atomically
+    Core-->>Caller: Snapshot / error, retaining same session
+    Core->>Queue: Wake after successful publication
+    Queue->>Core: Revalidate assignment before upload and start
+    Queue->>Plugin: start_print(neutral assignment)
+    Plugin->>Device: Plugin-owned mapping and print command
+```
+
+Per-tool nozzle sizes reach the slicing provider and are included in cache
+identity. Saved versions also retain their ordered nozzle-size vector. Explicitly selected saved slices are checked at selection and claim; mismatched or unknown legacy nozzle sizes require slicing the source model again, even if the machine profile is unchanged. The slicing plugin translates them into engine-specific settings.
+Shared Moonraker/G-code/3MF implementations live under `plugins/_protocols/`;
+core imports contracts, not that library. Legacy printer-type aliases are
+contributed by their plugin manifests. Core no longer constructs AMS wire arrays
+or contains G-code movement recipes.
+
+The generic Klipper plugin requires real T0..Tn selection macros before claiming
+multi-position swapping support. Missing firmware support produces an explicit
+refresh error. The initial manufacturer implementations remain Bambu P1S,
+Elegoo Centauri Carbon, and Snapmaker U1. The owner has confirmed U1 discovery and
+connection; new topology reads and physical print behavior still need recorded
+hardware verification. Read-only checks are in `protocol_verification/`.
+
+---
+
 ## Overview
 
 The system supports multiple 3D printer vendors (Bambu Lab, Elegoo, Moonraker/Klipper, Snapmaker) behind a single abstract interface. The goals are:
@@ -23,7 +190,6 @@ All structures live in `backend/app/services/abstract_printer_client.py`.
 ```python
 @dataclass
 class PrinterCapabilities:
-    ams: bool = False
     file_upload: bool = False
     bed_levelling: bool = False
     flow_calibration: bool = False
@@ -48,16 +214,12 @@ Every field defaults to `False`. A concrete client overrides only the flags it a
 @dataclass
 class StartPrintOptions:
     plate_id: int = 1
-    ams_mapping: list[int] | None = None
-    bed_levelling: bool = True
-    flow_cali: bool = False
-    vibration_cali: bool = True
-    layer_inspect: bool = False
-    timelapse: bool = False
-    use_ams: bool = True
+    slot_plan: list[dict] | None = None
+    loaded_filaments: list[dict] | None = None
+    gcode_path: str | None = None
 ```
 
-Passed to `start_print()`. Clients ignore fields they don't support; no error is raised for unsupported options.
+Passed to `start_print()`. Core passes the neutral selected-position plan. Plugins translate it into their commands, including AMS mappings and tool selection; vendor print flags remain plugin-owned.
 
 ### `PrinterFile` — normalized file entry
 
@@ -278,7 +440,7 @@ _FILE_CATEGORY_EXCLUSIONS = {
 
 **Commands**: `start_print` sends a POST to `/printer/print/start`, `stop_print` to `/printer/print/cancel`, etc. All are synchronous `httpx` calls (fast/small commands, safe to block briefly).
 
-**`SnapmakerU1Client`** subclasses `MoonrakerClient` without change — Snapmaker U1 runs Klipper/Moonraker and requires no overrides.
+**Snapmaker** owns its plugin and subclasses the shared `MoonrakerClientBase` with U1-specific tool, filament and camera behavior. The generic Klipper plugin separately subclasses that transport. Shared transport does not share printer ownership: a physical printer has one plugin binding.
 
 ---
 
@@ -319,78 +481,17 @@ _current_print_user: dict[int, dict]         # who started the current print
 
 ### Callback wiring
 
-The manager owns five event callbacks registered at startup:
+The manager wires the bound client's status, completion and legacy filament callbacks to neutral internal events.
+Live topology notifications use the same validated publication service as the refresh endpoint.
 
 | Callback | Signature | Trigger |
 |----------|-----------|---------|
-| `on_state_change` | `(printer_id, vendor_state)` | Any status update from the printer |
-| `on_print_start` | `(printer_id, data)` | Print job begins |
-| `on_print_complete` | `(printer_id, data)` | Print job finishes |
-| `on_ams_change` | `(printer_id, ams_list)` | AMS filament data changes (Bambu only) |
-| `on_layer_change` | `(printer_id, layer_num)` | Layer counter increments |
+| `on_state_change` | `(printer_id, state)` | Normalized printer status |
+| `on_print_complete` | `(printer_id, state)` | Print completion |
+| `on_filament_change` | `(printer_id, slots)` | Legacy material reports before a full topology exists |
+| `on_topology_change` | `(printer_id)` | Query and publish the current complete topology |
 
-`connect_printer(printer)` creates closure wrappers that inject `printer_id` and calls `create_client(printer, on_state_change=…, …)`.
-
-All callbacks are dispatched from background threads via `asyncio.run_coroutine_threadsafe(coro, loop)`, captured in a `Future` with a done-callback that logs exceptions (prevents silent failures).
-
-### Model-based feature detection
-
-Because some feature support is model-specific rather than type-specific (e.g. chamber temperature sensor presence, AMS drying firmware requirements), the manager holds model strings and exposes free functions:
-
-```python
-def supports_chamber_temp(model: str | None) -> bool: ...
-def is_bed_slinger(model: str | None) -> bool: ...
-def supports_drying(model: str | None, firmware: str | None) -> bool: ...
-def has_stg_cur_idle_bug(model: str | None) -> bool: ...
-```
-
-These are applied by the `printer_state_to_dict` serializer (e.g. filter out `chamber` temps for models without a real sensor; apply the `stg_cur=0` idle bug workaround for A1/P1P/P1S).
-
-### Awaiting-plate-clear gate
-
-`_awaiting_plate_clear: set[int]` is persisted to the database (`printers.awaiting_plate_clear`) so the gate survives restarts and power cycles. Managed via:
-- `set_awaiting_plate_clear(printer_id, awaiting)` — updates the in-memory set, async-schedules a DB write and a WebSocket broadcast
-- `load_awaiting_plate_clear_from_db()` — called at startup to rehydrate
-
-### Reporting job events and details (core-owned job id)
-
-Core owns the job id (`jobs.id`, never reused) and the details accessor; a printer plugin **reports** what happened and core applies the
-state change, stores the details in the same transaction and publishes the event with the plugin as its `origin` (`docs/events.md`):
-
-```python
-await ctx.job_reporter.report(job_id, "started" | "complete" | "failed" | "blocked", details=None, reason=None)   # -> bool
-```
-
-A plugin that serves several printers passes the reporting `printer_id=`: the report is refused if the job is on another printer (a printer back from the dead cannot touch a print that now runs elsewhere). `report` returns False for a duplicate or a job not in a state the report applies to, and raises `JobReportError` for a job on another
-plugin's printer or a disabled plugin. It never releases a job from its printer. `blocked` is optional and tolerated, not required: a
-started print the printer halted (filament runout, a hardware fault) is a **notice only** (the job stays `printing` on its printer, the
-reason is kept as the `blocked_reason` detail, `job.blocked` is published with `phase: "print"`; the same reason repeated is one notice).
-Today the bundled plugins keep signalling through the printer client callbacks and core reports on their behalf with
-`printer.plugin_id` as the origin; the same call is what a new plugin makes directly.
-
-Any plugin reads a job's details with `await ctx.job_details.get(job_id, ["filament_usage", ...], origin=None)` and adds its own fields with
-`await ctx.job_details_writer.set(job_id, {"myplugin.cost": 1.2})`. Field names and value shapes are not enforced by code; every field answers
-`ok`, `unsupported` (the source cannot provide it), `unavailable` (declared, no value for this job) or `unknown_field`.
-
-**Minimum fields every printer plugin supplies** (checked, not enforced: a load warning and `tests/plugins/conformance.py`): `print_start_time`
-(iso8601), `print_end_time` (iso8601) and `result` (`success` | `failure`), each declared in `PluginManifest.job_fields=(JobFieldDef(name,
-description, type_hint), ...)` or, when the hardware cannot provide it, listed in `unsupported_job_fields`. Standard optional fields:
-`print_seconds`, `filament_usage` (`{"grams": float, "breakdown": [...]|None}`; core derives it from the sliced job until a printer reports
-actuals; the inventory deduction reads it first) and `blocked_reason`. `PRINTER_JOB_FIELDS` in `plugins/job_fields.py` is the shared set the
-bundled plugins use. A runtime `details={"filament_usage": UNSUPPORTED}` marks a field unsupported for one job. The catalog of declared
-fields is `GET /api/v1/job-fields`; one job's fields are `GET /api/v1/jobs/{id}/detail-fields?fields=a,b[&origin=]` (read-only, debug).
-
-A job's field should have **one** writing plugin. That is not enforced yet (storage keeps `(job, field, origin)`, reads prefer the printer
-plugin's value, then the latest); enforcement is deferred.
-
-### Liveness: online, undead, dead
-
-`Settings -> Print defaults -> Printer offline limit` (`queue_config.printer_dead_after_minutes`, default 30, 0 = never) sets how long a printer may be
-offline before it is **dead**. Under the limit it is **undead**: it still counts in queue processing (including the "no printer could take this job"
-check; only a dead printer stops counting) and a connection that heals in time triggers nothing, unless a job was sliced for it while it was away (the queue is woken and the normal ready
-path uploads and starts it only if the printer is idle with a clear plate). When a printer is declared dead its `printing` job fails (`job.failed`,
-`origin: core`) and goes back to the top of the queue, a job merely sliced for it returns to `queued`, and `awaiting_plate_clear` stays set. A dead
-printer coming back wakes the queue once. The offline clock lives in memory (a restart restarts it).
+`connect_printer` wires callbacks on the existing plugin client; refreshing its topology does not reconnect it.
 
 ---
 
@@ -556,6 +657,5 @@ The report is a **cumulative** snapshot for the attempt, never an incremental de
 Never invent sensor data or infer grams from print progress: report what the printer exposes, or nothing (the estimate then applies to
 completed prints). Which printers report what is per plugin; Bambu's per-tray reporting, rollover included, is BIZ-367.
 
-AMS mapping (`StartPrintOptions.ams_mapping`): entry N-1 is the tray id for model filament N, and `-1` marks a filament number the
-plate does not use. Slot plans record each planned slot's identity (tray id, type, colour) at claim, and dispatch refuses a slot whose
-identity changed. A vendor that lists only occupied trays renumbers them when one is emptied.
+Slot plans record stable position and material identity at claim. Dispatch rejects an assignment if that identity or the
+topology revision changes. Bambu's plugin alone builds its AMS wire array from those neutral positions; core never encodes tray ids.

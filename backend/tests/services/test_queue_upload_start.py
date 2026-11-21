@@ -1,13 +1,14 @@
 """_do_upload_and_print: the last hop before a physical print. Upload/start failures must end the job as
 `failed` with a specific reason and leave the printer un-gated; success must hand the printer the right
 file + options and raise the ready-for-work gate. Real QueueEngine/PrinterManager/DB, fake vendor client."""
+from tests.fake_topology import declared_topology
 import os
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
 
-from app.models import GcodeFile, Job, Printer, UploadedFile
+from app.models import GcodeFile, Job, Printer, UploadedFile, JobPrinterConfig
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
 
@@ -54,7 +55,7 @@ async def _seed_uploading_job(factory, tmp_path, status: str = "uploading"):
     gcode = tmp_path / "job.gcode"
     gcode.write_bytes(b"G28\n")
     async with factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, awaiting_plate_clear=False))
+        s.add(Printer(topology=declared_topology(), id=1, name="P1", printer_type="bambu", connection_config={}, awaiting_plate_clear=False))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
         s.add(f)
         await s.flush()
@@ -62,6 +63,7 @@ async def _seed_uploading_job(factory, tmp_path, status: str = "uploading"):
                 assigned_printer_id=1, created_at="t", updated_at="t")
         s.add(j)
         await s.flush()
+        s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile=""))
         s.add(GcodeFile(job_id=j.id, printer_id=1, path=str(gcode)))
         await s.commit()
         return j.id, gcode
@@ -102,7 +104,10 @@ async def test_upload_or_start_failure_fails_the_job_and_leaves_the_printer_unga
     assert broadcasts.job_updates[-1]["status"] == "failed"
 
 
-@pytest.mark.parametrize("tray_mapping,expected", [(3, [3]), ([18, 0], [18, 0])])
+@pytest.mark.parametrize("tray_mapping,expected", [
+    ({"slot_plan": [{"model_filament": 1, "slot": 0}], "loaded_filaments": [{"position_id": "3"}]}, [{"model_filament": 1, "slot": 0}]),
+    ({"slot_plan": [{"model_filament": 2, "slot": 0}], "loaded_filaments": [{"position_id": "18"}]}, [{"model_filament": 2, "slot": 0}]),
+])
 async def test_successful_start_uploads_the_file_starts_with_plate_and_tray_and_raises_the_gate(
     engine, mgr, session_factory, tmp_path, broadcasts, tray_mapping, expected,
 ):
@@ -117,7 +122,8 @@ async def test_successful_start_uploads_the_file_starts_with_plate_and_tray_and_
     assert filename == "job.gcode"
     assert opts.plate_id == 2
     assert opts.gcode_path == "job.gcode"
-    assert opts.ams_mapping == expected
+    assert opts.slot_plan == expected
+    assert opts.loaded_filaments == tray_mapping["loaded_filaments"]
     job, printer, gcode_rows = await _state(session_factory, job_id)
     assert job.status == "printing"
     assert job.printed_on_printer_id == 1  # survives later failure/cancel, unlike assigned_printer_id
@@ -136,7 +142,7 @@ async def test_printers_without_upload_support_skip_upload_and_pass_no_ams_mappi
 
     client.upload_file.assert_not_called()
     (_, opts), _ = client.start_print.call_args
-    assert opts.ams_mapping is None
+    assert opts.slot_plan is None
     assert (await _state(session_factory, job_id))[0].status == "printing"
 
 
@@ -151,3 +157,57 @@ async def test_job_resolved_while_starting_is_not_flipped_back_to_printing(engin
     assert job.status == final_status
     assert printer.awaiting_plate_clear is False
     assert mgr.is_awaiting_plate_clear(1) is False
+
+
+async def test_topology_change_during_upload_blocks_start(engine, mgr, session_factory, tmp_path):
+    from app.services.printer_manager import printer_manager
+    job_id, gcode = await _seed_uploading_job(session_factory, tmp_path)
+    client = _client()
+    mgr._clients[1] = client
+    def changed(*_):
+        printer_manager._topology_invalid.add(1)
+        return True
+    client.upload_file.side_effect = changed
+    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, None)
+    client.start_print.assert_not_called()
+    job, _, _ = await _state(session_factory, job_id)
+    assert job.status == 'blocked'
+
+
+async def test_cancelled_assignment_never_reaches_hardware(engine, mgr, session_factory, tmp_path):
+    job_id, gcode = await _seed_uploading_job(session_factory, tmp_path, status='cancelled')
+    client = _client()
+    mgr._clients[1] = client
+    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, None)
+    client.upload_file.assert_not_called()
+    client.start_print.assert_not_called()
+    job, _, _ = await _state(session_factory, job_id)
+    assert job.status == 'cancelled'
+
+
+async def test_removed_assignment_config_never_reaches_hardware(engine, mgr, session_factory, tmp_path):
+    from sqlalchemy import delete
+    from app.models import JobPrinterConfig
+    job_id, gcode = await _seed_uploading_job(session_factory, tmp_path)
+    async with session_factory() as s:
+        await s.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
+        await s.commit()
+    client = _client()
+    mgr._clients[1] = client
+    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, None)
+    client.upload_file.assert_not_called(); client.start_print.assert_not_called()
+
+
+async def test_session_replaced_during_upload_cannot_start_old_session(engine, mgr, session_factory, tmp_path):
+    job_id, gcode = await _seed_uploading_job(session_factory, tmp_path)
+    old, new = _client(), _client()
+    mgr.register_client(1, old)
+    def replace(*_):
+        mgr.register_client(1, new)
+        return True
+    old.upload_file.side_effect = replace
+    await engine._do_upload_and_print(job_id, 1, str(gcode), 2, None)
+    old.start_print.assert_not_called()
+    new.start_print.assert_not_called()
+    job, _, _ = await _state(session_factory, job_id)
+    assert job.status == 'blocked' and 'session' in job.block_reason.lower()

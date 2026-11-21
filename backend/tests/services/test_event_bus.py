@@ -2,7 +2,7 @@ import asyncio
 from collections import Counter
 
 from app.services.events import Event, EventBus, event_bus
-from app.services.printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
+from app.services.printer_events import FilamentsChanged, PrinterStateChanged, PrintCompleted
 
 
 async def test_publish_delivers_same_event_object_to_subscriber():
@@ -174,14 +174,14 @@ async def test_drain_returns_after_pending_handlers_finish():
 def test_printer_event_types_carry_their_fields():
     completed = PrintCompleted(printer_id=1, state={"x": 1})
     changed = PrinterStateChanged(printer_id=2, state="IDLE")
-    ams = AmsChanged(printer_id=3, trays=[{"slot": 0}])
+    filaments = FilamentsChanged(printer_id=3, slots=[{"slot": 0}])
 
     assert completed.printer_id == 1
     assert completed.state == {"x": 1}
     assert changed.printer_id == 2
     assert changed.state == "IDLE"
-    assert ams.printer_id == 3
-    assert ams.trays == [{"slot": 0}]
+    assert filaments.printer_id == 3
+    assert filaments.slots == [{"slot": 0}]
     assert isinstance(completed, Event)
 
 

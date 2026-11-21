@@ -25,12 +25,13 @@ def test_unconfigured_printer_is_never_ready():
     assert mgr.is_configured(1) is False
     assert mgr.is_printer_ready(1) is False
     mgr.set_configured(1, True)
+    mgr._topology_validated.add(1)
     assert mgr.is_printer_ready(1) is True
 
 
 async def test_load_configured_from_db(session_factory):
     a = await _seed(session_factory, configured=True)
-    b = await _seed(session_factory, configured=False)
+    b = await _seed(session_factory, configured=False, connection_config={"ip_address": "10.0.0.3"})
     mgr = PrinterManager()
     mgr.set_session_factory(session_factory)
     mgr.set_configured(999, False)                                    # stale entry must not survive the reload

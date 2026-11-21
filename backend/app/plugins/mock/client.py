@@ -10,14 +10,32 @@ Usage — register via the Themis API:
 """
 from __future__ import annotations
 
+from .._protocols.gcode_controls import GcodeControls
+
 from ...services.abstract_printer_client import AbstractPrinterClient, PrinterCapabilities, StartPrintOptions
 
 
-class MockPrinterClient(AbstractPrinterClient):
+class MockPrinterClient(GcodeControls, AbstractPrinterClient):
+    print_artifact_kind = "gcode"
+    raw_gcode_supported = True
     printer_type = "mock"
 
     def __init__(self, **_ignored):
         self._printing = False
+
+    def refresh_topology(self, configuration: dict):
+        from ..printer_topology import PrinterTopology
+        declared = configuration.get('topology') or {
+            'tools': [{'id': 'T0', 'nozzle_mm': .4}],
+            'positions': [{'id': 'S0', 'filament': {'type': 'PLA'}}], 'swapping': False}
+        sizes = configuration.get('nozzle_sizes_mm')
+        if sizes is not None:
+            if len(sizes) != len(declared['tools']):
+                raise ValueError('Provide one size per virtual tool')
+            declared = {**declared, 'tools': [{**tool, 'nozzle_mm': sizes[i]} for i, tool in enumerate(declared['tools'])]}
+        if 'positions' in configuration:
+            declared = {**declared, 'positions': configuration['positions'], 'swapping': len(configuration['positions']) > 1}
+        return PrinterTopology.model_validate(declared)
 
     # --- Connection lifecycle ---
 

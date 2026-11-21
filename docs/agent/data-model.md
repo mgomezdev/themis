@@ -107,6 +107,11 @@ the printer editor and used wherever bed size matters for the UI), `lifetime_job
 `queue_engine.handle_print_complete`, +1 per successful completion), `lifetime_print_seconds: int`
 (accrued from `job.actual_seconds` in the same handler) — both feed `job_count`/`job_time` maintenance
 trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
+- `topology: JSON?`, `topology_config: JSON?`, `topology_error: str?`, `topology_revision: int=0` (v082):
+  validated live tools (`id`, `nozzle_mm`) and configured positions (`id`, nullable `filament`, `reported`), plus swapping capability.
+  Capacity includes empty positions and is at least the tool count. Snapshot/configuration are published atomically by
+  `services/printer_topology.refresh_device` without reconnecting. Failure retains the old snapshot, records an error and blocks starts.
+  `job_printer_configs.topology_revision` pins the claim's revision; dispatch checks it before upload and start.
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
   keys passed to the client ctor). Blank values are never stored (`printer_setup.strip_blank`); `ip_address` is required on create
   when the plugin's form declares it (the mock declares none) and (IP, model) is unique (409, checked in the route since the IP lives in this JSON). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
@@ -115,14 +120,14 @@ trigger math, never reset except by construction (per-item resets live on `print
   filament_profile?:str|null, spoolman_spool_id?:str|null, inventory?, reported?:bool, ams_tray_id?, ams_unit?}`.
   - A slot **is a filament tuple** (`manufacturer` null = unknown, `type` = base type, `subtype` always set for a typed slot: `standard` =
     plain, `plus`, `silk`, `cf`…; empty-tool placeholders `{type:"", empty:true}` have none). Every writer (`refs.normalize_slot`) splits a
-    legacy combined type ("PLA+" → PLA/plus). **Hardware wins**: `on_ams_change` replaces the whole tuple from the report and sets
+    legacy combined type ("PLA+" → PLA/plus). **Hardware wins**: `on_filament_change` replaces the whole tuple from the report and sets
     `reported: true`; only `filament_profile` and the spool binding survive. A *reported* slot whose bound spool's material differs in
     any part known on both sides is in **conflict** (`filament_matching.conflicting_slots`, `GET /printers/{id}/slot-conflicts`): skipped for
     matching. A hand-entered slot (no `reported`) never conflicts. Matching reads only this tuple, never the bound spool's material.
   - `filament_id` = Bambu AMS material code (e.g. `"GFL99"`) or `null`; **not** a Spoolman id.
   - `filament_profile` = OrcaSlicer filament preset used when slicing with this slot.
   - `spoolman_spool_id` = optional mapped Spoolman spool id (written by EditForm/FilamentPicker).
-  For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
+  For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_filament_change`
   (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped). The Snapmaker U1
   syncs the same way from Klipper `print_task_config`, **positionally** (list index == tool index; an empty tool is a
   `{"empty": true, "type": ""}` placeholder, which the queue engine treats as not loaded; the printer is the source of truth, so the
@@ -237,6 +242,7 @@ job: the slots it prints from),
   `_mapped_tools_loaded` gates eligibility on every mapped tool having a loaded filament.
 
 ### sliced_versions  (v033 — slicing cache, BIZ-189)
+`nozzle_sizes_mm: JSON?` (v082) records the ordered per-tool sizes used to create the artifact. NULL means legacy/unknown, not a guessed model default. Explicit selection and claim reject unknown or mismatched vectors; source models must be resliced. Fleet backup/import preserves `printers.topology_config` while reacquiring current topology after restore.
 A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCADE) is what model `source_file_id`
 (SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
 process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
@@ -326,7 +332,7 @@ is kept but no longer read or written** (dropped in a later cleanup release).
 `orders.parts[]` — **superseded by the filament tuple (v053): a job's ask no longer references a material; those columns are history and
 `refs.material()` is gone.** The slot binding below is unchanged. **Dual-write for one release:** the legacy `spoolman_spool_id` / `filament_id` are still written (mirrored while the provider
 is Spoolman; `filament_id` stays NULL for any other provider) because old frontends, API clients and AMS reports keep writing the old keys, so
-every writer goes through `services/inventory/refs.py` (`PATCH /printers`, printer create, fleet import, `printer_manager.on_ams_change` — which
+every writer goes through `services/inventory/refs.py` (`PATCH /printers`, printer create, fleet import, `printer_manager.on_filament_change` — which
 now preserves *all* Themis-owned slot keys —, job configs/targets, project items + generation grouping, order parts). Conflicts resolve by what
 changed vs the stored slot (an edited `inventory` wins; otherwise an edited legacy key wins). **A new client must send `inventory: null` to unbind** (omitting the key leaves the stored binding); the legacy key is kept an int when numeric. A ref whose provider is not active is *unresolved*
 (never applied to another provider). Backfill: `('spoolman', CAST(filament_id AS TEXT))`.

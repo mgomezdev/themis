@@ -27,7 +27,7 @@ def test_manager_returns_the_clients_dict_with_shared_keys_overlaid():
     assert state["bed_temp"] == 61.5 and state["id"] == 42
     assert state["connected"] is True
     assert state["awaiting_plate_clear"] is True
-    assert isinstance(state["capabilities"], dict) and "ams" in state["capabilities"]
+    assert isinstance(state["capabilities"], dict) and "pause_resume" in state["capabilities"]
 
 
 def test_manager_uses_the_default_for_a_client_without_an_override():

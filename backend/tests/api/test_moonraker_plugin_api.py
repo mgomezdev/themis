@@ -1,12 +1,8 @@
-"""The Moonraker protocol-family plugin through the API (BIZ-148): several manufacturers on one plugin, registry UUID selection, the
-generic custom Klipper model with user-owned dimensions, and a hardware model offered by two providers only by explicit choice."""
+"""Generic Klipper registry selection, user configuration and exclusive plugin binding."""
 from tests.printer_ips import ip_config
 import pytest
 
-from app import plugins
-from app.plugins.manifest import Manufacturer, PrinterModel
 from app.services import model_targets
-from tests.plugins.dummy_plugin import make_manifest
 
 
 async def models(client, plugin_id="moonraker") -> dict[tuple[str, str], dict]:
@@ -19,24 +15,19 @@ async def add(client, model_uuid, **over):
     return await client.post("/api/v1/printers", json=body)
 
 
-async def test_the_plugin_serves_several_manufacturers_and_a_generic_model_by_registry_uuid(client):
+async def test_the_plugin_is_manufacturer_neutral_and_offers_only_custom_klipper(client):
     reg = await models(client)
-
-    assert {k[0] for k in reg} == {"voron", "sovol", "generic"}
-    voron, sovol = await add(client, reg[("voron", "v2_4_300")]["id"]), await add(client, reg[("sovol", "sv08")]["id"])
-    assert voron.status_code == 201 and sovol.status_code == 201, (voron.text, sovol.text)
-    for r, key in ((voron, ("voron", "v2_4_300")), (sovol, ("sovol", "sv08"))):
-        p = r.json()
-        assert (p["plugin_id"], p["manufacturer_id"], p["model_id"], p["model_uuid"]) == ("moonraker", *key, reg[key]["id"])
-        assert p["printer_type"] == "moonraker"
-    assert (voron.json()["bed_x_mm"], sovol.json()["bed_x_mm"]) == (300.0, 350.0)             # the declared bed of each
+    assert set(reg) == {("generic", "custom_klipper")}
+    r = await add(client, reg[("generic", "custom_klipper")]["id"])
+    assert r.status_code == 201, r.text
+    assert (r.json()["plugin_id"], r.json()["manufacturer_id"], r.json()["model_id"]) == ("moonraker", "generic", "custom_klipper")
 
 
 async def test_the_types_catalog_offers_the_moonraker_form_per_model_with_a_custom_flag(client):
     types = {(t["manufacturer_id"], t["model_id"]): t for t in (await client.get("/api/v1/printers/types")).json() if t["plugin_id"] == "moonraker"}
 
     custom = types[("generic", "custom_klipper")]
-    assert custom["custom"] is True and types[("voron", "v2_4_300")]["custom"] is False
+    assert custom["custom"] is True
     names = [f["name"] for f in custom["connection_fields"]]
     assert names == ["ip_address", "port", "api_key", "toolheads"]
     assert next(f for f in custom["connection_fields"] if f["name"] == "api_key")["field_type"] == "password"
@@ -59,9 +50,7 @@ async def test_a_custom_klipper_printer_persists_the_dimensions_and_toolheads_th
 async def test_a_model_defaults_to_its_own_bed_when_the_user_gives_none(client):
     reg = await models(client)
     custom = await add(client, reg[("generic", "custom_klipper")]["id"])
-    sovol = await add(client, reg[("sovol", "sv08")]["id"])
     assert (custom.json()["bed_x_mm"], custom.json()["bed_y_mm"]) == (250.0, 250.0)        # the custom model's placeholder
-    assert (sovol.json()["bed_x_mm"], sovol.json()["bed_y_mm"]) == (350.0, 350.0)
 
 
 @pytest.mark.parametrize("bad", [0, -5])
@@ -91,41 +80,13 @@ async def test_the_legacy_printer_type_key_does_not_silently_pick_the_moonraker_
     assert r.status_code == 422
 
 
-@pytest.fixture
-def second_provider():
-    saved = dict(plugins._REGISTRY)
-    plugins.register_plugin(make_manifest("klipper_alt", default_enabled=True, manufacturers=(
-        Manufacturer("voron", "Voron Design", (PrinterModel("v2_4_300", "2.4 (300 mm)", bed_mm=(300, 300)),)),)))
-    yield
-    plugins._REGISTRY.clear()
-    plugins._REGISTRY.update(saved)
-
-
-async def test_the_same_hardware_model_under_two_providers_is_two_registry_identities_chosen_explicitly(client, second_provider):
-    a, b = await models(client, "moonraker"), await models(client, "klipper_alt")
-    assert a[("voron", "v2_4_300")]["id"] != b[("voron", "v2_4_300")]["id"]
-
-    via_moonraker = await add(client, a[("voron", "v2_4_300")]["id"])
-    via_alt = await add(client, b[("voron", "v2_4_300")]["id"])
-    by_triple = await client.post("/api/v1/printers", json={"name": "T", "plugin_id": "klipper_alt", "manufacturer_id": "voron",
-                                                            "model_id": "v2_4_300", "connection_config": ip_config()})
-
-    assert via_moonraker.json()["plugin_id"] == "moonraker" and via_alt.json()["plugin_id"] == "klipper_alt"
-    assert by_triple.json()["model_uuid"] == b[("voron", "v2_4_300")]["id"]
-
-
-async def test_a_printer_is_never_silently_rebound_to_another_provider(client, second_provider):
-    a = await models(client, "moonraker")
-    created = (await add(client, a[("voron", "v2_4_300")]["id"])).json()
-
-    # the plugin is not editable, and a model the bound plugin does not declare cannot be moved to
-    assert (await client.patch(f"/api/v1/printers/{created['id']}", json={"plugin_id": "klipper_alt"})).json()["plugin_id"] == "moonraker"
-    refused = await client.patch(f"/api/v1/printers/{created['id']}", json={"manufacturer_id": "voron", "model_id": "trident_300x"})
-    assert refused.status_code == 422
+async def test_a_printer_cannot_be_rebound_to_another_plugin(client):
+    reg = await models(client)
+    created = (await add(client, reg[("generic", "custom_klipper")]["id"])).json()
+    refused = await client.patch(f"/api/v1/printers/{created['id']}", json={"plugin_id": "snapmaker"})
+    assert refused.status_code == 409
     after = (await client.get(f"/api/v1/printers/{created['id']}")).json()
-    assert (after["plugin_id"], after["model_uuid"]) == ("moonraker", a[("voron", "v2_4_300")]["id"])
-    moved = await client.patch(f"/api/v1/printers/{created['id']}", json={"model_id": "trident_300"})       # within the SAME provider: fine
-    assert moved.json()["model_uuid"] == a[("voron", "trident_300")]["id"] and moved.json()["plugin_id"] == "moonraker"
+    assert (after["plugin_id"], after["model_uuid"]) == ("moonraker", created["model_uuid"])
 
 
 def test_klipper_prints_raw_gcode_and_not_the_sliced_archive():

@@ -123,7 +123,7 @@ def test_task_config_notifications_merge_changed_keys_and_fire_only_on_change():
 
     async def on_change(trays):
         seen.append(trays)
-    c._on_ams_change = on_change
+    c._on_filament_change = on_change
     loop = asyncio.new_event_loop()
     c._loop = loop
     try:

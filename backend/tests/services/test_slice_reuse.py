@@ -1,4 +1,5 @@
 """Printing a cached version instead of slicing, when a printer claims the job (BIZ-193)."""
+from tests.fake_topology import declared_topology
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ from tests.services.test_slice_save import (  # noqa: F401 — `env` is a fixtur
 CACHED = b"; cached\n; filament used [g] = 3.0\n; estimated printing time (normal mode) = 10m 0s\nG28\n"
 INPUTS = slice_cache.CacheKeyInputs(
     source_content_hash="srchash", plate_number=1, machine_preset=MACHINE, process_preset="0.20mm Standard",
-    filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
+    filament_presets=("Generic PETG",), extra_config={}, nozzle_sizes_mm=(.4,), tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
 
 
 def _now() -> str:
@@ -45,7 +46,7 @@ async def _add_version(factory, library: Path, *, inputs=INPUTS, preset_hash="pr
         await s.flush()
         v = SlicedVersion(file_id=f.id, source_file_id=source.id, source_content_hash=inputs.source_content_hash,
                           plate_number=1, machine_preset=inputs.machine_preset, process_preset=inputs.process_preset,
-                          filament_presets=list(inputs.filament_presets), extra_config=inputs.extra_config,
+                          filament_presets=list(inputs.filament_presets), nozzle_sizes_mm=list(inputs.nozzle_sizes_mm) or None, extra_config=inputs.extra_config,
                           artifact_kind=inputs.artifact_kind, cache_key=slice_cache.cache_key(inputs),
                           preset_content_hash=preset_hash, slicer_version=version, created_at=_now())
         s.add(v)
@@ -353,7 +354,7 @@ async def test_a_hand_picked_version_blocks_on_a_printer_whose_profile_changed(s
     await _add_version(session_factory, env)
     qe, mgr = _engine(session_factory, tmp_path)
     async with session_factory() as s:
-        s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+        s.add(Printer(topology=declared_topology(), configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
                       machine_profile_override="Some Other 0.6 nozzle"))
         cached = (await s.execute(select(UploadedFile).where(UploadedFile.original_filename == "Benchy cached.gcode"))).scalar_one()
         j = Job(uploaded_file_id=cached.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True,

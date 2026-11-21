@@ -45,8 +45,11 @@ async def test_backup_include_credentials_true_keeps_them(client):
 
 
 async def test_import_of_redacted_backup_warns_about_missing_credentials(client):
-    await _create_bambu_printer(client)
+    original = await _create_bambu_printer(client)
     backup = (await client.get("/api/v1/settings/fleet-backup")).json()
+
+    # Restore into an empty fleet; importing atop the original would duplicate ownership.
+    assert (await client.delete(f"/api/v1/printers/{original['id']}")).status_code == 204
 
     import io
     payload = io.BytesIO(__import__("json").dumps(backup).encode())
@@ -110,3 +113,37 @@ async def test_import_reads_an_old_backups_current_orca_printer_profile_as_the_r
     assert resp.status_code == 200 and resp.json()["imported"] == 1
     (p,) = (await client.get("/api/v1/printers")).json()
     assert p["machine_profile_override"] == "Old Machine" and p["model_uuid"]
+
+
+async def test_backup_restores_topology_configuration_but_reacquires_hardware_facts(client, create_printer, session_factory):
+    import io
+    import json
+    from app.models import Printer
+    from app.plugins.mock.client import MockPrinterClient
+    from app.services.printer_manager import printer_manager
+    pid = await create_printer(printer_type='mock', connection_config={})
+    original = MockPrinterClient()
+    printer_manager.register_client(pid, original)
+    config = {'nozzle_sizes_mm': [.6], 'positions': [{'id': 'S0', 'filament': {'type': 'PLA'}}]}
+    r = await client.post(f'/api/v1/printers/{pid}/topology/refresh', json={'configuration': config})
+    assert r.status_code == 200, r.text
+    backup = (await client.get('/api/v1/settings/fleet-backup')).json()
+    assert backup['printers'][0]['topology_config'] == config
+    backup['printers'][0].update(topology={'untrusted': True}, topology_revision=999, topology_error='stale')
+    assert (await client.delete(f'/api/v1/printers/{pid}')).status_code == 204
+    response = await client.post('/api/v1/settings/fleet-import', files={
+        'file': ('fleet.json', io.BytesIO(json.dumps(backup).encode()), 'application/json')})
+    assert response.status_code == 200 and response.json()['imported'] == 1, response.text
+    async with session_factory() as session:
+        from sqlalchemy import select
+        restored = (await session.execute(select(Printer))).scalar_one()
+        restored_id = restored.id
+        assert restored.topology_config == config
+        assert restored.topology is None and restored.topology_revision == 0 and restored.topology_error is None
+    new_client = MockPrinterClient()
+    printer_manager.register_client(restored_id, new_client)
+    await printer_manager.mark_configured(restored_id)
+    async with session_factory() as session:
+        restored = await session.get(Printer, restored_id)
+        assert restored.topology['tools'][0]['nozzle_mm'] == .6
+    assert printer_manager.get_client(restored_id) is new_client

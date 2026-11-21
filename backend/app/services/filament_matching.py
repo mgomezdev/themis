@@ -21,7 +21,7 @@ def is_loaded(slot: dict) -> bool:
     return not slot.get("empty", False)
 
 
-# A project's filament numbers (1-based) and tool slots stay within this: the AMS mapping is a list as long as the highest one.
+# A project's filament numbers (1-based) and tool slots stay within this: filament mappings are indexed by the highest model position.
 MAX_MODEL_FILAMENTS = 32
 
 
@@ -161,6 +161,16 @@ def is_multicolour(config) -> bool:
 def evaluate_for_printer(config, printer, conflicts=frozenset()) -> Verdict:
     """`evaluate` against `printer`'s loaded slots, plus the printer's own policy: a "single colour only" printer never takes
     multicolour work (BIZ-358). `printer` None = no slots on record."""
+    topology = getattr(printer, 'topology', None) if printer is not None else None
+    if printer is not None and topology is None:
+        return Verdict(False, [], ['Printer topology is not configured; refresh it'])
+    if isinstance(topology, dict):
+        if getattr(printer, 'topology_error', None):
+            return Verdict(False, [], ['Printer topology is stale; refresh it'])
+        if not any(position.get("filament") is not None for position in topology["positions"]):
+            return Verdict(False, [], ['No filament loaded'])
+        if is_multicolour(config) and not topology['swapping']:
+            return Verdict(False, [], ['Printer does not support filament swapping'])
     if printer is not None and printer.single_colour_only and is_multicolour(config):
         return Verdict(False, [], [f"{printer.name} takes single-colour work only"])
     return evaluate(config, (printer.loaded_filaments if printer is not None else None) or [], conflicts)
@@ -190,7 +200,7 @@ def plan_from_json(raw) -> list[SlotUse] | None:
     return out
 
 
-_IDENTITY_KEYS = ("ams_tray_id", "type", "color")
+_IDENTITY_KEYS = ("position_id", "type", "subtype", "manufacturer", "color")
 
 
 def slot_identity(slot: dict | None) -> dict:
@@ -247,7 +257,7 @@ def spool_tuple(spool) -> ft.FilamentTuple:
 
 def conflicting_slots(loaded: list | None, spools_by_ref: dict) -> set[int]:
     """Indexes of slots whose bound spool's material differs from the slot's own tuple in any part known on both sides.
-    Only a slot the hardware reports (`reported`, set by the AMS/tool-data merge) can conflict; a hand-entered one never does, because
+    Only a slot the hardware reports (`reported`, set by the hardware-report merge) can conflict; a hand-entered one never does, because
     the operator set tuple and binding together."""
     out: set[int] = set()
     for i, slot in enumerate(loaded or []):

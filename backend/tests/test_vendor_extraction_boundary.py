@@ -67,8 +67,8 @@ def test_core_imports_no_vendor_plugin_or_old_vendor_module():
 def test_the_scan_covers_core_and_leaves_the_remap_package_alone():
     files = {p.relative_to(APP_DIR).as_posix() for p in _core_files()}
     assert "services/printer_client_factory.py" in files and "main.py" in files
-    assert (APP_DIR / "services" / "snapmaker").is_dir()           # the remap package stays, and is not flagged
-    assert not any(p.search("app.services.snapmaker.remap import x") for p in FORBIDDEN)
+    assert not (APP_DIR / "services" / "snapmaker").exists()           # the remap package stays, and is not flagged
+    assert not any(p.search("app.plugins._protocols.three_mf.remap import x") for p in FORBIDDEN)
 
 
 def test_the_checker_flags_planted_imports(tmp_path):

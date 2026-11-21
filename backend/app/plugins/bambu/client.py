@@ -1,7 +1,11 @@
 from __future__ import annotations
+
+from .._protocols.gcode_controls import GcodeControls
 import ftplib
 import io
 import json
+import threading
+from copy import deepcopy
 import logging
 import ssl
 from contextlib import contextmanager
@@ -192,7 +196,7 @@ def serialize_bambu(state, printer_id: int) -> dict:
     }
 
 
-class BambuMQTTClient(AbstractPrinterClient):
+class BambuMQTTClient(GcodeControls, AbstractPrinterClient):
     printer_type: ClassVar[str] = "bambu"
     SSDP_PORTS: ClassVar[tuple[int, ...]] = SSDP_PORTS      # discovery listens for announcements on these
 
@@ -229,7 +233,7 @@ class BambuMQTTClient(AbstractPrinterClient):
         on_state_change: Callable | None = None,
         on_print_start: Callable | None = None,
         on_print_complete: Callable | None = None,
-        on_ams_change: Callable | None = None,
+        on_filament_change: Callable | None = None,
         on_layer_change: Callable | None = None,
         bed_leveling: bool | str = True,
         flow_cali: bool | str = False,
@@ -242,13 +246,16 @@ class BambuMQTTClient(AbstractPrinterClient):
         self._on_state_change = on_state_change
         self._on_print_start = on_print_start
         self._on_print_complete = on_print_complete
-        self._on_ams_change = on_ams_change
+        self._on_filament_change = on_filament_change
         self._on_layer_change = on_layer_change
         # Per-printer print defaults (start_print uses them unless StartPrintOptions overrides).
         self._bed_leveling = _as_bool(bed_leveling)
         self._flow_cali = _as_bool(flow_cali)
         self._timelapse = _as_bool(timelapse)
         self._use_ams = _as_bool(use_ams)
+        self._topology_report = {}
+        self._topology_received = threading.Event()
+        self._topology_lock = threading.Lock()
         self.state = PrinterState()
         self._client: mqtt.Client | None = None
         self._loop = None
@@ -396,7 +403,6 @@ class BambuMQTTClient(AbstractPrinterClient):
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
-            ams=True,
             pause_resume=True,
             chamber_light=True,
             layer_inspect=True,
@@ -484,6 +490,7 @@ class BambuMQTTClient(AbstractPrinterClient):
             out.append({
                 "slot": global_id,
                 "ams_tray_id": global_id,
+                "position_id": str(global_id),
                 "ams_unit": unit_id,
                 "filament_id": tray.get("tray_info_idx") or None,
                 "name": (tray.get("tray_sub_brands") or ttype).strip(),
@@ -514,6 +521,28 @@ class BambuMQTTClient(AbstractPrinterClient):
     def get_loaded_filaments(self) -> list:
         return list(self.state.ams_trays)
 
+    def refresh_topology(self, configuration: dict):
+        from ..printer_topology import PrinterTopology
+        self._topology_received.clear()
+        self.request_status_update()
+        if not self._topology_received.wait(5):
+            raise ValueError("No complete topology report received")
+        with self._topology_lock:
+            report = deepcopy(self._topology_report)
+        sizes = configuration.get('nozzle_sizes_mm') or [report.get('nozzle_diameter')]
+        if len(sizes) != 1 or sizes[0] is None:
+            raise ValueError("Supply the installed nozzle size for this printer")
+        loaded = {str(f['slot']): f for f in self._parse_ams(report)}
+        positions = []
+        for unit in (report.get('ams') or {}).get('ams', []):
+            for tray in range(4):
+                key = str(int(unit['id']) * 4 + tray)
+                positions.append({'id': key, 'filament': loaded.get(key), 'reported': True})
+        if not positions:
+            positions = [{'id': '254', 'filament': loaded.get('254'), 'reported': True}]
+        return PrinterTopology.model_validate({'tools': [{'id': 'T0', 'nozzle_mm': sizes[0]}],
+                                              'positions': positions, 'swapping': len(positions) > 1})
+
     def start_print(self, file_name: str, options: StartPrintOptions | None = None) -> bool:
         opts = options or StartPrintOptions()
         payload: dict = {
@@ -527,14 +556,18 @@ class BambuMQTTClient(AbstractPrinterClient):
                 # the job only supplies the file, plate, and AMS mapping.
                 "bed_levelling": self._bed_leveling,
                 "flow_cali": self._flow_cali,
-                "vibration_cali": opts.vibration_cali,
-                "layer_inspect": opts.layer_inspect,
+                "vibration_cali": True,
+                "layer_inspect": False,
                 "timelapse": self._timelapse,
                 "use_ams": self._use_ams,
             }
         }
-        if opts.ams_mapping is not None:
-            payload["print"]["ams_mapping"] = opts.ams_mapping
+        if opts.slot_plan:
+            from .routing import ams_mapping
+            from ...services.filament_matching import SlotUse
+            mapping = ams_mapping([SlotUse(p.get('model_filament'), p['slot']) for p in opts.slot_plan], opts.loaded_filaments or [])
+            if mapping is not None:
+                payload["print"]["ams_mapping"] = mapping
         return self._publish(payload)
 
     def stop_print(self) -> bool:
@@ -599,6 +632,17 @@ class BambuMQTTClient(AbstractPrinterClient):
         if "print" not in data:
             return
         p = data["print"]
+        with self._topology_lock:
+            before = deepcopy(self._topology_report)
+            for key in ('nozzle_diameter', 'vt_tray'):
+                if key in p:
+                    self._topology_report[key] = p[key]
+            if isinstance(p.get('ams'), dict) and 'ams' in p['ams']:
+                self._topology_report['ams'] = p['ams']
+                self._topology_received.set()
+            changed = before != self._topology_report
+        if changed:
+            self.notify_topology_changed()
         prev_state = self.state.state
         if "gcode_state" in p:
             raw = p["gcode_state"]
@@ -655,10 +699,10 @@ class BambuMQTTClient(AbstractPrinterClient):
                     pass
 
         self.state.raw_data = data
-        if ams_changed and self._on_ams_change and self._loop:
+        if ams_changed and self._on_filament_change and self._loop:
             import asyncio
             asyncio.run_coroutine_threadsafe(
-                self._on_ams_change(self.state.ams_trays), self._loop
+                self._on_filament_change(self.state.ams_trays), self._loop
             )
         if self._on_state_change and self._loop:
             import asyncio

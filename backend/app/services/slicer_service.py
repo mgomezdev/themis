@@ -67,6 +67,7 @@ class SliceRequest:
     output_kind: ArtifactKind = ArtifactKind.GCODE
     artifact_basename: str | None = None
     model_uuid: str | None = None
+    nozzle_sizes_mm: tuple[float, ...] = ()
 
 
 def slice_side_mapping(client, tool_index, filament_map) -> "tuple[int | None, list | None]":
@@ -195,7 +196,8 @@ class SlicerService:
         kind = req.output_kind
         request = ProduceRequest(
             source=source, input_kind=model_input(source.name), plate=req.plate_number,
-            target=TargetPrinter(req.bed_mm, model_uuid=req.model_uuid, machine_profile=req.machine_preset or None),
+            target=TargetPrinter(req.bed_mm, model_uuid=req.model_uuid, machine_profile=req.machine_preset or None,
+                                 toolheads=len(req.nozzle_sizes_mm) or 1, nozzle_sizes_mm=req.nozzle_sizes_mm),
             settings=_settings_of(req), want=kind,
         )
         if request.input_kind not in producer.accepted_inputs or kind not in producer.output_kinds:

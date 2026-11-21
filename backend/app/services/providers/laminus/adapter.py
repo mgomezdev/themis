@@ -56,7 +56,7 @@ class LaminusSlicingProvider(SlicingProvider):
             raise SlicingProviderError("tool_index and filament_map are mutually exclusive")
         if tool_index is None and not filament_map:
             return
-        from ...snapmaker.remap import remap_3mf      # the Orca paint_color codec lives in Themis for now (BIZ-248)
+        from ....plugins._protocols.three_mf.remap import remap_3mf      # the Orca paint_color codec lives in Themis for now (BIZ-248)
         remap_3mf(source_3mf, tool_index=tool_index, filament_map=filament_map)
 
     @property

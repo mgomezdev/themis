@@ -9,6 +9,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -28,6 +29,7 @@ from ...services.printer_client_factory import (
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
+from ...services import printer_ownership
 from ...services import filament_matching, printer_setup, scheduling, slice_overrides, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.printer_client_factory import create_client
@@ -110,6 +112,7 @@ class PrinterCreate(BaseModel):
 
 
 class PrinterUpdate(BaseModel):
+    plugin_id: str | None = None
     name: str | None = None
     manufacturer_id: str | None = None
     model_id: str | None = None
@@ -233,6 +236,9 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         "id": p.id,
         "name": p.name,
         "printer_type": p.printer_type,
+        "topology": p.topology,
+        "topology_revision": p.topology_revision,
+        "topology_error": p.topology_error,
         "plugin_id": p.plugin_id,
         "manufacturer_id": p.manufacturer_id,
         "model_id": p.model_id,
@@ -283,10 +289,28 @@ async def _get_or_404(printer_id: int, session: AsyncSession) -> Printer:
 
 
 def _get_connected_client(printer_id: int):
-    client = printer_manager._clients.get(printer_id)
-    if client is None or not client.connected:
+    try:
+        client = printer_manager.get_client(printer_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(503, "Printer not connected") from exc
+    if not client.connected:
         raise HTTPException(503, "Printer not connected")
     return client
+
+
+async def _save_printer(session: AsyncSession, *, flush_only: bool = False) -> None:
+    try:
+        if flush_only:
+            await session.flush()
+        else:
+            await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if printer_ownership.ERROR in str(exc.orig):
+            raise HTTPException(409, "This printer is already owned by another binding") from exc
+        raise
 
 
 def _factory_of(session: AsyncSession) -> async_sessionmaker:
@@ -300,13 +324,6 @@ def _ip_of(p: Printer) -> str | None:
         if cfg.get(key):
             return str(cfg[key]).strip()
     return None
-
-
-def _same_model(p: Printer, plugin_id, manufacturer_id, model_id, model_uuid) -> bool:
-    """A printer's model is its registry UUID when both sides have one, else its plugin/manufacturer/model triple."""
-    if p.model_uuid and model_uuid:
-        return p.model_uuid == model_uuid
-    return (p.plugin_id, p.manufacturer_id, p.model_id) == (plugin_id, manufacturer_id, model_id)
 
 
 def _identity_for_create(body: PrinterCreate, registered=None):
@@ -383,8 +400,12 @@ async def list_all_printer_files(session: AsyncSession = Depends(get_session)) -
     async def one(p: Printer) -> dict | None:
         entry = {"printer_id": p.id, "printer_name": p.name, "files": [], "error": None,
                  "can_delete": False, "can_download": False}
-        client = printer_manager._clients.get(p.id)
-        if client is None or not client.connected:
+        try:
+            client = printer_manager.get_client(p.id)
+        except (KeyError, ValueError) as exc:
+            entry["error"] = str(exc) if isinstance(exc, ValueError) else "Printer not connected"
+            return entry
+        if not client.connected:
             entry["error"] = "Printer not connected"
             return entry
         caps = client.get_capabilities()
@@ -425,8 +446,7 @@ async def create_printer(
 ) -> dict:
     """Register a printer. Only its identity (model + `connection_config.ip_address`) is required; blank connection values are
     dropped. It is saved unconfigured and a connection test runs in the background: success makes it `configured` (only
-    configured printers take queue work), failure records `config_error`. 409 when a printer of the same model already uses
-    that IP."""
+    configured printers take queue work), failure records `config_error`. 409 when another binding already owns that host or serial number."""
     cfg = printer_setup.strip_blank(body.connection_config)
     await registry.sync_registry(session)
     registered = await registry.get_model(session, body.model_uuid) if body.model_uuid else None
@@ -444,10 +464,9 @@ async def create_printer(
     ip = str(cfg.get("ip_address") or "").strip()
     if has_ip and not ip:
         raise HTTPException(422, "connection_config.ip_address is required")
-    if ip:
-        for other in (await session.execute(select(Printer))).scalars().all():
-            if _ip_of(other) == ip and _same_model(other, plugin_id, manufacturer_id, model_id, model_uuid):
-                raise HTTPException(409, f"{other.name} already uses {ip} as {model_name}")
+    other = await printer_ownership.conflict(session, cfg)
+    if other is not None:
+        raise HTTPException(409, printer_ownership.reason(other))
     printer = Printer(
         model_uuid=model_uuid,
         name=body.name or (printer_setup.default_name(model_name, ip) if ip else model_name),
@@ -472,7 +491,7 @@ async def create_printer(
     )
     printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     session.add(printer)
-    await session.commit()
+    await _save_printer(session)
     await session.refresh(printer)
     printer_manager.set_printer_plugin(printer.id, plugin_id)
     printer_manager.set_configured(printer.id, False)
@@ -719,6 +738,13 @@ async def update_printer(
     """Update one or more printer fields. Omitted fields are left unchanged.
     `machine_profile_override` and `nozzle_variant` support explicit null to clear them."""
     printer = await _get_or_404(printer_id, session)
+    topology_contents_changed = False
+    if "plugin_id" in body.model_fields_set and body.plugin_id != printer.plugin_id:
+        raise HTTPException(409, "A printer belongs to one plugin; delete its binding before choosing another plugin")
+    if body.connection_config is not None:
+        other = await printer_ownership.conflict(session, body.connection_config, printer.id)
+        if other is not None:
+            raise HTTPException(409, printer_ownership.reason(other))
     if body.manufacturer_id is not None or body.model_id is not None:
         # validated before anything is changed: a rejected identity leaves the printer exactly as it was
         manufacturer_id = body.manufacturer_id or printer.manufacturer_id or ""
@@ -755,6 +781,8 @@ async def update_printer(
         printer.connection_config = printer_setup.strip_blank(body.connection_config)
         if retest:
             printer.configured, printer.config_error = False, None
+        # Reserve ownership before any subsequent validation query can autoflush this edit.
+        await _save_printer(session, flush_only=True)
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
     # Use model_fields_set so an explicit null clears the preset (EditForm sends
@@ -770,7 +798,12 @@ async def update_printer(
         printer.queue_paused_reason = None                # a person decided: Themis' own reason no longer applies
     if body.loaded_filaments is not None:
         # whole-list replace from the client: resolve each slot against what is stored (dual-write, see inventory/refs.py)
-        printer.loaded_filaments = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)
+        updated = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)
+        if printer.topology is not None:
+            before = [(filament_matching.slot_identity(s), bool(s.get('empty'))) for s in (printer.loaded_filaments or [])]
+            after = [(filament_matching.slot_identity(s), bool(s.get('empty'))) for s in updated]
+            topology_contents_changed = before != after
+        printer.loaded_filaments = updated
     if "build_plate_type" in body.model_fields_set:
         printer.build_plate_type = body.build_plate_type
     if body.no_snapshots_while_idle is not None:
@@ -801,12 +834,18 @@ async def update_printer(
         printer.waiver_flag_at = body.waiver_flag_at
     if body.waiver_stop_at is not None:
         printer.waiver_stop_at = body.waiver_stop_at
-    await session.commit()
+    if topology_contents_changed:
+        printer.topology_error = 'Filament contents changed; topology refresh required'
+        printer_manager._topology_invalid.add(printer.id)
+    await _save_printer(session)
     await session.refresh(printer)
     if retest:
         printer_manager.set_configured(printer.id, False)
         printer_manager.disconnect_printer(printer.id)      # the old connection must not keep printing/claiming on stale settings
         printer_setup.schedule(printer.id, _factory_of(session))
+    if topology_contents_changed and not retest:
+        await printer_manager.on_topology_change(printer.id)
+        await session.refresh(printer)
     queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
@@ -960,3 +999,5 @@ from .printer_camera import (  # noqa: E402,F401,I001
     snapshot_camera,  # noqa: F401
     stream_camera,  # noqa: F401
 )
+
+from . import printer_topology  # noqa: E402,F401

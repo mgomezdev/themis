@@ -146,6 +146,8 @@ class TargetPrinter:
     # printer-less work or an unmapped model/variant (which makes the provider ineligible before produce() is reached).
     machine_profile: str | None = None
 
+    nozzle_sizes_mm: tuple[float, ...] = ()
+
 
 @dataclass(frozen=True)
 class FilamentChoice:

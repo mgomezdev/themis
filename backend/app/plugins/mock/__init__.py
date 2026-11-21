@@ -24,6 +24,7 @@ MANIFEST = PluginManifest(
     # Off in production; dev and the test suite turn it on through core (defaults.toml maps the deprecated THEMIS_MOCK_PRINTERS).
     default_enabled=False,
     factory=MockPrinterClient,
+    legacy_printer_types={"mock": ("mock", "mock")},
     manufacturers=(
     Manufacturer("mock", "Mock", (PrinterModel("mock", "Mock Printer", bed_mm=(256, 256), toolheads=1),)),
     ),

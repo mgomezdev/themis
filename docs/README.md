@@ -8,6 +8,7 @@ Use the current guides for supported behavior. The application source and genera
 - [Installation and administration](operations.md): Docker Compose, local development, settings, authentication, recovery, and backups.
 - [Integrations and API](integrations.md): API keys/scopes, events, webhooks, plugins, and MCP.
 - [Companion application guide](companion-apps.md): retry-safe project creation/generation and signed project/job webhooks.
+- [Local printer validation](printer-validation.md): post-build refresh and printing checks for Bambu P1S, Elegoo Centauri Carbon and Snapmaker U1.
 - [MCP server](mcp-server.md): install and configure the optional stdio integration.
 
 ## Developer and maintainer references

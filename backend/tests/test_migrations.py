@@ -440,13 +440,19 @@ async def test_rollback_last_undoes_only_the_newest_migration(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await run_migrations(conn)
+        async def triggers():
+            return dict((await conn.execute(text("SELECT name, sql FROM sqlite_master WHERE type='trigger'"))).fetchall())
+
         before = await _schema(conn)
+        before_triggers = await triggers()
 
         await rollback_last(conn)
 
         after = await _schema(conn)
         removed = {(t, c) for t, cols in before.items() for c in cols if c not in after.get(t, {})}
-        assert removed, "rolling back did not remove any table or column"
+        after_triggers = await triggers()
+        assert removed or before_triggers.keys() - after_triggers.keys(), "rollback removed no schema object"
+        assert all(before_triggers[k] == v for k, v in after_triggers.items())
         for table, cols in after.items():
             assert table in before, f"rollback created table {table}"
             for col, definition in cols.items():
@@ -457,6 +463,7 @@ async def test_rollback_last_undoes_only_the_newest_migration(monkeypatch):
         # The rolled-back version re-applies cleanly (column sets; create_all and ALTER spell defaults differently).
         await run_migrations(conn)
         reapplied = await _schema(conn)
+        assert await triggers() == before_triggers
         assert {t: set(c) for t, c in reapplied.items()} == {t: set(c) for t, c in before.items()}
         assert (await conn.execute(text("SELECT COUNT(*) FROM schema_migrations"))).scalar() == len(chain)
     await engine.dispose()
@@ -678,4 +685,21 @@ async def test_v050_adds_preferred_slicer_column_idempotently_and_down_drops_it(
         await v50.down(conn)
         await v50.down(conn)
         assert "preferred_slicer_plugin_id" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+    await engine.dispose()
+
+
+async def test_v082_preserves_legacy_cache_rows_with_unknown_nozzle_sizes():
+    from app.migrations import v082_printer_topology
+    engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+    async with engine.begin() as conn:
+        await conn.execute(text('CREATE TABLE printers (id INTEGER PRIMARY KEY)'))
+        await conn.execute(text('CREATE TABLE job_printer_configs (id INTEGER PRIMARY KEY)'))
+        await conn.execute(text('CREATE TABLE sliced_versions (id INTEGER PRIMARY KEY, cache_key TEXT)'))
+        await conn.execute(text("INSERT INTO sliced_versions VALUES (7, 'legacy-key')"))
+        await v082_printer_topology.up(conn)
+        await v082_printer_topology.up(conn)
+        assert (await conn.execute(text('SELECT id, cache_key, nozzle_sizes_mm FROM sliced_versions'))).one() == (7, 'legacy-key', None)
+        await v082_printer_topology.down(conn)
+        await v082_printer_topology.up(conn)
+        assert (await conn.execute(text('SELECT id, cache_key, nozzle_sizes_mm FROM sliced_versions'))).one() == (7, 'legacy-key', None)
     await engine.dispose()

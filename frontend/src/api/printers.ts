@@ -95,7 +95,20 @@ export const variantLabel = (v: NozzleVariant): string => `${v.diameter_mm}mm${v
 export const sameVariant = (a: NozzleVariant | null | undefined, b: NozzleVariant | null | undefined): boolean =>
   !!a && !!b && a.diameter_mm === b.diameter_mm && a.flow === b.flow;
 
+export interface PrinterTopology {
+  tools: { id: string; nozzle_mm: number }[];
+  positions: { id: string; filament: Record<string, unknown> | null }[];
+  swapping: boolean;
+}
+
+export function refreshPrinterTopology(id: number, configuration?: Record<string, unknown>): Promise<{ topology: PrinterTopology; revision: number }> {
+  return request(`${BASE}/${id}/topology/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(configuration ? { configuration } : {}) });
+}
+
 export interface ApiPrinter {
+  topology?: PrinterTopology | null;
+  topology_revision?: number;
+  topology_error?: string | null;
   id: number;
   name: string;
   printer_type: string;

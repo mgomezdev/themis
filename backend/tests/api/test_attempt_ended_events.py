@@ -50,7 +50,7 @@ async def test_stopping_a_printer_settles_the_attempt_it_was_printing(client, cr
     await _printing(session_factory, job_id, printer_id)
     fake = MagicMock(connected=True)
     with patch("app.api.routes.printers.printer_manager") as pm:
-        pm._clients.get.return_value = fake
+        pm.get_client.return_value = fake
         r = await client.post(f"/api/v1/printers/{printer_id}/stop")
     assert r.status_code in (200, 204), r.text
     fake.stop_print.assert_called_once()

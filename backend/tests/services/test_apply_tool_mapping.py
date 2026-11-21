@@ -7,8 +7,8 @@ import pytest
 
 from app.services.providers.laminus.adapter import LaminusSlicingProvider
 from app.services.providers.slicing import SlicingProvider, SlicingProviderError
-from app.services.snapmaker.paint_remap import decode_nodes, encode_nodes
-from app.services.snapmaker.remap import remap_3mf
+from app.plugins._protocols.three_mf.paint_remap import decode_nodes, encode_nodes
+from app.plugins._protocols.three_mf.remap import remap_3mf
 from tests.fake_providers import FakeSlicingProvider
 
 

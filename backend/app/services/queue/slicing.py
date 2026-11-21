@@ -126,11 +126,11 @@ class SlicingMixin:
             plan = filament_matching.plan_for(config, loaded) if config else []
             plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
             cfg_tool_index = None   # set from the slice params below
-            # AMS printers (Bambu) map the print's filament to the matched tray.
+            # Forward neutral selected positions; the plugin owns hardware addressing.
             try:
-                ams_tray_id, ams_error = _qe._ams_mapping(plan, loaded), None
+                filament_selection, selection_error = _qe._filament_selection(plan, loaded), None
             except ValueError as exc:
-                ams_tray_id, ams_error = None, str(exc)
+                filament_selection, selection_error = None, str(exc)
             source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             is_gcode = is_presliced_file(uploaded_file)
@@ -152,8 +152,8 @@ class SlicingMixin:
         if config is None or uploaded_file is None or printer_view is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
-        if ams_error:
-            await self._handle_slice_failure(job_id, printer_id, ams_error)
+        if selection_error:
+            await self._handle_slice_failure(job_id, printer_id, selection_error)
             return
         if plan_gone:
             # The filament was there when the printer claimed the job and was removed since: a slice failure (blocked, recoverable
@@ -295,7 +295,7 @@ class SlicingMixin:
             self.spawn_save_slice(job_id, printer_id, gcode_path, slice_inputs)
 
         await self._broadcast_job(job_id)
-        await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
+        await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, filament_selection)
 
     def _slice_request(self, job_id: int, printer_id: int, plate_number: int,
                        p: dict, provider_id: str | None = None) -> tuple[SliceRequest, list | None]:

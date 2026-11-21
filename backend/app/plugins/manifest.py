@@ -140,6 +140,7 @@ class PluginManifest:
     description: str = ""
     docs_url: str | None = None
     permissions: tuple[str, ...] = ()         # reserved (BIZ-200): parsed, never enforced
+    legacy_printer_types: dict[str, tuple[str, str]] = field(default_factory=dict)
     manufacturers: tuple[Manufacturer, ...] = ()   # printer models this plugin supports (new-printer dropdowns)
     # Enabled when no config row exists yet (bundled printer vendors: their printers must not go dormant on upgrade).
     default_enabled: bool = False

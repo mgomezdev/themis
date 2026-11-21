@@ -159,6 +159,10 @@ export function useFleetRaw(): [FleetPrinter[], () => void] {
     return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
+        if (msg.type === 'printer_topology') {
+          refetch();
+          return;
+        }
         if (msg.type === 'printer_configured') {
           // a connection test finished or the first live connection confirmed the setup (BIZ-369)
           const d = msg.data as unknown as { printer_id: number; configured: boolean; config_error: string | null };

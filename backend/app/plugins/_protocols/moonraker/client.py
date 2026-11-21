@@ -10,6 +10,8 @@ Authoritative signals: `print_stats.state` (standby/printing/paused/complete/can
 `complete` fires the print-complete callback exactly once; `webhooks.state` + `print_stats.message` feed the normalised alarms."""
 from __future__ import annotations
 
+from ..gcode_controls import GcodeControls
+
 import asyncio
 import itertools
 import json
@@ -21,7 +23,7 @@ from typing import Callable, ClassVar
 import httpx
 import websocket
 
-from ..abstract_printer_client import (
+from ....services.abstract_printer_client import (
     AbstractPrinterClient, Alarm, ConnectionField, DiscoveredPrinter, FileTooLargeError, PrinterCapabilities, PrinterFile,
     StartPrintOptions,
 )
@@ -121,8 +123,11 @@ def serialize_moonraker(state, printer_id: int, printer_type: str) -> dict:
     }
 
 
-class MoonrakerClientBase(AbstractPrinterClient):
+class MoonrakerClientBase(GcodeControls, AbstractPrinterClient):
     """Generic Moonraker client. Subclasses set `printer_type` and may override the hooks marked below."""
+
+    print_artifact_kind = "gcode"
+    raw_gcode_supported = True
 
     # Log/thread label ("Snapmaker", "Moonraker"…).
     label: ClassVar[str] = "Moonraker"
@@ -146,7 +151,7 @@ class MoonrakerClientBase(AbstractPrinterClient):
         self._extruders = extruder_names(n)
         self._on_state_change = on_state_change
         self._on_print_complete = on_print_complete
-        self._on_ams_change = None          # wired by PrinterManager.connect_printer: persists loaded_filaments
+        self._on_filament_change = None          # wired by PrinterManager.connect_printer: persists loaded_filaments
         self.state = self._new_state()
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -154,6 +159,7 @@ class MoonrakerClientBase(AbstractPrinterClient):
         self._loop = None
         self._prev_print_state = "standby"
         self._rpc_id = itertools.count(1)
+        self._topology_observed = {}
         self._webcam_url: str | None = None   # discovered via server.webcams.list (None = none advertised / not asked yet)
 
     # ---- hooks for subclasses ----
@@ -174,7 +180,7 @@ class MoonrakerClientBase(AbstractPrinterClient):
 
     # ---- standard subscription ----
     def _subscribe_objects(self) -> dict:
-        objs = {"print_stats": None, "webhooks": None, "display_status": None, "heater_bed": None, "toolhead": None, "fan": None}
+        objs = {"configfile": None, "print_stats": None, "webhooks": None, "display_status": None, "heater_bed": None, "toolhead": None, "fan": None}
         objs.update({name: None for name in self._extruders})
         objs.update(self._extra_objects())
         return objs
@@ -217,6 +223,32 @@ class MoonrakerClientBase(AbstractPrinterClient):
 
     def serialize_state(self, printer_id: int) -> dict:
         return serialize_moonraker(self.state, printer_id, self.printer_type)
+
+    def refresh_topology(self, configuration: dict):
+        from ...printer_topology import PrinterTopology
+        response = httpx.get(f"{self._http_base}/printer/objects/query", params={'configfile': '', **{k: '' for k in self._extra_objects()}},
+                             headers=self._headers(), timeout=10)
+        response.raise_for_status()
+        status = response.json()['result']['status']
+        settings = status['configfile']['settings']
+        names = sorted((name for name in settings if name == 'extruder' or (name.startswith('extruder') and name[8:].isdigit())),
+                       key=lambda name: 0 if name == 'extruder' else int(name[8:]))
+        sizes = configuration.get('nozzle_sizes_mm')
+        if sizes is not None and len(sizes) != len(names):
+            raise ValueError('Provide one nozzle size per configured tool')
+        tools = [{'id': name, 'nozzle_mm': sizes[i] if sizes is not None else settings[name]['nozzle_diameter']} for i, name in enumerate(names)]
+        positions = self._topology_positions(status, configuration, names)
+        topology = PrinterTopology.model_validate({'tools': tools, 'positions': positions, 'swapping': len(positions) > 1})
+        if tuple(names) != tuple(self._extruders):
+            with self._lock:
+                self._extruders = tuple(names)
+                self.state.extruder_temps = [0.0] * len(names)
+                self.state.extruder_targets = [0.0] * len(names)
+            self._ws_send('printer.objects.subscribe', {'objects': self._subscribe_objects()})
+        return topology
+
+    def _topology_positions(self, status, configuration, names):
+        return configuration.get('positions') or [{'id': name, 'filament': None} for name in names]
 
     def get_capabilities(self) -> PrinterCapabilities:
         multi = len(self._extruders) > 1
@@ -396,6 +428,10 @@ class MoonrakerClientBase(AbstractPrinterClient):
         self._webcam_url = url
 
     def _apply_status(self, status: dict) -> None:
+        observed = {k: status[k] for k in ('configfile', 'print_task_config') if k in status}
+        if observed and any(self._topology_observed.get(k) != value for k, value in observed.items()):
+            self._topology_observed.update(observed)
+            self.notify_topology_changed()
         with self._lock:
             self.state.raw = status
             wh = status.get("webhooks")
@@ -459,9 +495,9 @@ class MoonrakerClientBase(AbstractPrinterClient):
                 pass
 
     def _fire_trays_change(self, trays: list) -> None:
-        if self._on_ams_change and self._loop:
+        if self._on_filament_change and self._loop:
             try:
-                asyncio.run_coroutine_threadsafe(self._on_ams_change(trays), self._loop)
+                asyncio.run_coroutine_threadsafe(self._on_filament_change(trays), self._loop)
             except Exception:
                 pass
 

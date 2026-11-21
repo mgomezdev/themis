@@ -325,3 +325,14 @@ def test_produce_a_non_curated_printer_override_is_invalid_settings(sidecar, pri
                           printer_overrides={"post_process": "x"})
     assert _code(lambda: _produce(tmp_path, settings=bad)) is c.ErrorCode.INVALID_SETTINGS
     assert sidecar.requests == []
+
+
+def test_live_nozzle_sizes_are_applied_by_slicing_plugin(sidecar, primed, tmp_path):  # noqa: F811
+    from dataclasses import replace
+    src = tmp_path / 'm.3mf'
+    src.write_bytes(b'PK')
+    out = tmp_path / 'out'
+    out.mkdir()
+    target = replace(MAPPED, nozzle_sizes_mm=(.4, .6))
+    producer().produce(c.ProduceRequest(src, c.InputKind.MODEL_3MF, 1, target, SETTINGS), out)
+    assert _sent_extra_config(sidecar)['nozzle_diameter'] == ['0.4', '0.6']

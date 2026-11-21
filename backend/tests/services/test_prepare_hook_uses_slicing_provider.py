@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.fake_topology import declared_topology
 from tests.slicing_env import slicing_provider
 
 from app.models import JobPrinterConfig
@@ -27,6 +28,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None, ask_sl
     async with db() as s:
         printer = await s.get(Printer, 1)
         printer.machine_profile_override = "Test Machine"
+        printer.printer_type = "snapmaker"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""} for _ in range(3)]   # T0..T2 (a pinned tool must exist)
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         cfg.tool_index = tool_index
@@ -34,6 +36,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None, ask_sl
         if ask_slot is not None:                                        # only this slot is PETG: the (unpinned) ask can only match it
             printer.loaded_filaments = [{**f, "type": "PETG" if i == ask_slot else "PLA"} for i, f in enumerate(printer.loaded_filaments)]
             cfg.ask_type, cfg.ask_subtype = "PETG", "any"
+        printer.topology = declared_topology(printer.loaded_filaments)
         await s.commit()
 
     mgr = _make_mock_printer_manager([1])
@@ -76,9 +79,9 @@ async def test_a_filament_map_is_requested_from_the_slicer_not_the_client(sessio
 
 
 @pytest.mark.asyncio
-async def test_no_mapping_when_neither_set(session_factory, tmp_path):
+async def test_plugin_explicitly_selects_the_first_matched_tool(session_factory, tmp_path):
     mapping, _, _ = await _run(session_factory, tmp_path, flag=True)
-    assert mapping == (None, None)
+    assert mapping == (0, None)
 
 
 @pytest.mark.asyncio

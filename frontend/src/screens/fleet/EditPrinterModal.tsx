@@ -12,6 +12,7 @@ import {
   type ApiPrinter,
   type PrinterSlicerDraft,
 } from '../../api/printers';
+import { PrinterTopologyPanel } from '../../components/PrinterTopologyPanel';
 import { PrinterSlicerSettings } from '../../components/PrinterSlicerSettings';
 
 export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClose }: {
@@ -142,6 +143,7 @@ export function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted,
         </div>
 
         <div className="col gap-5" style={{ padding: 20 }}>
+          <PrinterTopologyPanel printerId={Number(p.id)} initial={apiPrinter?.topology} />
           <div className="col gap-2">
             <div className="tag-key">Identity</div>
             <label className="label">Name</label>

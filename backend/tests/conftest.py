@@ -34,6 +34,8 @@ def _schema_template(tmp_path_factory):
         load_bundled()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            from app.migrations.v081_printer_ownership import up
+            await up(conn)
             await run_plugin_migrations(conn)                  # bundled plugins' own tables (e.g. Local inventory's)
         await engine.dispose()
 
@@ -63,6 +65,7 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     plugin_host._reset()
     plugin_host.configure(factory)
+    printer_manager.set_session_factory(factory)
     from app.eventing.hub import hub as event_hub
     event_hub.configure(factory)                            # core event handlers open sessions on THIS test's database
     from app.services import webhook_service as _wh
@@ -179,9 +182,15 @@ async def _isolate_printer_manager():
     would start a REAL vendor client (threads + LAN connection attempts) and leak it into later tests.
     Register clients without connecting them, and reset the singleton around every test."""
     def _clear():
+        from app.services.printer_topology import _locks
+        _locks.clear()
+        printer_manager._on_state_broadcast = None
         printer_manager._clients.clear()
+        printer_manager._printer_plugin.clear()
         printer_manager._awaiting_plate_clear.clear()
         printer_manager._unconfigured.clear()
+        printer_manager._topology_invalid.clear()
+        printer_manager._topology_validated.clear()
 
     _clear()
     printer_manager.connect_printer = lambda printer_id, client: printer_manager.register_client(printer_id, client)  # type: ignore[method-assign]
@@ -314,9 +323,13 @@ async def create_printer(client, session_factory):
         printer_id = resp.json()["id"]
         if configured:
             async with session_factory() as s:
-                (await s.get(Printer, printer_id)).configured = True
+                from tests.fake_topology import declared_topology
+                row = await s.get(Printer, printer_id)
+                row.configured = True
+                row.topology = declared_topology(row.loaded_filaments)
                 await s.commit()
             printer_manager.set_configured(printer_id, True)
+            printer_manager._topology_validated.add(printer_id)
         return printer_id
     return _create
 

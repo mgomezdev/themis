@@ -62,7 +62,7 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 |---|---|
 | `test_bambu_files.py` | implicit FTPS on :990 with `bblp` + access code and `PROT P`; `LIST` lines parse as `ls -l`; listed sizes equal `SIZE`; `/cache` presence; download = listed size and is a zip; (write) STOR → listed → DELE round trip |
 | `test_moonraker_files.py` | `/server/info` reachable; `/server/files/directory?extended=true` shape (`dirs[].dirname`, `files[].filename/size/modified`, metadata keys & units); client listing agrees with the raw API; download = listed size; (write) upload → listed → delete |
-| `test_moonraker_status.py` | `display_status.progress` is a 0..1 fraction; `print_stats`/`heater_bed`/`extruder`/`toolhead`/`webhooks` carry the keys the client reads; `camera_mjpeg_url` answers `multipart/x-mixed-replace` (the U1's `/webcam/stream` is a 404, `/webcam/stream.mjpg` is the stream) |
+| `test_moonraker_status.py` | live configured tools/nozzle sizes and filament positions satisfy `m >= n`, repeated reads preserve the same session/position IDs; `display_status.progress` is a 0..1 fraction; `print_stats`/`heater_bed`/`extruder`/`toolhead`/`webhooks` carry the keys the client reads; `camera_mjpeg_url` answers `multipart/x-mixed-replace` (the U1's `/webcam/stream` is a 404, `/webcam/stream.mjpg` is the stream) |
 | `test_discovery.py` | Bambu: MQTT 8883 + FTPS 990 open; unicast SSDP `M-SEARCH` on UDP 1990 answers with `USN`/`DevModel.bambu.com`/`DevName.bambu.com`; multicast NOTIFY parses. Elegoo: unicast `M99999` on UDP 3000 → SDCP JSON (`MainboardID`, `MachineName`, `Name`, `MainboardIP`). Moonraker: `/server/info` signature (200, or 401/403 when a key is required). Whole sweep of `THEMIS_VERIFY_DISCOVERY_RANGE` finds every configured printer |
 | `test_bambu_ams.py` | Bambu AMS RFID (`app/plugins/bambu/rfid.py`): a tagged spool reports a non-zero `tray_uuid`/`tag_uid` and a material code (`tray_info_idx`); prints each tray's decoded manufacturer so the `TAG_VENDORS` table can be checked against real spools (set `THEMIS_VERIFY_BAMBU_SERIAL` too; read-only) |
 | `test_alarms.py` | Bambu `print.hms` = list of `{attr:int, code:int}` and carries the full current list; entries decode to known modules + severities (set `THEMIS_VERIFY_BAMBU_SERIAL` too). Elegoo `Status.PrintInfo.ErrorNumber` is an int. Moonraker `webhooks.state/state_message` and `print_stats.state/message` exist and the client's alarms match them. Observational on a healthy printer — trigger a harmless fault to exercise decoding |
@@ -71,8 +71,12 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 
 ## Not checkable read-only: multi-filament `ams_mapping` (PR #173, BIZ-235)
 
-`StartPrintOptions.ams_mapping` is sent as a list indexed by **model filament** (entry N-1 = the global tray id for filament N,
+The Bambu plugin translates the neutral `StartPrintOptions.slot_plan` and `loaded_filaments` into the wire-level `ams_mapping`, sent as a list indexed by **model filament** (entry N-1 = the global tray id for filament N,
 `-1` for a project filament the plate does not use). `test_bambu_ams.py` checks the tray ids read-only; whether firmware honours the
 list (order, `-1` for unused) can only be seen by starting a print, which this suite never does. Verify by hand: queue a 2-colour
 plate with the colours in different trays than the 3MF's defaults (and one with filaments 1 and 3 of a 3-filament project), and
 confirm each colour prints from the mapped tray. Record the result here.
+
+## Local develop validation
+
+Use [the physical-printer checklist](../../docs/printer-validation.md) after building `develop`. It separates the existing owner-confirmed U1 discovery/connection from the new topology and print operations awaiting hardware verification. Record the build SHA and results; virtual-printer and mock-app checks do not establish real-firmware behavior.

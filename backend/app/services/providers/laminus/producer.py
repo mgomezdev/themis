@@ -124,6 +124,8 @@ class LaminusGcodeProducer(GcodeProducer):
         # bed type < printer overrides < the project file's own changes < the job's overrides
         extra = {**({"curr_bed_type": settings.plate_type} if settings.plate_type else {}), **dict(settings.printer_overrides),
                  **carried, **dict(settings.overrides)}
+        if request.target.nozzle_sizes_mm:
+            extra['nozzle_diameter'] = [str(size) for size in request.target.nozzle_sizes_mm]
         spec = SliceSpec(source_file=source, plate=request.plate, machine_ref=machine_ref, process_ref=process_ref,
                          filament_refs=filament_refs, export_3mf=request.want is ArtifactKind.GCODE_3MF, extra_config=extra)
         try:

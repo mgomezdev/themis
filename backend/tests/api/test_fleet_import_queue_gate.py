@@ -34,8 +34,14 @@ async def test_an_imported_printer_of_a_missing_plugin_is_never_ready_even_with_
 
 async def test_an_imported_printer_of_an_installed_plugin_is_ready(client):
     pid = await _import_one(client)                                                      # legacy entry -> bambu
-    printer_manager.register_client(pid, MagicMock(connected=True, is_idle=True))
+    from tests.fake_topology import declared_topology
+    live = MagicMock(connected=True, is_idle=True)
+    live.refresh_topology.return_value = declared_topology()
+    printer_manager.register_client(pid, live)
     assert printer_manager.is_printer_ready(pid) is False                               # imported unconfigured (BIZ-369)
     printer_manager.set_configured(pid, True)                                           # as its passed connection test does
 
+    assert printer_manager.is_printer_ready(pid) is False  # connection alone is insufficient
+    refreshed = await client.post(f'/api/v1/printers/{pid}/topology/refresh', json={})
+    assert refreshed.status_code == 200
     assert printer_manager.is_printer_ready(pid) is True

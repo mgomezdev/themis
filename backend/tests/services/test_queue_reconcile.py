@@ -1,6 +1,7 @@
 """_reconcile_printing_jobs: every queue cycle it catches print endings whose completion event was missed
 (MQTT reconnect, restart, network blip). Real QueueEngine + real PrinterManager + in-memory DB; only the
 vendor client is faked."""
+from tests.fake_topology import declared_topology
 import os
 from unittest.mock import MagicMock
 
@@ -64,7 +65,7 @@ async def _seed_printing_job(factory, tmp_path, printer_id: int = 1, *, actual_s
     gcode = tmp_path / f"job-{printer_id}.gcode"
     gcode.write_text("G28\n")
     async with factory() as s:
-        s.add(Printer(id=printer_id, name=f"P{printer_id}", printer_type="bambu", connection_config={},
+        s.add(Printer(topology=declared_topology(), id=printer_id, name=f"P{printer_id}", printer_type="bambu", connection_config={},
                       awaiting_plate_clear=awaiting_plate_clear))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
         s.add(f)

@@ -1,6 +1,6 @@
 id = "moonraker"
-name = "Moonraker (Klipper)"
-version = "1.0.0"
+name = "Generic Klipper (Moonraker)"
+version = "1.1.0"
 provides = []
 host_api = 1
 entry = "app.plugins.moonraker:MANIFEST"

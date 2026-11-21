@@ -25,6 +25,7 @@ MANIFEST = PluginManifest(
     factory=BambuMQTTClient,
     # Build volumes are Bambu Lab's published figures (X/Y in mm). The H2D is dual-nozzle: 350x320 is the full plate
     # (each nozzle alone reaches 325x320; both together 300x320).
+    legacy_printer_types={"bambu": ("bambu", "p1s")},
     manufacturers=(
         Manufacturer("bambu", "Bambu Lab", (
             PrinterModel("x1c", "X1 Carbon", bed_mm=(256, 256), toolheads=1),

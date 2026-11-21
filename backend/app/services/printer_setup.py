@@ -94,7 +94,7 @@ async def failure_hint(client) -> tuple[str, bool | None]:
         return (f"Reached {host}:{port} but the login didn't complete — check the access code / "
                 f"serial number, or the printer's single LAN connection is busy."), True
     return (f"Couldn't reach {host}:{port}. The printer may be off or asleep, the IP may be wrong, "
-            f"or another app is holding the printer's single LAN connection (Bambu allows only one)."), False
+            f"or another app is holding the printer's LAN connection."), False
 
 
 async def wait_connected(client, timeout: float) -> bool:
@@ -199,6 +199,15 @@ async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
         printer = await session.get(Printer, printer_id)
         if printer is None:
             return TestOutcome(False, "Printer not found", None)
+        from . import printer_ownership
+        owner = await printer_ownership.conflict(session, printer.connection_config, printer.id)
+        if owner is not None:
+            reason = printer_ownership.reason(owner)
+            printer.configured, printer.config_error = False, reason
+            await session.commit()
+            printer_manager.set_configured(printer_id, False)
+            printer_manager.disconnect_printer(printer_id)
+            return TestOutcome(False, reason, None)
         missing = missing_required(fields_for(printer), printer.connection_config or {})
         if missing:
             reason = missing_reason(missing)

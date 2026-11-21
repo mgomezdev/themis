@@ -73,7 +73,7 @@ async def pause_printer(
 ) -> dict:
     await _get_or_404(printer_id, session)
     client = _printers._get_connected_client(printer_id)
-    client.pause_print()
+    await asyncio.to_thread(client.pause_print)
     return {"ok": True}
 
 
@@ -92,7 +92,7 @@ async def resume_printer(
 ) -> dict:
     await _get_or_404(printer_id, session)
     client = _printers._get_connected_client(printer_id)
-    client.resume_print()
+    await asyncio.to_thread(client.resume_print)
     return {"ok": True}
 
 
@@ -112,7 +112,7 @@ async def stop_printer(
     """Stop the active print and cancel any Themis job the printer was physically running."""
     await _get_or_404(printer_id, session)
     client = _printers._get_connected_client(printer_id)
-    client.stop_print()
+    await asyncio.to_thread(client.stop_print)
     # Reconcile any Themis job this printer was physically running so it doesn't
     # stay stuck "printing" after the machine is stopped.
     from datetime import datetime, timezone

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 
+from tests.fake_topology import declared_topology
 from app import plugins
 from app.models import Printer
 from app.plugins.host import plugin_host
@@ -33,14 +34,16 @@ async def started(session_factory):
 
 async def _startup(session_factory, monkeypatch) -> tuple[PrinterManager, int]:
     async with session_factory() as s:
-        printer = Printer(name="Restarted", printer_type=FAKE, plugin_id=FAKE, manufacturer_id="acme", model_id="a1",
-                          connection_config={}, enabled=True)
+        printer = Printer(topology=declared_topology(), name="Restarted", printer_type=FAKE, plugin_id=FAKE, manufacturer_id="acme", model_id="a1",
+                          connection_config={}, enabled=True, configured=True)
         s.add(printer)
         await s.commit()
         pid = printer.id
     monkeypatch.setattr(pm_module, "create_client", lambda printer: MagicMock(connected=True, is_idle=True))
     mgr = PrinterManager()
     mgr.connect_printer = mgr.register_client                  # no real connection, just register the fake client
+    mgr.set_session_factory(session_factory)
+    await mgr.load_configured_from_db()
     await mgr.connect_all_enabled_printers(session_factory)
     return mgr, pid
 

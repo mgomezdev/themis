@@ -56,12 +56,12 @@ async def test_a_binding_to_another_provider_survives_an_old_client_roundtrip(cl
 # --- AMS reports (this test fails against the old two-named-keys merge) ----------------------------------------------------------------
 
 async def test_an_ams_report_preserves_every_themis_owned_slot_key(client, create_printer, session_factory):
-    pid = await create_printer(loaded_filaments=[
+    pid = await create_printer(configured=False, loaded_filaments=[
         {"slot": 0, "type": "PLA", "filament_profile": "PLA @P1S", "spoolman_spool_id": "7"}])
     printer_manager.set_session_factory(session_factory)
     printer_manager._on_state_broadcast = None
 
-    await printer_manager.on_ams_change(pid, [{"slot": 0, "type": "PETG", "color": "#00FF00", "filament_id": "GFA01"},
+    await printer_manager.on_filament_change(pid, [{"slot": 0, "type": "PETG", "color": "#00FF00", "filament_id": "GFA01"},
                                               {"slot": 1, "type": "PLA", "color": "#FFFFFF", "filament_id": "GFA00"}])
 
     s0, s1 = await _slots(client, pid)
@@ -71,12 +71,12 @@ async def test_an_ams_report_preserves_every_themis_owned_slot_key(client, creat
 
 
 async def test_an_ams_report_replaces_the_whole_tuple_hardware_wins(client, create_printer, session_factory):
-    pid = await create_printer(loaded_filaments=[
+    pid = await create_printer(configured=False, loaded_filaments=[
         {"slot": 0, "type": "PLA", "subtype": "silk", "manufacturer": "Acme", "color": "#FF0000", "spoolman_spool_id": "7"}])
     printer_manager.set_session_factory(session_factory)
     printer_manager._on_state_broadcast = None
 
-    await printer_manager.on_ams_change(pid, [{"slot": 0, "type": "PETG", "subtype": "standard", "manufacturer": None, "color": "#00FF00"}])
+    await printer_manager.on_filament_change(pid, [{"slot": 0, "type": "PETG", "subtype": "standard", "manufacturer": None, "color": "#00FF00"}])
 
     (s0,) = await _slots(client, pid)
     assert (s0["manufacturer"], s0["type"], s0["subtype"], s0["color"]) == (None, "PETG", "standard", "#00FF00")

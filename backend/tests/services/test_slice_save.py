@@ -1,4 +1,5 @@
 """Saving a production slice to the library as a cached version (BIZ-192)."""
+from tests.fake_topology import declared_topology
 import logging
 import os
 from datetime import datetime, timezone
@@ -41,7 +42,8 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
                 filament_type="PETG") -> int:    # the ask's base type (subtype any)
     async with factory() as s:
         if await s.get(Printer, 1) is None:
-            s.add(Printer(configured=True, id=1, name="P1", printer_type=printer_type, connection_config={},
+            s.add(Printer(topology=declared_topology([{"slot": 0, "type": "PETG", "color": "#000000",
+                                             "filament_profile": "Generic PETG"}]), configured=True, id=1, name="P1", printer_type=printer_type, connection_config={},
                           machine_profile_override=MACHINE,
                           loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                              "filament_profile": "Generic PETG"}]))
@@ -119,9 +121,10 @@ async def test_a_flagged_job_saves_its_slice_next_to_the_model(session_factory, 
         gcode = (await s.execute(select(GcodeFile).where(GcodeFile.job_id == job_id))).scalar_one()
     assert (f.relative_path, f.folder, f.missing) == ("Prints/" + saved.name, "/Prints", False)
     assert f.content_hash and f.plates and f.plates[0]["estimated_time"] == 3723
-    expected_inputs = slice_cache.CacheKeyInputs(
+    expected_inputs = slice_cache.CacheKeyInputs(nozzle_sizes_mm=(.4,),
         source_content_hash="srchash", plate_number=1, machine_preset=MACHINE, process_preset="0.20mm Standard",
         filament_presets=("Generic PETG",), extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus")
+    assert version.nozzle_sizes_mm == [.4]
     assert gcode.slice_inputs == expected_inputs.as_dict()
     assert version.cache_key == slice_cache.cache_key(expected_inputs)
     assert (version.source_content_hash, version.machine_preset, version.process_preset, version.filament_presets,
@@ -348,7 +351,7 @@ async def test_turning_the_flag_off_after_slicing_cancels_the_background_save(se
         await s.commit()
         result = await slice_saver.save_slice_version(
             s, job_id=job_id, printer_id=1, artifact_path=str(artifact), require_flag=True,
-            inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1, machine_preset=MACHINE,
+            inputs=slice_cache.CacheKeyInputs(nozzle_sizes_mm=(.4,), source_content_hash="srchash", plate_number=1, machine_preset=MACHINE,
                                               process_preset="p", filament_presets=("f",), extra_config={},
                                               tool_index=None, filament_map=None, artifact_kind="gcode", provider="laminus"))
     assert result is None and await _versions(session_factory) == []
@@ -373,7 +376,7 @@ async def test_the_copy_is_taken_before_the_slow_steps(session_factory, tmp_path
         async with session_factory() as s:
             version = await slice_saver.save_slice_version(
                 s, job_id=job_id, printer_id=1, artifact_path=str(artifact),
-                inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1,
+                inputs=slice_cache.CacheKeyInputs(nozzle_sizes_mm=(.4,), source_content_hash="srchash", plate_number=1,
                                                   machine_preset=MACHINE, process_preset="p", filament_presets=("f",),
                                                   extra_config={}, tool_index=None, filament_map=None,
                                                   artifact_kind="gcode", provider="laminus"))
@@ -427,7 +430,7 @@ async def test_a_saved_slice_is_eligible_for_its_target_model_and_only_its_decla
         async with session_factory() as s:
             await registry.sync_registry(s)
             models = {m["model_id"]: m["id"] for m in await registry.list_models(s, plugin_id="fake_printers")}
-            s.add(Printer(configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={}, model_uuid=models["x1"],
+            s.add(Printer(topology=declared_topology([{"slot": 0, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]), configured=True, id=1, name="P1", printer_type="elegoo_centauri", connection_config={}, model_uuid=models["x1"],
                           machine_profile_override=MACHINE,
                           loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]))
             await s.commit()

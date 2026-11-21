@@ -1,9 +1,8 @@
-"""`printer.client` — a routed capability (BIZ-250/BIZ-251): every enabled printer plugin serves it; each printer is bound to
-the provider stored on its row and core calls it with `PluginHost.call_for(PRINTER_CLIENT, plugin_id, lambda p: ...)`.
-
-The Protocol is the typed contract a provider must satisfy (checked when its instance is built). Methods mirror
-`services/abstract_printer_client.AbstractPrinterClient`, which remains the base class vendors subclass during the migration.
-Printer methods are blocking (threads) — `call_for` runs them off the event loop."""
+"""Neutral printer contract. Physical clients are created from the bound plugin's
+factory and managed per printer by PrinterManager, rather than as a per-plugin
+singleton in PluginHost. Hardware calls must use the checked resource client;
+topology refresh and dispatch share a per-printer lock and run blocking I/O off
+the event loop. Registration requires live topology refresh support."""
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
@@ -37,6 +36,8 @@ class PrinterProvider(Protocol):
     def send_gcode(self, gcode: str) -> bool: ...
 
     def request_status_update(self) -> None: ...
+
+    def refresh_topology(self, configuration: dict) -> Any: ...
 
     def get_capabilities(self) -> Any: ...
 

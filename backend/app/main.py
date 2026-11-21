@@ -68,26 +68,6 @@ _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 
 
-async def _remove_placeholder_printer_from_db() -> None:
-    """Remove legacy placeholder printer if present from old installations."""
-    from sqlalchemy import select as _select, delete as _delete
-    from .models import Printer as _Printer
-    _NAME = "Elegoo Centauri Carbon (placeholder)"
-    async with SessionLocal() as _sess:
-        existing = (await _sess.execute(
-            _select(_Printer).where(_Printer.name == _NAME)
-        )).scalar_one_or_none()
-        if existing is not None:
-            try:
-                await _sess.execute(_delete(_Printer).where(_Printer.name == _NAME))
-                await _sess.commit()
-                logging.getLogger("app").info("Removed legacy placeholder printer")
-            except Exception:
-                logging.getLogger("app").warning(
-                    "Could not remove placeholder printer (jobs may reference it) — remove manually"
-                )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -97,7 +77,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger("app").exception("Could not record installed-plugin status; continuing")
 
-    await _remove_placeholder_printer_from_db()
 
     # File library: migrate legacy uploads, then index the library dir.
     from . import config as _config

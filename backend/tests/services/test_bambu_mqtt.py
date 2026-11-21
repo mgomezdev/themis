@@ -82,7 +82,6 @@ def test_get_capabilities():
     caps = _make_client().get_capabilities()
     assert caps.pause_resume is True
     assert caps.chamber_light is True
-    assert caps.ams is True
     assert caps.camera is True
     assert caps.gcode is True
 
@@ -189,9 +188,9 @@ def test_handle_message_updates_ams_state_and_loaded_filaments():
     assert client.state.ams_tray_now == 1
 
 
-def test_handle_message_fires_on_ams_change_once():
+def test_handle_message_fires_on_filament_change_once():
     seen = []
-    client = _make_client(on_ams_change=lambda trays: seen.append(trays))
+    client = _make_client(on_filament_change=lambda trays: seen.append(trays))
     # No event loop wired → callback path guarded; assert state still updates.
     client._handle_message(_AMS_REPORT)
     assert len(client.state.ams_trays) == 3
@@ -199,7 +198,7 @@ def test_handle_message_fires_on_ams_change_once():
 
 def test_start_print_includes_ams_mapping_and_per_printer_flags():
     client = _connected_client(use_ams="1", bed_leveling="0", flow_cali="1", timelapse="1")
-    opts = StartPrintOptions(plate_id=2, gcode_path="Metadata/plate_2.gcode", ams_mapping=[1])
+    opts = StartPrintOptions(plate_id=2, gcode_path="Metadata/plate_2.gcode", slot_plan=[{'model_filament': None, 'slot': 0}], loaded_filaments=[{'ams_tray_id': 1}])
     client.start_print("m.gcode.3mf", opts)
     p = json.loads(client._client.publish.call_args[0][1])["print"]
     assert p["ams_mapping"] == [1]

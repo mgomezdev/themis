@@ -138,3 +138,21 @@ def test_the_normal_gates_never_collect_the_real_protocol_suite():
     from pathlib import Path
     cfg = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
     assert cfg["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
+
+
+def test_topology_verification_against_virtual_moonraker(monkeypatch):
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
+    from tests.virtual_printers import fake_moonraker as fm
+    from protocol_verification.test_moonraker_status import test_live_topology_reports_configured_tools_and_positions
+    server = fm.VirtualMoonraker(api_key='topology-key')
+    server.objects = {'configfile': {'settings': {'extruder': {'nozzle_diameter': .4},
+        'extruder1': {'nozzle_diameter': .6}, 'extruder2': {'nozzle_diameter': .4}, 'extruder3': {'nozzle_diameter': .4}}},
+        'print_task_config': {'filament_exist': [True, False, True, False], 'filament_type': ['PLA', '', 'PLA', ''],
+        'filament_vendor': ['Generic'] * 4, 'filament_sub_type': ['Silk'] * 4, 'filament_color_rgba': ['FF0000FF'] * 4}}
+    fm.install(monkeypatch, server)
+    c = SnapmakerExtendedClient('192.0.2.20', api_key='topology-key')
+    test_live_topology_reports_configured_tools_and_positions(c)
+    topology = c.refresh_topology({})
+    assert [t.nozzle_mm for t in topology.tools] == [.4, .6, .4, .4]
+    assert [p.filament is None for p in topology.positions] == [False, True, False, True]
+    assert all(method == 'GET' for method, _ in server.requests)

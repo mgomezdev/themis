@@ -4,7 +4,7 @@ from app.services.printer_manager import PrinterManager
 
 
 @pytest.mark.asyncio
-async def test_on_ams_change_preserves_mappings_by_slot(session_factory):
+async def test_on_filament_change_preserves_mappings_by_slot(session_factory):
     Session = session_factory
     async with Session() as s:
         s.add(Printer(
@@ -19,7 +19,7 @@ async def test_on_ams_change_preserves_mappings_by_slot(session_factory):
 
     mgr = PrinterManager()
     mgr.set_session_factory(Session)
-    await mgr.on_ams_change(1, [
+    await mgr.on_filament_change(1, [
         {"slot": 0, "filament_id": "NEW", "name": "new", "type": "PLA", "color": "#222"},
         {"slot": 1, "filament_id": "GFL96", "name": "mint", "type": "PLA", "color": "#0f0"},
     ])
@@ -38,7 +38,7 @@ async def test_on_ams_change_preserves_mappings_by_slot(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_on_ams_change_drops_orphaned_slots(session_factory):
+async def test_on_filament_change_drops_orphaned_slots(session_factory):
     Session = session_factory
     async with Session() as s:
         s.add(Printer(
@@ -52,7 +52,7 @@ async def test_on_ams_change_drops_orphaned_slots(session_factory):
 
     mgr = PrinterManager()
     mgr.set_session_factory(Session)
-    await mgr.on_ams_change(1, [
+    await mgr.on_filament_change(1, [
         {"slot": 0, "filament_id": "A", "name": "a", "type": "PLA", "color": "#111"},
     ])
 

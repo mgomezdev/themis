@@ -4,6 +4,7 @@ import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';
 import {
   fetchPrinters,
+  fetchPrinter,
   fetchPrinterTypes,
   createPrinter,
   updatePrinter,
@@ -17,6 +18,7 @@ import {
   type LoadedFilament,
   type DiscoveredPrinter,
 } from '../api/printers';
+import { PrinterTopologyPanel } from '../components/PrinterTopologyPanel';
 import { PrinterSlicerSettings } from '../components/PrinterSlicerSettings';
 import { ModelSlicerProfiles } from '../components/ModelSlicerProfiles';
 import type { ModelSlicerProfile } from '../api/slicerProfiles';
@@ -222,6 +224,7 @@ export function EditForm({
           </div>
         ))}
 
+        <PrinterTopologyPanel printerId={printer.id} initial={printer.topology} onRefreshed={() => { void fetchPrinter(printer.id).then(p => setSlots(p.loaded_filaments)); }} />
         <PrinterSlicerSettings printer={printer} value={slicing} onChange={setSlicing} />
 
         <div>
@@ -251,7 +254,7 @@ export function EditForm({
 
         <label className="row gap-2">
           <input type="checkbox" checked={singleColourOnly} onChange={e => setSingleColourOnly(e.target.checked)} />
-          <span>Single colour only <span className="tiny muted">— takes any loaded colour, never multicolour jobs</span></span>
+          <span>Single colour only <span className="tiny muted">— disables filament swapping; each print uses one loaded filament</span></span>
         </label>
 
         <WaivedPartsCard printerId={printer.id} flagAt={thresholds.waiver_flag_at} stopAt={thresholds.waiver_stop_at}

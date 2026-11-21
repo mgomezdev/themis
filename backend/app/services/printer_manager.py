@@ -12,7 +12,7 @@ from .abstract_printer_client import AbstractPrinterClient
 from .events import event_bus
 from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
-from .printer_events import AlarmsReported, AmsChanged, PrinterStateChanged, PrintCompleted
+from .printer_events import AlarmsReported, FilamentsChanged, PrinterStateChanged, PrintCompleted
 from .printer_identity import dormant_reason
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ def _slots_signature(slots: list) -> list[dict]:
 class PrinterManager:
     def __init__(self) -> None:
         self._clients: dict[int, AbstractPrinterClient] = {}
+        self._topology_invalid: set[int] = set()
+        self._topology_validated: set[int] = set()
         self._awaiting_plate_clear: set[int] = set()
         self._on_state_broadcast: Callable | None = None
         self._on_job_complete: Callable | None = None
@@ -52,7 +54,7 @@ class PrinterManager:
         event_bus.subscribe(PrinterStateChanged, lambda e: self.on_state_change(e.printer_id, e.state))
         # completing a job (DB commit, inventory deduction, webhooks) must never be cut short by the bus's handler timeout
         event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state), timeout=None)
-        event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
+        event_bus.subscribe(FilamentsChanged, lambda e: self.on_filament_change(e.printer_id, e.slots))
         event_bus.subscribe(AlarmsReported, lambda e: self.on_alarms(e.printer_id, e.alarms))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
@@ -85,6 +87,15 @@ class PrinterManager:
             from ..models import Printer
             result = await session.execute(select(Printer.id).where(Printer.configured == False))  # noqa: E712
             self._unconfigured = {row[0] for row in result.all()}
+            from ..plugins.printer_topology import PrinterTopology
+            self._topology_validated.clear()
+            for row in (await session.execute(select(Printer).where(Printer.topology.is_not(None)))).scalars():
+                try:
+                    PrinterTopology.model_validate(row.topology)
+                except ValueError:
+                    continue
+                self._topology_validated.add(row.id)
+            self._topology_invalid = set((await session.execute(select(Printer.id).where(Printer.topology_error.is_not(None)))).scalars())
 
     def set_configured(self, printer_id: int, configured: bool) -> None:
         if configured:
@@ -106,6 +117,9 @@ class PrinterManager:
                 if printer is not None:
                     printer.configured, printer.config_error = True, None
                     await session.commit()
+        client = self._clients.get(printer_id)
+        if isinstance(client, AbstractPrinterClient) and factory:
+            await self.on_topology_change(printer_id)
         if self._on_connectivity is not None:
             try:
                 await self._on_connectivity(printer_id, "configured", False)   # it may claim now: don't wait for the next tick
@@ -118,7 +132,7 @@ class PrinterManager:
     async def connect_all_enabled_printers(self, session_factory) -> None:
         if not session_factory:
             return
-        from . import printer_setup
+        from . import printer_setup, printer_ownership
         async with session_factory() as session:
             from ..models import Printer
             result = await session.execute(
@@ -127,6 +141,12 @@ class PrinterManager:
             printers = result.scalars().all()
             incomplete: set[int] = set()
             for printer in printers:                  # no client (no login attempt) for a printer missing a required field
+                owner = await printer_ownership.conflict(session, printer.connection_config, printer.id)
+                if owner is not None:
+                    printer.configured, printer.config_error = False, printer_ownership.reason(owner)
+                    self.set_configured(printer.id, False)
+                    incomplete.add(printer.id)
+                    continue
                 missing = printer_setup.missing_required(printer_setup.fields_for(printer), printer.connection_config or {})
                 if missing:
                     printer.configured, printer.config_error = False, printer_setup.missing_reason(missing)
@@ -220,6 +240,9 @@ class PrinterManager:
         return max(1.0, min(waits)) if waits else None
 
     def get_client(self, printer_id: int) -> AbstractPrinterClient:
+        reason = dormant_reason(self._printer_plugin.get(printer_id))
+        if reason is not None:
+            raise ValueError(reason)
         return self._clients[printer_id]
 
     def get_all_printer_ids(self) -> list[int]:
@@ -235,6 +258,8 @@ class PrinterManager:
     def forget_printer(self, printer_id: int) -> None:
         """Drop a deleted printer's plugin mapping (ids can be reused, and a stale mapping would make the new printer dormant)."""
         self._printer_plugin.pop(printer_id, None)
+        self._topology_invalid.discard(printer_id)
+        self._topology_validated.discard(printer_id)
 
     def is_printer_ready(self, printer_id: int) -> bool:
         client = self._clients.get(printer_id)
@@ -242,7 +267,7 @@ class PrinterManager:
             return False
         if dormant_reason(self._printer_plugin.get(printer_id)) is not None:
             return False
-        if printer_id in self._unconfigured:
+        if printer_id not in self._topology_validated or printer_id in self._topology_invalid or printer_id in self._unconfigured:
             return False
         return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 
@@ -320,16 +345,20 @@ class PrinterManager:
             await self._on_state_broadcast("plate_clear_required", {"printer_id": printer_id})
             await self._on_state_broadcast("printer_state", normalized)
 
-    async def on_ams_change(self, printer_id: int, trays: list) -> None:
-        """AMS filament change → persist the printer's `loaded_filaments` from the
+    async def on_filament_change(self, printer_id: int, trays: list) -> None:
+        """Filament report → persist the printer's `loaded_filaments` from the
         auto-detected trays. User-set per-slot mappings (`filament_profile`,
-        `inventory`, legacy binding key) are preserved by slot across AMS reports; slots no
+        `inventory`, legacy binding key) are preserved by slot across filament reports; slots no
         longer reported drop with their mappings."""
         if self._session_factory:
             async with self._session_factory() as session:
                 from ..models import Printer
                 printer = await session.get(Printer, printer_id)
                 if printer is not None:
+                    if printer.topology is not None:
+                        # Neutral topology reports own position ordering and empty placeholders.
+                        # Do not replace them with a legacy occupied-tray-only list.
+                        return
                     prev_by_slot = {
                         f.get("slot"): f for f in (printer.loaded_filaments or [])
                     }
@@ -339,7 +368,7 @@ class PrinterManager:
                         prev = prev_by_slot.get(tray.get("slot"))
                         if prev is not None:
                             # Keep EVERY Themis-owned key (profile, spool binding, inventory ref), not just two named ones:
-                            # a vendor AMS report only carries hardware facts and must never wipe a link.
+                            # a hardware report only carries hardware facts and must never wipe a link.
                             tray = inventory_refs.preserve_slot_keys(prev, tray)
                         merged.append(tray)
                     slots_changed = _slots_signature(merged) != _slots_signature(printer.loaded_filaments or [])
@@ -354,9 +383,22 @@ class PrinterManager:
             try:
                 await self._on_state_broadcast("printer_state", self.get_normalized_state(printer_id))
             except Exception:
-                logger.exception("Failed to broadcast after AMS change for printer %s", printer_id)
+                logger.exception("Failed to broadcast after filament change for printer %s", printer_id)
+
+    async def on_topology_change(self, printer_id: int) -> None:
+        if not self._session_factory:
+            return
+        from .printer_topology import refresh_device
+        try:
+            async with self._session_factory() as session:
+                await refresh_device(session, printer_id)
+        except Exception:
+            logger.exception("Could not refresh topology for printer %s", printer_id)
 
     def connect_printer(self, printer_id: int, client: AbstractPrinterClient) -> None:
+        reason = dormant_reason(self._printer_plugin.get(printer_id))
+        if reason is not None:
+            raise ValueError(reason)
         self.register_client(printer_id, client)
         loop = self._loop
 
@@ -369,14 +411,17 @@ class PrinterManager:
         async def _on_complete(state):
             await event_bus.publish(PrintCompleted(printer_id=printer_id, state=state))
 
-        async def _on_ams(trays):
-            await event_bus.publish(AmsChanged(printer_id=printer_id, trays=trays))
+        async def _on_filaments(trays):
+            await event_bus.publish(FilamentsChanged(printer_id=printer_id, slots=trays))
 
         # Assign async functions directly — clients call run_coroutine_threadsafe on them
         client._on_state_change = _on_state
         client._on_print_complete = _on_complete
-        if hasattr(client, "_on_ams_change"):
-            client._on_ams_change = _on_ams
+        if hasattr(client, "_on_filament_change"):
+            client._on_filament_change = _on_filaments
+        async def _on_topology():
+            await self.on_topology_change(printer_id)
+        client.subscribe_topology(_on_topology)
         client.connect(loop=loop)
 
     def disconnect_printer(self, printer_id: int) -> None:

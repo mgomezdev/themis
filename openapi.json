@@ -1396,7 +1396,7 @@
           "printers"
         ],
         "summary": "Create printer",
-        "description": "Register a printer. Only its identity (model + `connection_config.ip_address`) is required; blank connection values are\ndropped. It is saved unconfigured and a connection test runs in the background: success makes it `configured` (only\nconfigured printers take queue work), failure records `config_error`. 409 when a printer of the same model already uses\nthat IP.",
+        "description": "Register a printer. Only its identity (model + `connection_config.ip_address`) is required; blank connection values are\ndropped. It is saved unconfigured and a connection test runs in the background: success makes it `configured` (only\nconfigured printers take queue work), failure records `config_error`. 409 when another binding already owns that host or serial number.",
         "operationId": "create_printer_api_v1_printers_post",
         "requestBody": {
           "content": {
@@ -3363,6 +3363,56 @@
           },
           "503": {
             "description": "Printer not connected or camera unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/topology/refresh": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Refresh Topology",
+        "operationId": "refresh_topology_api_v1_printers__printer_id__topology_refresh_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -15859,6 +15909,17 @@
       },
       "PrinterUpdate": {
         "properties": {
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          },
           "name": {
             "anyOf": [
               {
@@ -17211,6 +17272,24 @@
           "password"
         ],
         "title": "RecoverConfirm"
+      },
+      "RefreshBody": {
+        "properties": {
+          "configuration": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configuration"
+          }
+        },
+        "type": "object",
+        "title": "RefreshBody"
       },
       "RemainingBody": {
         "properties": {

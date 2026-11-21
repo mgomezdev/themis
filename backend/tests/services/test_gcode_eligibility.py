@@ -1,4 +1,5 @@
 """Machine eligibility for pre-sliced G-code (BIZ-263): the decision, slice-target recording, equivalents, queue outcomes."""
+from tests.fake_topology import declared_topology
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -55,7 +56,7 @@ async def seed_file(factory, library, name="part.gcode", *, known_for: list[str]
 
 async def seed_printer(factory, pid: int, model_uuid: str | None) -> None:
     async with factory() as s:
-        s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={}, model_uuid=model_uuid))
+        s.add(Printer(topology=declared_topology(), configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={}, model_uuid=model_uuid))
         await s.commit()
 
 

@@ -1,4 +1,5 @@
 """Resolved asks reach slice routing, physical-tool presets and cache keys together."""
+from tests.fake_topology import declared_topology
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,12 +19,12 @@ def test_model_filament_presets_reach_the_physical_tools_and_cache_key():
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
-    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    params = _slice_params(Job(),config,Printer(topology=declared_topology(loaded), loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
     request,resolved = engine._slice_request(1,1,1,params,"laminus")
     assert request.filament_presets == ["Orca PLA","Orca PETG"]
     before = slice_cache.cache_key(slice_cache.key_inputs(request,"hash",None,resolved))
     config.filament_map[1]["filament_profile"] = "Different PETG"
-    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    params = _slice_params(Job(),config,Printer(topology=declared_topology(loaded), loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
     request,resolved = engine._slice_request(1,1,1,params,"laminus")
     assert slice_cache.cache_key(slice_cache.key_inputs(request,"hash",None,resolved)) != before
 
@@ -36,7 +37,7 @@ def test_conflicting_model_presets_cannot_share_one_physical_tool():
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
-    params = _slice_params(Job(),config,Printer(loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
+    params = _slice_params(Job(),config,Printer(topology=declared_topology(loaded), loaded_filaments=loaded),UploadedFile(original_filename="part.3mf"),"Machine")
     with pytest.raises(ValueError,match="conflicting"):
         engine._slice_request(1,1,1,params,"laminus")
 
@@ -55,7 +56,7 @@ def test_single_ask_tracks_current_tool_and_cache_key(mapped, monkeypatch):
     for tool in (2, 3):
         loaded = [{"slot": i, "empty": True} for i in range(4)]
         loaded[tool] = {"slot": tool, "type": "PLA", "color": "#519F61", "filament_profile": "Green PLA"}
-        printer = Printer(id=1, loaded_filaments=loaded)
+        printer = Printer(topology=declared_topology(loaded), id=1, printer_type="snapmaker", loaded_filaments=loaded)
         params = _slice_params(Job(), config, printer, UploadedFile(original_filename="part.3mf", relative_path="part.3mf"), "Machine")
         request, resolved = engine._slice_request(1, 1, 1, params, "laminus")
         if mapped:
@@ -88,7 +89,7 @@ def test_shared_tools_and_each_matched_profile_reach_the_slicer():
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
-    params = _slice_params(Job(), config, Printer(loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
+    params = _slice_params(Job(), config, Printer(topology=declared_topology(loaded), loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
     request, resolved = engine._slice_request(1, 1, 1, params, "laminus")
     assert request.tool_index is None  # a legacy job-level pin cannot override a per-filament map
     assert request.filament_map == resolved == [
@@ -104,7 +105,7 @@ def test_missing_matched_profile_never_silently_uses_another_tools_profile(overr
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value = SnapmakerExtendedClient(ip_address="1.2.3.4")
-    params = _slice_params(Job(), config, Printer(loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
+    params = _slice_params(Job(), config, Printer(topology=declared_topology(loaded), loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
     if override:
         request, _ = engine._slice_request(1, 1, 1, params, "laminus")
         assert request.filament_presets == [override, override]
@@ -118,14 +119,14 @@ def test_debug_slice_rejects_an_unmatched_map_instead_of_slicing_on_the_default_
     from app.api.routes.jobs import _build_slice_request
     config = JobPrinterConfig(filament_map=[{"model_filament": 1, "filament_type": "PETG"}])
     with pytest.raises(HTTPException) as error:
-        _build_slice_request(Job(), config, Printer(name="Shuna", loaded_filaments=[{"type": "PLA"}]), UploadedFile(), "Machine")
+        _build_slice_request(Job(), config, Printer(topology=declared_topology([{"type": "PLA"}]), name="Shuna", loaded_filaments=[{"type": "PLA"}]), UploadedFile(), "Machine")
     assert error.value.status_code == 422
     assert "Shuna" in error.value.detail and "PETG" in error.value.detail
 
 
 def test_ams_profiles_and_dispatch_tray_mapping_follow_model_order_not_physical_slot_order():
     from app.services.filament_matching import SlotUse
-    from app.services.queue_engine import _ams_mapping
+    from app.plugins.bambu.routing import ams_mapping as _ams_mapping
     config = JobPrinterConfig(print_profile="Process", filament_map=[
         {"model_filament": 2, "tool_index": 0}, {"model_filament": 1, "tool_index": 2}])
     loaded = [{"slot": 0, "type": "PETG", "filament_profile": "PETG profile", "ams_tray_id": 0},
@@ -134,7 +135,7 @@ def test_ams_profiles_and_dispatch_tray_mapping_follow_model_order_not_physical_
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value.slice_tool_mapping = False
-    params = _slice_params(Job(), config, Printer(loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
+    params = _slice_params(Job(), config, Printer(topology=declared_topology(loaded), loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
     request, resolved = engine._slice_request(1, 1, 1, params, "laminus")
     assert request.filament_presets == ["PLA profile", "PETG profile"]
     assert request.filament_map is None
@@ -151,7 +152,7 @@ def test_ams_profiles_and_dispatch_tray_mapping_follow_model_order_not_physical_
 ])
 def test_incomplete_ams_mapping_cannot_silently_print_a_partial_tray_list(plan, loaded):
     from app.services.filament_matching import SlotUse
-    from app.services.queue_engine import _ams_mapping
+    from app.plugins.bambu.routing import ams_mapping as _ams_mapping
     with pytest.raises(ValueError):
         _ams_mapping([SlotUse(m, s) for m, s in plan], loaded)
 
@@ -165,7 +166,7 @@ def test_invalid_model_indices_produce_a_recoverable_error_before_slice_routing(
     engine = QueueEngine.__new__(QueueEngine)
     engine._mgr = MagicMock()
     engine._mgr.get_client.return_value.slice_tool_mapping = slice_mapping
-    params = _slice_params(Job(), config, Printer(loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
+    params = _slice_params(Job(), config, Printer(topology=declared_topology(loaded), loaded_filaments=loaded), UploadedFile(original_filename="part.3mf"), "Machine")
     with pytest.raises(ValueError, match="unique positive model filament number"):
         engine._slice_request(1, 1, 1, params, "laminus")
 
@@ -173,7 +174,7 @@ def test_invalid_model_indices_produce_a_recoverable_error_before_slice_routing(
 def test_ams_mapping_is_indexed_by_filament_number_with_unused_filaments_minus_one():
     """Review: a plate printing filaments 1 and 3 of a project maps filament 2 to -1 (unused), not an error or a short list."""
     from app.services.filament_matching import SlotUse
-    from app.services.queue_engine import _ams_mapping
+    from app.plugins.bambu.routing import ams_mapping as _ams_mapping
     loaded = [{"ams_tray_id": 0}, {"ams_tray_id": 4}]
     assert _ams_mapping([SlotUse(3, 1), SlotUse(1, 0)], loaded) == [0, -1, 4]
     assert _ams_mapping([SlotUse(2, 1)], loaded) == [-1, 4]
@@ -184,10 +185,10 @@ def test_ams_mapping_is_indexed_by_filament_number_with_unused_filaments_minus_o
 def test_a_slot_that_now_holds_a_different_filament_no_longer_satisfies_the_claim_plan():
     """Review: slot numbers are list positions; emptying a tray renumbers the rest, so the claim records what each slot held."""
     from app.services import filament_matching as fm
-    at_claim = [{"slot": 0, "type": "PLA", "color": "#000000", "ams_tray_id": 0},
-                {"slot": 1, "type": "PETG", "color": "#FFFFFF", "ams_tray_id": 2}]
+    at_claim = [{"slot": 0, "type": "PLA", "color": "#000000", "position_id": "0"},
+                {"slot": 1, "type": "PETG", "color": "#FFFFFF", "position_id": "2"}]
     stored = fm.plan_to_json(fm.pin_identities([fm.SlotUse(1, 1)], at_claim))
-    assert stored == [{"model_filament": 1, "slot": 1, "identity": {"ams_tray_id": 2, "type": "PETG", "color": "#FFFFFF"}}]
+    assert stored == [{"model_filament": 1, "slot": 1, "identity": {"position_id": "2", "type": "PETG", "subtype": None, "manufacturer": None, "color": "#FFFFFF"}}]
     plan = fm.plan_from_json(stored)
     assert fm.still_loaded(plan, at_claim) is None
     renumbered = [at_claim[0], {"slot": 1, "type": "TPU", "color": "#FF0000", "ams_tray_id": 3}]     # tray 2 emptied
@@ -199,7 +200,7 @@ def test_a_slot_that_now_holds_a_different_filament_no_longer_satisfies_the_clai
 def test_an_out_of_range_filament_number_is_refused_before_building_the_mapping():
     """Security review: the mapping is as long as the highest filament number, so it is capped."""
     from app.services.filament_matching import MAX_MODEL_FILAMENTS, SlotUse
-    from app.services.queue_engine import _ams_mapping
+    from app.plugins.bambu.routing import ams_mapping as _ams_mapping
     loaded = [{"ams_tray_id": 0}]
     assert len(_ams_mapping([SlotUse(MAX_MODEL_FILAMENTS, 0)], loaded)) == MAX_MODEL_FILAMENTS
     with pytest.raises(ValueError):

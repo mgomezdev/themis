@@ -18,6 +18,10 @@ class Printer(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
+    topology: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    topology_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    topology_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    topology_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     printer_type: Mapped[str] = mapped_column(String(50))
     # Plugin-declared identity (BIZ-251/262): which plugin serves this printer and which of its models it is.
     plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -189,6 +193,7 @@ class SlicedVersion(Base):
     machine_preset: Mapped[str] = mapped_column(String(255))
     process_preset: Mapped[str] = mapped_column(String(512))
     filament_presets: Mapped[list] = mapped_column(JSON, default=list)
+    nozzle_sizes_mm: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     extra_config: Mapped[dict] = mapped_column(JSON, default=dict)
     tool_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
@@ -341,6 +346,7 @@ class JobPrinterConfig(Base):
     # The slots chosen at claim time (`[{model_filament, slot}]`, filament_matching.SlotUse): slicing, the print and the spool
     # deduction all follow this plan instead of re-matching a slot list that may have changed since.
     slot_plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    topology_revision: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.

@@ -177,6 +177,8 @@ def serialize_elegoo(state, printer_id: int) -> dict:
 
 
 class ElegooCentauriClient(AbstractPrinterClient):
+    print_artifact_kind = "gcode"
+    raw_gcode_supported = True
     printer_type: ClassVar[str] = "elegoo_centauri"
 
     def __init__(
@@ -279,6 +281,17 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 help_text="1 = record a timelapse during the print, 0 = off.",
             ),
         ]
+
+    def refresh_topology(self, configuration: dict):
+        from ..printer_topology import PrinterTopology
+        sizes = configuration.get('nozzle_sizes_mm')
+        if not sizes or len(sizes) != 1:
+            raise ValueError('Supply the installed nozzle size; this device does not report it')
+        positions = configuration.get('positions') or [{'id': 'spool', 'filament': None}]
+        if len(positions) != 1:
+            raise ValueError('This printer has one filament position')
+        self.request_status_update()
+        return PrinterTopology.model_validate({'tools': [{'id': 'T0', 'nozzle_mm': sizes[0]}], 'positions': positions, 'swapping': False})
 
     def serialize_state(self, printer_id: int) -> dict:
         return serialize_elegoo(self.state, printer_id)
