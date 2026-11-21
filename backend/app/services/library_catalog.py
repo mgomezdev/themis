@@ -13,7 +13,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.sqlite import insert
 
 from ..models import LibraryCatalogEntry, LibraryCatalogSyncLease
-from ..plugins.capabilities.library_source import LIBRARY_SOURCE, CatalogPage, SourceFile, SourceFileMissing
+from ..plugins.capabilities.library_source import LIBRARY_SOURCE, CatalogPage, SourceCreator, SourceFile, SourceFileMissing
 
 LEASE_SECONDS = 120.0
 PAGE_TIMEOUT_SECONDS = 600.0
@@ -42,6 +42,31 @@ def _validate(entry):
         raise CatalogSyncError("Source returned an invalid canonical page URL")
     if entry.size_bytes is not None and (not isinstance(entry.size_bytes, int) or isinstance(entry.size_bytes, bool) or entry.size_bytes < 0):
         raise CatalogSyncError("Source returned an invalid file size")
+
+    for field in (
+        "media_type",
+        "revision",
+        "license_code",
+        "license_url",
+        "preview_url",
+    ):
+        value = getattr(entry, field)
+        if value is not None and not isinstance(value, str):
+            raise CatalogSyncError(f"Source returned invalid {field} metadata")
+    if not isinstance(entry.collections, (tuple, list)) or not all(
+        isinstance(c, str) for c in entry.collections
+    ):
+        raise CatalogSyncError("Source returned invalid collection metadata")
+    creator = entry.creator
+    if creator is not None and (
+        not isinstance(creator, SourceCreator)
+        or not isinstance(creator.id, str)
+        or not creator.id.strip()
+        or not isinstance(creator.name, str)
+        or not isinstance(creator.links, (tuple, list))
+        or not all(isinstance(link, str) for link in creator.links)
+    ):
+        raise CatalogSyncError("Source returned invalid creator metadata")
 
 
 async def _upsert(factory, provider, entry, sweep):

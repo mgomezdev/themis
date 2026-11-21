@@ -12,13 +12,14 @@ export function SourceCatalogPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [prepared, setPrepared] = useState<Record<string, Materialization>>({});
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    setLoading(true); setLoadError('');
     Promise.all([fetchCatalog(offset), fetchSources()]).then(([catalog, providers]) => {
       if (alive) { setEntries(catalog.items); setTotal(catalog.total); setSources(providers.sources); }
-    }).catch(e => { if (alive) setError(String(e.message)); })
+    }).catch(e => { if (alive) setLoadError(e instanceof Error ? e.message : 'Could not load library sources'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [offset, revision]);
@@ -42,9 +43,11 @@ export function SourceCatalogPanel() {
   return <div className="col gap-3" data-testid="source-catalog">
     <div><h2>Library sources</h2><p className="muted">Synchronize metadata from connected libraries. Existing local files stay in Library.</p></div>
     {error && <div role="alert">{error}</div>}
+    {loadError && <div><p role="alert">{loadError}</p>
+      <button className="btn sm" onClick={() => setRevision(v => v + 1)}>Retry library sources</button></div>}
     {message && <div role="status">{message}</div>}
     {loading && <p>Loading library sources…</p>}
-    {!loading && sources.length === 0 && <p>No library sources are installed. <Link to="/settings/plugins">Open plugin settings</Link></p>}
+    {!loading && !loadError && sources.length === 0 && <p>No library sources are installed. <Link to="/settings/plugins">Open plugin settings</Link></p>}
     {sources.map(source => <div className="card row gap-2 wrap" style={{ padding: 14 }} key={source.plugin_id}>
       <strong>{source.name}</strong>
       <span>{source.active ? 'Enabled' : source.enabled ? 'Needs configuration' : 'Disabled'}</span>
@@ -55,12 +58,12 @@ export function SourceCatalogPanel() {
       {source.last_sync_at && <span className="small muted">Last sync: {new Date(source.last_sync_at).toLocaleString()}</span>}
       {source.error && <span className="small text-err">{source.error}</span>}
     </div>)}
-    {total > 100 && <div className="row gap-2">
+    {!loading && !loadError && total > 100 && <div className="row gap-2">
       <button className="btn sm" disabled={loading || offset === 0} onClick={() => setOffset(v => Math.max(0, v - 100))}>Previous</button>
       <span>{offset + 1}–{Math.min(offset + entries.length, total)} of {total}</span>
       <button className="btn sm" disabled={loading || offset + entries.length >= total} onClick={() => setOffset(v => v + 100)}>Next</button>
     </div>}
-    {entries.length === 0 ? (!loading && <p>No synchronized files yet.</p>) : <table className="tbl w-full"><thead><tr>
+    {!loading && !loadError && (entries.length === 0 ? <p>No synchronized files yet.</p> : <table className="tbl w-full"><thead><tr>
       <th>File</th><th>Source</th><th>Creator</th><th>Source license</th><th>Availability</th><th>Local file</th>
     </tr></thead><tbody>{entries.map(entry => <tr key={entry.id} data-testid={`catalog-${entry.id}`}>
       <td><a href={entry.source_url} target="_blank" rel="noopener noreferrer">{entry.name}</a></td>
@@ -77,6 +80,6 @@ export function SourceCatalogPanel() {
         <Link to="/queue/new" state={{ libraryFileId: prepared[entry.id].file_id }}>Use in job</Link>
         <p className="small muted">Also available in the local library for projects.</p>
       </div>}</td>
-    </tr>)}</tbody></table>}
+    </tr>)}</tbody></table>)}
   </div>;
 }

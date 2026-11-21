@@ -38,7 +38,11 @@ class ManyfoldSource:
             raise ManyfoldError(
                 "Set the Manyfold URL, OAuth client ID and client secret"
             )
-        base = urlsplit(settings.url.strip().rstrip("/"))
+        try:
+            base = urlsplit(settings.url.strip().rstrip("/"))
+            base.port
+        except ValueError:
+            raise ManyfoldError("Use a valid HTTP(S) Manyfold base URL") from None
         if (
             base.scheme not in {"http", "https"}
             or not base.hostname
@@ -65,7 +69,11 @@ class ManyfoldSource:
     def _url(self, path, *, query=False):
         if not isinstance(path, str) or not path:
             raise ManyfoldError("Manyfold returned a missing resource URL")
-        url = urlsplit(urljoin(self.base + "/", path))
+        try:
+            url = urlsplit(urljoin(self.base + "/", path))
+            url.port
+        except ValueError:
+            raise ManyfoldError("Manyfold returned an invalid resource URL") from None
         if (
             _origin(url) != _origin(urlsplit(self.base))
             or url.username
@@ -152,7 +160,7 @@ class ManyfoldSource:
                     time.monotonic() + max(0, ttl - min(30, ttl / 10)),
                 )
                 return token
-            except (httpx.HTTPError, ValueError, AttributeError) as exc:
+            except (httpx.HTTPError, ValueError, AttributeError, OverflowError) as exc:
                 if isinstance(exc, ManyfoldError):
                     raise
                 raise ManyfoldError(
@@ -202,6 +210,18 @@ class ManyfoldSource:
             "message": "Connected to the Manyfold v0 catalog (read-only)",
         }
 
+    @staticmethod
+    def _object(value, label):
+        if not isinstance(value, dict):
+            raise ManyfoldError(f"Manyfold returned invalid {label} metadata")
+        return value
+
+    @staticmethod
+    def _text(value, label):
+        if value is not None and not isinstance(value, str):
+            raise ManyfoldError(f"Manyfold returned invalid {label} metadata")
+        return value
+
     async def _file(self, path, model=None):
         url = self._url(path)
         data = await self._json(url, file_identity=True)
@@ -210,37 +230,71 @@ class ManyfoldSource:
                 "Manyfold file identity did not match the requested resource"
             )
         if model is None:
-            parent = data.get("isPartOf") or {}
+            parent = self._object(data.get("isPartOf"), "parent model")
             model = await self._json(parent.get("@id"))
-        creator_data = data.get("creator") or model.get("creator")
+        file_creator = data.get("creator")
+        model_creator = model.get("creator")
+        if file_creator is not None:
+            self._object(file_creator, "creator")
+        creator_data = file_creator or model_creator
+        if creator_data is not None:
+            self._object(creator_data, "creator")
         creator = None
         if creator_data:
             creator_url = self._url(creator_data.get("@id"))
             details = await self._json(creator_url)
+            links = details.get("links")
+            if links is None:
+                links = []
+            if not isinstance(links, list):
+                raise ManyfoldError("Manyfold returned invalid creator links metadata")
+            creator_links = []
+            for row in links:
+                if not isinstance(row, dict) or not isinstance(row.get("url"), str):
+                    continue
+                try:
+                    scheme = urlsplit(row["url"]).scheme
+                except ValueError:
+                    raise ManyfoldError(
+                        "Manyfold returned invalid creator link metadata"
+                    ) from None
+                if scheme in {"http", "https"}:
+                    creator_links.append(row["url"])
             creator = SourceCreator(
                 creator_url,
-                str(details.get("name") or ""),
-                tuple(
-                    row["url"]
-                    for row in details.get("links", [])
-                    if isinstance(row, dict)
-                    and isinstance(row.get("url"), str)
-                    and urlsplit(row["url"]).scheme in {"http", "https"}
-                ),
+                self._text(details.get("name"), "creator name") or "",
+                tuple(creator_links),
             )
-        license_data = data.get("spdx:license") or model.get("spdx:license") or {}
-        collections = model.get("isPartOf") or []
+        file_license = data.get("spdx:license")
+        model_license = model.get("spdx:license")
+        if file_license is not None:
+            self._object(file_license, "license")
+        license_data = self._object(file_license or model_license or {}, "license")
+        collections = model.get("isPartOf")
+        if collections is None:
+            collections = []
         if not isinstance(collections, list):
             raise ManyfoldError("Manyfold returned invalid collection metadata")
+        for collection in collections:
+            self._object(collection, "collection")
+            self._text(collection.get("name"), "collection name")
+            self._text(collection.get("@id"), "collection identity")
+        size = data.get("contentSize")
+        if size is not None and (
+            isinstance(size, bool) or not isinstance(size, int) or size < 0
+        ):
+            raise ManyfoldError("Manyfold returned invalid file size metadata")
+        filename = self._text(data.get("filename"), "filename")
+        name = self._text(data.get("name"), "file name")
         descriptor = SourceFile(
             source_file_id=url,
-            name=str(data.get("filename") or data.get("name") or ""),
+            name=filename or name or "",
             source_url=url,
-            media_type=data.get("encodingFormat"),
-            size_bytes=data.get("contentSize"),
+            media_type=self._text(data.get("encodingFormat"), "media type"),
+            size_bytes=size,
             creator=creator,
-            license_code=license_data.get("licenseId"),
-            license_url=license_data.get("@id"),
+            license_code=self._text(license_data.get("licenseId"), "license code"),
+            license_url=self._text(license_data.get("@id"), "license URL"),
             collections=tuple(
                 str(c.get("name") or c.get("@id") or "") for c in collections
             ),
@@ -261,10 +315,12 @@ class ManyfoldSource:
             raise ManyfoldError("Manyfold returned an incomplete catalog page")
         entries = []
         for member in data["member"]:
+            self._object(member, "model reference")
             model = await self._json(member.get("@id"))
             if not isinstance(model.get("hasPart"), list):
                 raise ManyfoldError("Manyfold returned incomplete model files")
             for file in model["hasPart"]:
+                self._object(file, "file reference")
                 entries.append((await self._file(file.get("@id"), model))[0])
         nxt = data["view"].get("next")
         if nxt is not None:
