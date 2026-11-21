@@ -110,18 +110,18 @@ async def test_shutdown_stops_background_services_and_disconnects_every_printer(
     assert printer_manager.get_all_printer_ids() == []
 
 
-async def test_startup_removes_only_the_legacy_placeholder_printer(boot, session_factory):
-    await _seed_printer(session_factory, name=PLACEHOLDER, printer_type="elegoo_centauri", enabled=False)
+async def test_startup_preserves_printers_regardless_of_manufacturer_or_placeholder_name(boot, session_factory):
+    placeholder = await _seed_printer(session_factory, name=PLACEHOLDER, printer_type="elegoo_centauri", enabled=False)
     keep = await _seed_printer(session_factory, name="Real printer", enabled=False)
 
     async with main.lifespan(main.app):
         pass
 
     async with session_factory() as s:
-        assert [p.id for p in (await s.execute(select(Printer))).scalars()] == [keep]
+        assert [p.id for p in (await s.execute(select(Printer))).scalars()] == [placeholder, keep]
 
 
-async def test_a_placeholder_still_referenced_by_a_job_is_kept_with_a_warning_and_startup_continues(boot, session_factory, caplog):
+async def test_startup_preserves_a_placeholder_and_its_job_history(boot, session_factory, caplog):
     placeholder = await _seed_printer(session_factory, name=PLACEHOLDER, printer_type="elegoo_centauri", enabled=False)
     async with session_factory() as s:
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
@@ -139,7 +139,7 @@ async def test_a_placeholder_still_referenced_by_a_job_is_kept_with_a_warning_an
 
     async with session_factory() as s:
         assert (await s.get(Printer, placeholder)) is not None
-    assert any("Could not remove placeholder printer" in r.getMessage() for r in caplog.records)
+    assert not any("placeholder printer" in r.getMessage() for r in caplog.records)
 
 
 async def test_an_unreachable_sidecar_only_warns_and_the_catalog_warmup_is_still_scheduled(boot, monkeypatch, caplog):

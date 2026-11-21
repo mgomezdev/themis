@@ -106,7 +106,10 @@ async def cancel_job(
     _jobs.queue_engine.cancel_slice(job_id=job_id)     # a slice in flight stops at its next poll (BIZ-295)
 
     if stop_printer_id is not None:
-        client = _jobs.printer_manager._clients.get(stop_printer_id)
+        try:
+            client = _jobs.printer_manager.get_client(stop_printer_id)
+        except (KeyError, ValueError):
+            client = None
         if client is not None and client.connected:
             # Cancelling a running job stops the printer — jobs:write alone grants hardware stop.
             # stop_print blocks on the websocket ack; don't stall the event loop.

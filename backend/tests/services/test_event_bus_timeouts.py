@@ -3,7 +3,7 @@ import asyncio
 
 from app.services import printer_manager as pm_module
 from app.services.events import EventBus
-from app.services.printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
+from app.services.printer_events import FilamentsChanged, PrinterStateChanged, PrintCompleted
 from app.services.printer_manager import PrinterManager
 
 
@@ -48,12 +48,12 @@ async def test_printer_manager_subscribes_completion_without_a_limit_and_state_a
     mgr = PrinterManager()
     mgr.on_print_complete = _slow_args(done, "complete")
     mgr.on_state_change = _slow_args(done, "state")
-    mgr.on_ams_change = _slow_args(done, "ams")
+    mgr.on_filament_change = _slow_args(done, "ams")
     mgr.subscribe_events()
 
     await bus.publish(PrintCompleted(printer_id=1, state=None))
     await bus.publish(PrinterStateChanged(printer_id=1, state="RUNNING"))
-    await bus.publish(AmsChanged(printer_id=1, trays=[]))
+    await bus.publish(FilamentsChanged(printer_id=1, slots=[]))
     await asyncio.wait_for(bus.drain(), timeout=3)
 
     assert done == ["complete"]

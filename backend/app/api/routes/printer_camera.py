@@ -45,7 +45,7 @@ async def stream_camera(
     MJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on
     printers that time out after 60 s of inactivity."""
     await _get_or_404(printer_id, session)
-    client = _printers.printer_manager._clients.get(printer_id)
+    client = _printers._get_connected_client(printer_id)
     if client is None or not client.connected:
         raise HTTPException(503, "Printer not connected")
     caps = client.get_capabilities()
@@ -102,7 +102,7 @@ async def snapshot_camera(
 ) -> Response:
     """Return a single JPEG frame from any camera source (MJPEG or RTSP)."""
     await _get_or_404(printer_id, session)
-    client = _printers.printer_manager._clients.get(printer_id)
+    client = _printers._get_connected_client(printer_id)
     if client is None or not client.connected:
         raise HTTPException(503, "Printer not connected")
     caps = client.get_capabilities()

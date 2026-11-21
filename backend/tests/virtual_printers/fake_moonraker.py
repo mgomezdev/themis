@@ -12,6 +12,7 @@ class VirtualMoonraker:
     def __init__(self, files: dict[str, dict] | None = None, api_key: str | None = None) -> None:
         # path (relative to gcodes) -> {"data": bytes, "modified": float, "meta": {estimated_time, ...}}
         self.files = files or {}
+        self.objects: dict = {}
         self.api_key = api_key
         self.started: list[str] = []
         self.requests: list[tuple[str, str]] = []
@@ -34,6 +35,9 @@ class VirtualMoonraker:
         if self.api_key and (headers or {}).get("X-Api-Key") != self.api_key:
             return self._resp(req, 401, {"error": {"code": 401, "message": "Unauthorized"}})
 
+        if method == "GET" and path == "/printer/objects/query" and self.objects:
+            keys = params or self.objects
+            return self._resp(req, 200, {'result': {'status': {key: self.objects[key] for key in keys if key in self.objects}, 'eventtime': 1.0}})
         if method == "GET" and path == "/server/files/directory":
             root = (params or {}).get("path", "gcodes")
             if root != "gcodes" and not root.startswith("gcodes/"):

@@ -155,6 +155,17 @@ describe('useFleetData', () => {
     expect(result.current[0]).toHaveLength(2);
   });
 
+  it('a topology update refetches the authoritative fleet row', async () => {
+    let fleet = [fleetPrinter(1)];
+    const api = stubFetch({ 'GET /api/v1/fleet': () => fleet });
+    const { result } = renderHook(() => useFleetData());
+    await waitFor(() => expect(result.current[0]).toHaveLength(1));
+    fleet = [fleetPrinter(1, { name: 'Updated topology' })];
+    act(() => sock().send({ type: 'printer_topology', data: { printer_id: 1, revision: 2 } }));
+    await waitFor(() => expect(result.current[0][0].name).toBe('Updated topology'));
+    expect(api.calls.filter(c => c.url === '/api/v1/fleet')).toHaveLength(2);
+  });
+
   it('a printer_configured frame updates that printer\'s setup status (BIZ-369)', async () => {
     stubFetch({ 'GET /api/v1/fleet': [fleetPrinter(1, { configured: false, config_error: 'Missing Access Code' }), fleetPrinter(2)] });
     const { result } = renderHook(() => useFleetData());

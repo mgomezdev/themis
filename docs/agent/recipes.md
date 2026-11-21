@@ -11,7 +11,7 @@ A vendor is a bundled plugin package; core names none (`tests/test_vendor_extrac
    abstract methods; override `connection_fields()` (form + ctor kwargs), `get_capabilities()`,
    `is_idle`, `print_artifact_kind` (raw G-code or G-code archive), `serialize_state(printer_id)` (the normalized status dict; module-level
    `serialize_<vendor>(state, id)` + a one-line method is the pattern), and if AMS-like, `get_loaded_filaments()` + an
-   `_on_ams_change` attr. Read per-printer flags from `self._*` in `start_print` (options always present). Set `printer_type` ClassVar;
+   `_on_filament_change` attr. Read per-printer flags from `self._*` in `start_print` (options always present). Set `printer_type` ClassVar;
    optional `SSDP_PORTS`, `discover_host`/`parse_announcement` (discovery), `slice_tool_mapping = True` (tool changers).
 2. `backend/app/plugins/<vendor>/alarms.py` (optional) — decode the vendor's raw error report into `Alarm`s for `get_alarms()`.
 3. `backend/app/plugins/<vendor>/__init__.py` — `MANIFEST = PluginManifest(id=…, factory=<ClientClass>, settings_model=<empty model>,
@@ -84,8 +84,8 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 
 - **Eligibility** (when a printer may claim): `printer_manager.is_printer_ready` and
   `queue_engine._try_claim_for_printer` (both refuse an unconfigured printer, BIZ-369). Head-of-line — a mismatch blocks the job, it does not skip ahead.
-- **Filament matching / AMS mapping**: `queue_engine._matching_loaded_filament` + the loaded-slot dict
-  shape. AMS mapping flows from the matched slot's `ams_tray_id` into `StartPrintOptions.ams_mapping`.
+- **Filament matching / plugin routing**: `filament_matching.evaluate_for_printer` matches configured positions.
+  Neutral slot plans reach the selected plugin through `StartPrintOptions`; only the plugin encodes hardware addresses.
 - **Slice→upload→print sequence**: `queue_engine._run_slice_and_print`. Sets `awaiting_plate_clear=True`
   at `status=printing`.
 - **Block vs fail**: `_handle_slice_failure` marks `config.slice_failed` and always blocks the job (another

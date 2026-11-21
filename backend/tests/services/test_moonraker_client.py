@@ -303,7 +303,7 @@ def test_the_websocket_is_opened_with_the_api_key_header_only_when_one_is_config
         def run_forever(self, **kw):
             c._stop_event.set()                  # one connection attempt, then the loop ends
 
-    import app.services.moonraker.client as mod
+    import app.plugins._protocols.moonraker.client as mod
     monkeypatch.setattr(mod.websocket, "WebSocketApp", FakeApp)
     for key in ("s3cret", None):
         c = client(api_key=key)

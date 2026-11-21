@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fake_topology import declared_topology
 from app.models import Job, JobPrinterConfig, Printer
 from app.services import filament_matching
 from app.services.queue_engine import QueueEngine
@@ -25,14 +26,15 @@ async def _setup(factory, job_id, fmap, *, single_colour_only=True, position=Non
         c.filament_map = fmap
         p = await s.get(Printer, c.printer_id)
         p.single_colour_only, p.loaded_filaments = single_colour_only, SLOTS
+        p.topology = declared_topology(SLOTS)
         if position is not None:
             (await s.get(Job, job_id)).queue_position = position
         await s.commit()
 
 
 def test_evaluate_for_printer_refuses_multicolour_on_a_single_colour_printer():
-    single = SimpleNamespace(name="Mini", single_colour_only=True, loaded_filaments=SLOTS)
-    multi = SimpleNamespace(name="X1", single_colour_only=False, loaded_filaments=SLOTS)
+    single = SimpleNamespace(name="Mini", single_colour_only=True, loaded_filaments=SLOTS, topology=declared_topology(SLOTS), topology_error=None)
+    multi = SimpleNamespace(name="X1", single_colour_only=False, loaded_filaments=SLOTS, topology=declared_topology(SLOTS), topology_error=None)
     v = filament_matching.evaluate_for_printer(SimpleNamespace(filament_map=TWO, tool_index=None), single)
     assert (v.eligible, v.reasons) == (False, ["Mini takes single-colour work only"])
     assert filament_matching.evaluate_for_printer(SimpleNamespace(filament_map=TWO, tool_index=None), multi).eligible

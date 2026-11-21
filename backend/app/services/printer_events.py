@@ -16,9 +16,9 @@ class PrinterStateChanged(Event):
     state: Any
 
 
-class AmsChanged(Event):
+class FilamentsChanged(Event):
     printer_id: int
-    trays: list
+    slots: list
 
 
 class AlarmsReported(Event):

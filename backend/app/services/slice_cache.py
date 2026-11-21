@@ -74,13 +74,30 @@ class CacheKeyInputs:
     # The printer's own overrides (SliceRequest.printer_overrides): hashed only when set, so keys of printers without any are
     # unchanged. The project file's own preset changes need no field: they are a function of `source_content_hash`.
     printer_overrides: dict = field(default_factory=dict)
+    nozzle_sizes_mm: tuple[float, ...] = ()
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["filament_presets"] = list(self.filament_presets)
+        d["nozzle_sizes_mm"] = list(self.nozzle_sizes_mm)
+        if not d["nozzle_sizes_mm"]:
+            del d["nozzle_sizes_mm"]
         if not d["printer_overrides"]:
             del d["printer_overrides"]
         return d
+
+
+def nozzle_compatibility_reason(version, printer) -> str | None:
+    """Saved toolpaths require the same ordered physical nozzle-size vector."""
+    saved = version.nozzle_sizes_mm
+    if not saved:
+        return "Saved slice has unknown nozzle sizes; slice the source model again"
+    current = [tool['nozzle_mm'] for tool in (printer.topology or {}).get('tools', [])]
+    if not current:
+        return f"{printer.name} nozzle sizes are unavailable; refresh topology first"
+    if list(saved) != current:
+        return f"Saved slice nozzle sizes {saved} do not match {printer.name}: {current}; slice the source model again"
+    return None
 
 
 def key_inputs(
@@ -107,6 +124,7 @@ def key_inputs(
         artifact_kind=req.output_kind.value,
         provider=provider_id,
         printer_overrides=dict(getattr(req, "printer_overrides", None) or {}),
+        nozzle_sizes_mm=tuple(req.nozzle_sizes_mm),
     )
 
 

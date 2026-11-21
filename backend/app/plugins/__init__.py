@@ -33,6 +33,16 @@ _UI_REPORTS: dict[str, UiReport] = {}      # plugin id -> the declarative-UI val
 
 
 def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
+    from ..services.abstract_printer_client import AbstractPrinterClient
+    factory = manifest.factory
+    if isinstance(factory, type) and issubclass(factory, AbstractPrinterClient):
+        if factory.print_artifact_kind is None:
+            raise PluginError(f"plugin {manifest.id!r}: printer factory must declare its print artifact support")
+        if factory.refresh_topology is AbstractPrinterClient.refresh_topology:
+            raise PluginError(f"plugin {manifest.id!r}: printer factory must implement live topology refresh")
+    for other in _REGISTRY.values():
+        if other.id != manifest.id and set(other.legacy_printer_types) & set(manifest.legacy_printer_types):
+            raise PluginError(f"plugin {manifest.id!r}: legacy printer alias is already owned by {other.id!r}")
     existing = _REGISTRY.get(manifest.id)
     if existing is not None and existing is not manifest:
         raise PluginError(f"plugin id {manifest.id!r} is already registered")

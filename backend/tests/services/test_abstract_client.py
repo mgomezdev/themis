@@ -8,7 +8,10 @@ from app.services.abstract_printer_client import (
 )
 
 
-class MinimalClient(AbstractPrinterClient):
+from app.plugins._protocols.gcode_controls import GcodeControls
+
+
+class MinimalClient(GcodeControls, AbstractPrinterClient):
     printer_type = "test"
 
     @property
@@ -43,7 +46,6 @@ class MinimalClient(AbstractPrinterClient):
 
 def test_capabilities_defaults():
     caps = PrinterCapabilities()
-    assert caps.ams is False
     assert caps.camera is False
     assert caps.pause_resume is False
 
@@ -52,7 +54,8 @@ def test_start_print_options_defaults():
     opts = StartPrintOptions()
     assert opts.plate_id == 1
     assert opts.gcode_path is None
-    assert opts.use_ams is True
+    assert opts.slot_plan is None
+    assert opts.loaded_filaments is None
 
 
 def test_printer_file_fields():
@@ -69,7 +72,6 @@ def test_connection_field_defaults():
 def test_default_capabilities_all_false():
     client = MinimalClient()
     caps = client.get_capabilities()
-    assert caps.ams is False
     assert caps.camera is False
     assert caps.chamber_light is False
 
@@ -180,7 +182,7 @@ def test_set_bed_temp_default_returns_false():
 
 def test_default_artifact_is_raw_gcode():
     # Default printer (Klipper/Centauri) reports no extra args -> raw gcode output.
-    assert _Dummy.print_artifact_kind == "gcode"
+    assert _Dummy.print_artifact_kind is None
 
 
 def test_bambu_declares_gcode_archive():

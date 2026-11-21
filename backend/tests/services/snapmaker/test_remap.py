@@ -8,8 +8,8 @@ Paint node construction:
 import re
 import zipfile
 
-from app.services.snapmaker.paint_remap import encode_nodes, decode_nodes
-from app.services.snapmaker.remap import remap_3mf
+from app.plugins._protocols.three_mf.paint_remap import encode_nodes, decode_nodes
+from app.plugins._protocols.three_mf.remap import remap_3mf
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ from .slice_resolution import PrinterView, resolve_slicing
 from .providers.contract import CancelToken, NothingFits
 from .slicer_service import DEFAULT_BED_MM, SliceRequest, SlicerService, slice_side_mapping
 from . import gcode_eligibility, model_targets, slicer_profiles, part_waivers
-from . import completion_events
+from . import completion_events, slice_cache
 from . import filament_matching, pools, scheduling, bed_requirement
 from .library_store import get_library_store
 from .notify import notify
@@ -72,34 +72,14 @@ def _slot_for_config(config, loaded: list, conflicts=frozenset(), plan: list | N
     return filament_matching.slot_for_config(config, loaded, conflicts, plan)
 
 
-def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
-    if config.filament_map:
-        return None
-    if config.tool_index is not None:
-        return config.tool_index
-    if len(loaded) >= 2 and plan and plan[0].slot > 0:      # T0 is where an unrouted model prints anyway
-        return plan[0].slot
-    return None
+def _effective_tool_index(config, loaded: list, plan: list, printer_type: str | None = None) -> int | None:
+    from .printer_client_factory import client_class
+    cls = client_class(printer_type)
+    return cls.slice_tool_for_position(config.tool_index, plan, loaded, bool(config.filament_map)) if cls else None
 
 
-def _ams_mapping(plan: list, loaded: list) -> list[int] | None:
-    """Printer tray ids indexed by model filament (entry N-1 = filament N), never list indices or spool refs. A filament number the
-    plan doesn't use (a plate printing filaments 1 and 3 of a project) is -1, the documented "unused" value of `ams_mapping`."""
-    if not plan:
-        return None
-    if any(not 0 <= u.slot < len(loaded) for u in plan):
-        raise ValueError("A mapped filament slot was removed before printing")
-    by_filament: dict[int, int | None] = {}
-    for u in plan:
-        mf = 1 if u.model_filament is None else u.model_filament       # the single-filament ask is filament 1
-        if type(mf) is not int or not 1 <= mf <= filament_matching.MAX_MODEL_FILAMENTS or mf in by_filament:
-            raise ValueError(f"Filament {mf} is mapped more than once or is not a filament number")
-        by_filament[mf] = loaded[u.slot].get("ams_tray_id")
-    if all(t is None for t in by_filament.values()):
-        return None  # this printer does not use AMS tray identifiers
-    if any(type(t) is not int or t < 0 for t in by_filament.values()):
-        raise ValueError("Every mapped filament needs a valid AMS tray identifier")
-    return [by_filament.get(n, -1) for n in range(1, max(by_filament) + 1)]
+def _filament_selection(plan: list, loaded: list) -> dict:
+    return {"slot_plan": filament_matching.plan_to_json(plan), "loaded_filaments": loaded}
 
 
 def effective_process_profile(config, printer) -> str:
@@ -124,6 +104,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
     return {
         "source_key": uploaded_file.relative_path if uploaded_file else None,
         "original_filename": uploaded_file.original_filename if uploaded_file else None,
+        "nozzle_sizes_mm": tuple(t["nozzle_mm"] for t in (getattr(printer, "topology", None) or {}).get("tools", [])) if printer else (),
         "machine_preset": machine_preset if printer else None,   # resolved from the model mapping + nozzle variant (BIZ-294)
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
@@ -136,7 +117,7 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
         # A pinned tool, else (tool-changer printers, where the 3MF is routed at slice time) the one slot the ask matched, so what is
         # sliced, printed and deducted is the slot the claim chose.
-        "tool_index": _effective_tool_index(config, loaded, plan) if config else None,
+        "tool_index": _effective_tool_index(config, loaded, plan, printer.printer_type if printer else None) if config else None,
         # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
         "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
         "slot_plan": plan,
@@ -215,6 +196,7 @@ def build_slice_request(job_id: int, printer_id: int, plate_number: int,
         output_kind=output_kind,
         artifact_basename=file_base,
         model_uuid=p.get("model_uuid"),
+        nozzle_sizes_mm=tuple(p.get("nozzle_sizes_mm") or ()),
         extra_config=plate_config,
         printer_overrides=dict(p.get("printer_overrides") or {}),
         provider_id=provider_id,
@@ -495,7 +477,7 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
 
     async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int, slice_only: bool = False) -> None:
         printer = await session.get(Printer, printer_id)
-        if printer is None or not printer.queue_on or not printer.configured:
+        if printer is None or not printer.queue_on or not printer.configured or printer.topology is None or printer.topology_error:
             return                   # BIZ-369: only a printer a connection has confirmed takes work
         if printer_id in self._pool_busy.values():
             return                   # BIZ-362: its pool plate is being packed; it claims that plate next
@@ -592,6 +574,10 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
                     await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
                                                         "cached version was sliced for that")
                     return
+                nozzle_problem = slice_cache.nozzle_compatibility_reason(version, printer)
+                if nozzle_problem:
+                    await self._block_job(session, job, nozzle_problem)
+                    return
 
         # Pre-flight: resolve the slicing provider for THIS printer (its preferred `gcode.produce` plugin, else the capability
         # default) and make sure it is usable before claiming this job (BIZ-291). Block (not fail) so the job auto-retries when
@@ -618,6 +604,7 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
         # user cancel) that committed while we awaited the Laminus health probe above.
         plate_number = job.plate_number
         # The slots this print uses (slicing and deduction follow it), with what each holds now: dispatch re-checks that.
+        config.topology_revision = printer.topology_revision
         config.slot_plan = filament_matching.plan_to_json(filament_matching.pin_identities(fit.plan, printer.loaded_filaments))
         result = await session.execute(
             update(Job)

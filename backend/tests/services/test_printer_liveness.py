@@ -1,5 +1,6 @@
 """Printer liveness (spec §2a): a printer offline for the user's cutoff is dead. Under the cutoff it is "undead": part of queue processing,
 and a blip that heals triggers nothing unless work is waiting for it. Fake clock; real QueueEngine + PrinterManager + the test DB."""
+from tests.fake_topology import declared_topology
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -52,7 +53,7 @@ async def seed(session_factory, tmp_path, *, status="printing", position=5.0, ex
     gcode = tmp_path / "j.gcode"
     gcode.write_text("G28\n")
     async with session_factory() as s:
-        printer = Printer(name="P", printer_type="bambu", connection_config={}, orca_printer_profiles=[], awaiting_plate_clear=True)
+        printer = Printer(topology=declared_topology(), name="P", printer_type="bambu", connection_config={}, orca_printer_profiles=[], awaiting_plate_clear=True)
         f = UploadedFile(original_filename="m.3mf", stored_path="/x", plates=[], uploaded_at=NOW)
         s.add_all([printer, f])
         await s.flush()
@@ -121,6 +122,7 @@ async def test_a_heal_before_the_cutoff_triggers_nothing(env, session_factory):
     job_id, pid = await seed(session_factory, env.tmp)
     c = client(connected=False)
     env.mgr.register_client(pid, c)
+    env.mgr._topology_validated.add(pid)  # declared snapshot in seed
     env.clock.advance(10)
     await env.engine._liveness_pass()
     c.connected = True
@@ -193,6 +195,7 @@ async def test_an_undead_printer_with_a_sliced_job_is_woken_when_it_returns_and_
         await s.commit()
     c = client(connected=False)
     env.mgr.register_client(pid, c)
+    env.mgr._topology_validated.add(pid)  # declared snapshot in seed
     env.clock.advance(10)
     await env.engine._liveness_pass()
     assert env.engine.wake.call_count == 0
@@ -248,18 +251,21 @@ async def test_a_dead_printer_gives_back_a_job_sliced_for_it_without_a_failure(e
     assert env.failed == []                                                # it never started: not a failure
 
 
-async def test_a_changed_filament_slot_wakes_the_queue_and_an_unchanged_report_does_not(env, session_factory):
+async def test_a_changed_legacy_filament_slot_wakes_the_queue_and_an_unchanged_report_does_not(env, session_factory):
     _, pid = await seed(session_factory, env.tmp, status="queued", extra_queued=False)
     env.mgr.register_client(pid, client())
     env.mgr.set_session_factory(session_factory)
     env.mgr.set_connectivity_callback(env.engine.on_connectivity)
+    async with session_factory() as s:
+        (await s.get(Printer, pid)).topology = None  # old occupied-only reports cannot replace full topology
+        await s.commit()
     trays = [{"slot": 0, "type": "PA-CF", "subtype": "standard", "color": "#000000"}]
 
-    await env.mgr.on_ams_change(pid, trays)
+    await env.mgr.on_filament_change(pid, trays)
     assert env.engine.wake.call_count == 1                                  # PA-CF just got loaded: a blocked job may match now
-    await env.mgr.on_ams_change(pid, trays)
+    await env.mgr.on_filament_change(pid, trays)
     assert env.engine.wake.call_count == 1                                  # the same report again: nothing changed
-    await env.mgr.on_ams_change(pid, [{**trays[0], "type": "PLA"}])
+    await env.mgr.on_filament_change(pid, [{**trays[0], "type": "PLA"}])
     assert env.engine.wake.call_count == 2
 
 

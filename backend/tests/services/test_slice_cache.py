@@ -267,3 +267,8 @@ def test_a_06_variant_and_a_04_variant_of_one_model_never_share_a_cache_key():
     assert four.machine_preset != six.machine_preset
     assert sc.cache_key(four) != sc.cache_key(six)
     assert sc.cache_key(four) == sc.cache_key(sc.key_inputs(_req(machine_preset="P1S 0.4 nozzle"), "src", None, None))
+
+
+def test_per_tool_nozzle_sizes_change_slice_cache_identity():
+    assert _key(_req(nozzle_sizes_mm=(.4, .6))) != _key(_req(nozzle_sizes_mm=(.4, .4)))
+    assert _key(_req(nozzle_sizes_mm=(.6, .4))) != _key(_req(nozzle_sizes_mm=(.4, .6)))

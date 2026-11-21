@@ -53,3 +53,16 @@ def test_print_task_config_describes_each_tool_s_filament(client):
     from app.plugins.snapmaker.client import _trays_from_task_config
     trays = _trays_from_task_config(cfg)
     assert [t["slot"] for t in trays] == [0, 1, 2, 3]
+
+
+def test_live_topology_reports_configured_tools_and_positions(client):
+    """Read current nozzle configuration and U1 slot contents without opening/replacing its printer session."""
+    before = client._ws
+    first = client.refresh_topology({})
+    second = client.refresh_topology({})
+    assert client._ws is before
+    assert len(first.positions) >= len(first.tools) > 0
+    assert all(tool.nozzle_mm > 0 for tool in first.tools)
+    assert [p.id for p in first.positions] == [p.id for p in second.positions]
+    print('configured tool sizes:', [(t.id, t.nozzle_mm) for t in second.tools])
+    print('configured positions:', len(second.positions), 'loaded:', sum(p.filament is not None for p in second.positions))

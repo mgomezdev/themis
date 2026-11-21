@@ -282,7 +282,7 @@ async def _version_for(session_factory, library, model_id, *, plate=1, name="cac
         s.add(f)
         await s.flush()
         v = SlicedVersion(file_id=f.id, source_file_id=model_id, source_content_hash=source_hash or model.content_hash,
-                          plate_number=plate, machine_preset=machine, process_preset="0.20mm",
+                          plate_number=plate, machine_preset=machine, process_preset="0.20mm", nozzle_sizes_mm=[.4],
                           filament_presets=["Generic PETG"], extra_config=extra_config or {"curr_bed_type": "Cool Plate"},
                           artifact_kind="gcode_3mf", cache_key=f"k{plate}{name}", preset_content_hash=preset_hash,
                           provider_plugin_id=provider_plugin_id,

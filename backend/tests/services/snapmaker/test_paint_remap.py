@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.snapmaker.paint_remap import remap_paint_color, decode_nodes, encode_nodes
+from app.plugins._protocols.three_mf.paint_remap import remap_paint_color, decode_nodes, encode_nodes
 
 # paint_color strings in OrcaSlicer's TriangleSelector format, encoded BY HAND from the bit layout in
 # paint_remap.py (nibbles read right-to-left, LSB-first) so these are independent of encode_nodes:

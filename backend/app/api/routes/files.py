@@ -745,6 +745,7 @@ async def list_sliced_versions(
             "stale": stale, "stale_reasons": reasons,
             "model_uuids": models_by_profile.get(v.machine_preset, []),
             "printable_now": any(profiles[p.id].profile == v.machine_preset
+                                 and slice_cache.nozzle_compatibility_reason(v, p) is None
                                  and model_targets.accepts_file(p.printer_type, f.original_filename)
                                  for p in printers),
         })

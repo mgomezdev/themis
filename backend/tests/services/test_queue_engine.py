@@ -1,4 +1,5 @@
 # backend/tests/services/test_queue_engine.py
+from tests.fake_topology import declared_topology
 import asyncio
 import os
 import pytest
@@ -53,7 +54,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
     async with factory() as session:
         # Ensure the target printer exists (queue engine checks queue_on before claiming)
         if await session.get(Printer, printer_id) is None:
-            session.add(Printer(configured=True,
+            session.add(Printer(topology=declared_topology(), configured=True,
                 id=printer_id,
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
@@ -284,7 +285,7 @@ async def test_claim_stores_the_chosen_slots_as_the_configs_plan(db, tmp_path):
         cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         assert (await session.get(Job, job_id)).status == "printing"
         assert cfg.slot_plan == [{"model_filament": None, "slot": 1,               # the ask says standard: T0 (silk) is not it
-                                  "identity": {"ams_tray_id": None, "type": "PLA", "color": "#FF0000"}}]
+                                  "identity": {"position_id": None, "type": "PLA", "subtype": "standard", "manufacturer": None, "color": "#FF0000"}}]
 
 
 @pytest.mark.asyncio
@@ -1262,6 +1263,9 @@ async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the
     engine, printer_id, job_id = await _seed_completing_job(db)
     fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
     await use_provider(fake)
+    async with db() as session:
+        (await session.get(Job, job_id)).status = "uploading"  # dispatch starts an active prepared assignment
+        await session.commit()
     spawned = []
 
     def spy(coro, name=None):

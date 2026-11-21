@@ -36,13 +36,15 @@ class PrinterView:
     profile_reason: str | None = None
     output_kind: ArtifactKind = ArtifactKind.GCODE
     resolved_provider_id: str | None = None
+    nozzle_sizes_mm: tuple[float, ...] = ()
 
     @classmethod
     def of(cls, printer: Printer, resolution: MachineProfileResolution | None = None) -> "PrinterView":
         preferred = resolution.preferred_provider_id(printer) if resolution else printer.preferred_slicer_plugin_id
         return cls(printer.name, preferred, float(printer.bed_x_mm), float(printer.bed_y_mm),
                    printer.model_uuid, resolution.profile if resolution else None, resolution.reason if resolution else None,
-                   required_output(printer.printer_type), resolution.provider_id if resolution else None)
+                   required_output(printer.printer_type), resolution.provider_id if resolution else None,
+                   tuple(t["nozzle_mm"] for t in (getattr(printer, "topology", None) or {}).get("tools", [])))
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,9 @@ def _label(plugin_id: str | None) -> str:
 
 def target_of(printer: "Printer | PrinterView") -> TargetPrinter:
     return TargetPrinter(bed_mm=(float(printer.bed_x_mm), float(printer.bed_y_mm), _BED_Z_MM), model_uuid=printer.model_uuid,
-                         machine_profile=getattr(printer, "machine_profile", None))
+                         machine_profile=getattr(printer, "machine_profile", None),
+                         nozzle_sizes_mm=getattr(printer, "nozzle_sizes_mm", ()),
+                         toolheads=len(getattr(printer, "nozzle_sizes_mm", ())) or 1)
 
 
 def _unavailable(printer: "Printer | PrinterView", outcome: WorkOutcome, state: Readiness | None) -> SliceDecision:

@@ -45,7 +45,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   Matching is `filament_matching.evaluate` for the single ask, every `filament_map` colour and pinned `tool_index` alike; the chosen
   slots are stored on the config (`slot_plan`) at claim and slicing + deduction follow that plan.
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads
-  `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/ams_mapping` reliably.
+  `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/slot_plan/loaded_filaments`; hardware mappings belong to the printer plugin.
 - **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
   `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
   or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade

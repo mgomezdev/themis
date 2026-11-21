@@ -18,7 +18,7 @@ Elegoo `bed_type/bed_leveling/timelapse`, Moonraker `toolheads`) whose edit neve
 `print_artifact_kind` (`gcode` or `gcode_3mf`, the driver’s required print file),
 `raw_gcode_supported` / `sliced_archive_supported` (which pre-sliced library files the vendor prints as-is — `.gcode` /
 `.gcode.3mf`; Bambu = False / True, others True / False),
-`get_loaded_filaments()` (AMS), `camera_rtsp_url`/`camera_mjpeg_url`, `home`/`jog_z`/`set_bed_temp`/`list_files`/`delete_file`/`download_file` (capabilities `file_browser`/`file_delete`/`file_download`; Bambu = FTPS `LIST`/`DELE`/`RETR` over root + `/cache`, Snapmaker = Moonraker `/server/files/directory?extended=true` + `/server/files/gcodes/<path>` with inline metadata, Elegoo = SDCP list + delete only; ids are vendor paths — `PrinterFile.id` — handed back verbatim; verified against virtual printers in CI and real ones via `backend/protocol_verification`)/`jog`/`home_axes`/`set_nozzle_temp`/`set_chamber_temp` (console capabilities `axis_jog`/`home_axes`/`nozzle_temp`/`chamber_temp`/`direct_upload`; Bambu + Snapmaker via G-code, Elegoo only `direct_upload` until its SDCP axis/setpoint commands are verified on hardware)/
+`get_loaded_filaments()` (legacy material reports), `camera_rtsp_url`/`camera_mjpeg_url`, `home`/`jog_z`/`set_bed_temp`/`list_files`/`delete_file`/`download_file` (capabilities `file_browser`/`file_delete`/`file_download`; Bambu = FTPS `LIST`/`DELE`/`RETR` over root + `/cache`, Snapmaker = Moonraker `/server/files/directory?extended=true` + `/server/files/gcodes/<path>` with inline metadata, Elegoo = SDCP list + delete only; ids are vendor paths — `PrinterFile.id` — handed back verbatim; verified against virtual printers in CI and real ones via `backend/protocol_verification`)/`jog`/`home_axes`/`set_nozzle_temp`/`set_chamber_temp` (console capabilities `axis_jog`/`home_axes`/`nozzle_temp`/`chamber_temp`/`direct_upload`; Bambu + Snapmaker via G-code, Elegoo only `direct_upload` until its SDCP axis/setpoint commands are verified on hardware)/
 `set_fan_speeds`/`set_chamber_light`, `printer_type` (ClassVar, the legacy key rows/backups/discovery still carry),
 `serialize_state(printer_id)` (the vendor's normalized status dict — see below; base default = identity only),
 `camera_configured` (default: a camera URL is stored; override when the feed isn't URL-based) / `camera_stream()` / `camera_snapshot()` / `camera_unavailable_reason()` (the client produces its own camera feed for the core camera hub; defaults proxy `camera_mjpeg_url`; Bambu transcodes RTSP in `plugins/bambu/camera.py`),
@@ -27,15 +27,14 @@ Elegoo `bed_type/bed_leveling/timelapse`, Moonraker `toolheads`) whose edit neve
 
 **Callbacks** (set by `printer_manager.connect_printer`, fired from the client's bg thread via
 `run_coroutine_threadsafe(self._loop)`): `_on_state_change(state)`, `_on_print_complete(state)`,
-`_on_ams_change(trays)` (only wired if the client has the attr). They no longer call the manager directly: each publishes a typed
-event on the process bus (`services/events.event_bus` → `PrinterStateChanged` / `PrintCompleted` / `AmsChanged` / `AlarmsReported` (the manager publishes the client's `get_alarms()` on each state change; its handler `on_alarms` feeds the alarm tracker) in
+`_on_filament_change(trays)` (only wired if the client has the attr). They no longer call the manager directly: each publishes a typed
+event on the process bus (`services/events.event_bus` → `PrinterStateChanged` / `PrintCompleted` / `FilamentsChanged` / `AlarmsReported` (the manager publishes the client's `get_alarms()` on each state change; its handler `on_alarms` feeds the alarm tracker) in
 `services/printer_events.py`), and `PrinterManager.subscribe_events()` (called once in the `main.py` lifespan, idempotent) routes them
-to `on_state_change` / `on_print_complete` / `on_ams_change`. Handlers are isolated tasks; publishers never wait. Each is bounded by the bus's `handler_timeout` (10 s) except the print-completion handler, subscribed with `timeout=None` because completing a job (commit, inventory deduction, webhooks) must never be cut short.
+to `on_state_change` / `on_print_complete` / `on_filament_change`. Handlers are isolated tasks; publishers never wait. Each is bounded by the bus's `handler_timeout` (10 s) except the print-completion handler, subscribed with `timeout=None` because completing a job (commit, inventory deduction, webhooks) must never be cut short.
 
-**`StartPrintOptions`**: `plate_id, gcode_path, ams_mapping?, bed_levelling, flow_cali, vibration_cali,
-layer_inspect, timelapse, use_ams`. The queue engine fills `plate_id`/`gcode_path`/`ams_mapping`;
-**per-printer flags (leveling/timelapse/etc.) are taken from the client's own config, not from options**
-(options always present, so vendor `start_print` reads `self._*`).
+**`StartPrintOptions`**: `plate_id`, `gcode_path`, neutral `slot_plan` and position-aligned `loaded_filaments`.
+The queue forwards the selected positions; only the printer plugin translates them into wire routing.
+Per-printer options (leveling/timelapse/etc.) are read from the client's own plugin configuration.
 
 ## Plugins & resolution (`services/printer_client_factory.py`, `services/printer_identity.py`)
 
@@ -59,16 +58,14 @@ existing printers are not dormant after upgrade; `moonraker` too); `mock` is ena
 
 ## Moonraker protocol family (BIZ-148)
 
-`app/services/moonraker/` is the shared transport: `client.MoonrakerClientBase` (WebSocket JSON-RPC subscribe + reconnect, HTTP control via
+`app/plugins/_protocols/moonraker/` is the shared transport: `client.MoonrakerClientBase` (WebSocket JSON-RPC subscribe + reconnect, HTTP control via
 `httpx`, file browser/upload/download/delete, completion + klippy-state reconciliation, camera discovery via `server.webcams.list`,
 normalised `klipper_alarms`), `files.py` (gcodes-root helpers), `alarms.py`. A plugin subclasses it for what is its own:
 `app/plugins/snapmaker/client.py` (four tools, `print_task_config` trays, fixed camera URL, tool-mapping — behaviour unchanged) and
-`app/plugins/moonraker/` — the **generic provider**: the plugin boundary is the protocol, not a maker. `printer_type` key `moonraker`.
+`app/plugins/moonraker/` — the **generic Klipper provider**: it is manufacturer-neutral; branded integrations each own a separate plugin. `printer_type` key `moonraker`.
 
-* **Models** (registry identities `moonraker/<mfr>/<model>`): Voron 2.4 (300 mm) and Trident (300 mm), Sovol SV08, and the explicit
-  generic path `generic/custom_klipper` (`PrinterModel(custom=True)`). Declared models are exercised against the *virtual* Moonraker
-  (`tests/virtual_printers/fake_moonraker.py`); **no hardware verification is claimed** — add a protocol-verification check under
-  `backend/protocol_verification/` when a device is available. Support is never inferred from "it runs Klipper".
+* **Models:** only `moonraker/generic/custom_klipper` (`PrinterModel(custom=True)`). Bambu, Elegoo Centauri Carbon and Snapmaker U1 use their own plugins. Voron/Sovol are no longer advertised by this plugin; historical registry records and bindings are retained without rebinding.
+* **Ownership (BIZ-391):** one immutable plugin binding per physical printer. Create/edit return 409 for a host or serial already owned by another row, even if disabled/dormant or using another port/model/plugin. Import skips conflicts with warnings. Host comparisons ignore case, surrounding spaces and a trailing DNS dot; serial comparisons ignore case/spaces. Different DNS aliases or IPs require a shared serial to detect the same device. Multiple printers behind one hostname are outside this initial fleet. Delete a binding before assigning the device to another plugin. v081 database triggers guard concurrent writes; old duplicates remain stored, but startup/manual connection testing blocks them until reconciled.
 * **Multi-toolhead limits:** `toolheads` lives in `connection_config` only (the registry's per-model `toolheads` column is the *declared* value and
   stays 1 for `custom_klipper`); it sets how many `extruderN` objects are subscribed and reported (clamped to 8). Telemetry and `multi_nozzle`
   follow it, but **loaded-filament tracking and slice-time tool mapping are not supported** for generic Klipper printers (those are the
@@ -76,16 +73,16 @@ normalised `klipper_alarms`), `files.py` (gcodes-root helpers), `alarms.py`. A p
 * **Backups:** a printer exports/imports with its identity triple, so a Moonraker printer re-imports bound to `moonraker`. An old backup entry
   with only a legacy `printer_type` is mapped through `LEGACY_IDENTITY`; one with **no mapping is skipped, never adopted** by a plugin that
   happens to share the key (`printer_type: moonraker` in a pre-plugin backup is not a Moonraker-plugin printer).
-* **Verification status:** Voron / Sovol / custom are validated against the virtual Moonraker only — no real-hardware protocol check exists
+* **Verification status:** generic Klipper is validated against the virtual Moonraker only — no real-hardware protocol check exists
   yet (`backend/protocol_verification/` has none for the generic plugin); do not read "declared" as "hardware verified".
 * **Custom model:** the add flow asks for bed X/Y (stored on the printer row, `PrinterCreate.bed_x_mm/bed_y_mm`) and the form has a
   `toolheads` field (stored in `connection_config`, default = the declared model's count via `connection_fields_for(model)`). Both are
   user-owned and survive edits/upgrades.
 * **Optional hardware** (fan, extra extruders, chamber, webcam, filament sensors) is tolerated when absent: Moonraker omits unknown objects,
   telemetry reads only what is present, and `get_capabilities()` reports `fan_control`/`camera`/`multi_nozzle` from what was actually seen
-  (`set_fan_speeds` refuses when there is no `fan` object). An update for an extruder the printer wasn't declared with is ignored.
+  (`set_fan_speeds` refuses when there is no `fan` object). A topology refresh discovers configured extruders/nozzle sizes and updates subscriptions on the existing WebSocket.
 * **Discovery:** a Moonraker host answers every Moonraker-protocol plugin's probe, so `/printers/discover` lists it once **per plugin**
-  (`snapmaker_extended` and `moonraker`); the user picks the connection path. A printer is never rebound to another provider: `plugin_id`
+  (`snapmaker_extended` and `moonraker`); the user selects one plugin binding for the physical printer. A printer is never rebound to another provider: `plugin_id`
   is immutable, `PATCH` can only move to another model the *same* plugin declares, and the same hardware offered by two plugins is two
   registry identities (`tests/api/test_moonraker_plugin_api.py`).
 * **Jobs:** raw `.gcode` only (`raw_gcode_supported`, no sliced archive); G-code machine eligibility (BIZ-263) and the normal queue/slicing
@@ -143,14 +140,14 @@ before).
 flag `TOOL_MAPPING`; base default raises `SlicingProviderError`; both args empty = no-op; both set = error):
 - **Which printers:** only a client with `slice_tool_mapping = True` (Snapmaker) gets a slice-side mapping — `slice_side_mapping` returns (None, None) otherwise
   (Bambu realizes the mapping at print time via `ams_mapping`; Elegoo has none), so their 3MFs are never rewritten.
-- **Laminus adapter** (`providers/laminus/adapter.py`): `TOOL_MAPPING = True`; delegates to `services/snapmaker/remap.remap_3mf(prepared,
+- **Laminus adapter** (`providers/laminus/adapter.py`): `TOOL_MAPPING = True`; delegates to `plugins/_protocols/three_mf/remap.remap_3mf(prepared,
   *, tool_index, filament_map)` (the code stays in Themis for now; it moves to Laminus's multi-material capability, BIZ-248). It rewrites the prepared 3MF in-place:
   - *Single-extruder* (`tool_index` set): per-object `extruder` metadata in
     `Metadata/model_settings.config` (`<metadata key="extruder" value="{tool_index+1}"/>`,
     1-based), all objects assigned to that tool.
   - *Multi-material* (`filament_map` non-empty list of `{model_filament(1-based), tool_index(0-based)}`):
     1. **`paint_color` rewrite** (nibble-packed TriangleSelector codec in
-       `services/snapmaker/paint_remap.remap_paint_color(hex, mapping)`) — swaps every filament
+       `plugins/_protocols/three_mf/paint_remap.remap_paint_color(hex, mapping)`) — swaps every filament
        leaf state (`state=filament+2` → `state=tool_index+3`); byte-exact round-trip.
        Codec: nibbles right-to-left; bits LSB-first per nibble; 2-bit `split_sides`; leaf
        `code==3` → 4-bit nibble for states ≥ 3. *AGPL-sensitive — isolated here to avoid
@@ -159,7 +156,7 @@ flag `TOOL_MAPPING`; base default raises `SlicingProviderError`; both args empty
     - Plate `filament_maps` in `project_settings.config` is **left untouched** — OrcaSlicer
       ignores it for CLI slicing (spike-proven); `paint_color` + `extruder` metadata is authoritative.
   - `tool_index` and `filament_map` are mutually exclusive.
-- The Snapmaker plugin must not import `services/snapmaker/` (`tests/test_tool_mapping_boundary.py`).
+- The Snapmaker plugin must not import `plugins/_protocols/three_mf/` (`tests/test_tool_mapping_boundary.py`).
 
 **Filament slot resolution** (unchanged): `_slot_for_config(config, loaded)` uses
 `loaded[tool_index]` when `tool_index` is set; else `_matching_loaded_filament` (type+color ask).
@@ -173,14 +170,14 @@ Queue claim matches the job's **ask** tuple (`config.ask_*`: manufacturer, type,
 the printer's `loaded_filaments`: every defined part must be satisfied by the slot's own tuple (names case-insensitive, color `#`/case
 ignored, subtype `any` = wildcard, an unknown slot manufacturer fails a manufacturer ask); lowest matching slot wins; conflicting slots
 and empty-tool placeholders never match; several model colours may share a slot. The matched slot supplies `filament_profile` (the
-operator's per-slot orca preset) and, for AMS, `ams_tray_id` → `StartPrintOptions.ams_mapping=[id]`. A mismatch leaves the job
+operator's per-slot slicer preset). The slot plan and loaded positions reach the plugin without a hardware mapping. A mismatch leaves the job
 **queued** (the engine skips it for that printer); the job detail's `filament_match.reasons` list what each slot lacks.
 
-**AMS auto-sync merge** (`printer_manager.on_ams_change`): when the Bambu client fires `_on_ams_change`
-with fresh tray dicts, `on_ams_change` merges rather than overwrites — the incoming trays are joined to
+**Legacy filament-report merge** (`printer_manager.on_filament_change`): when the Bambu client fires `_on_filament_change`
+with fresh tray dicts, `on_filament_change` merges rather than overwrites — the incoming trays are joined to
 the existing `loaded_filaments` by `slot`; each matched slot's `filament_profile` and `spoolman_spool_id`
 are preserved from the previous DB value; the slot's tuple (manufacturer/type/subtype/color) is **replaced** from the report and flagged
-`reported`. Slots no longer reported in the AMS payload are dropped along with their mappings. Tuple per vendor: Bambu = `tray_type` +
+`reported`. This legacy merge applies only before a topology snapshot exists. Live topology refresh preserves configured empty positions and merges user metadata by stable position identity. Tuple per vendor: Bambu = `tray_type` +
 `tray_sub_brands` (variant), manufacturer decoded by the plugin's own `rfid.py` (a non-zero `tray_uuid`/`tag_uid` tag + the material code `tray_info_idx`
 looked up in its `TAG_VENDORS` table — one row per RFID spool maker; no tag or an unknown maker = unknown manufacturer; **table
 contents are an assumption to confirm against hardware** with `protocol_verification/test_bambu_ams.py`); Snapmaker U1 = `print_task_config` `filament_vendor` ("Generic"/"NONE" = unknown) + `filament_sub_type`
@@ -204,7 +201,7 @@ Upload = **implicit FTPS** `:990` (`_ImplicitFTP_TLS`, `prot_p()`, self-signed) 
 `start_print` = `project_file` command referencing the uploaded `.gcode.3mf` (param
 `Metadata/plate_N.gcode`). **AMS**: `_parse_ams` flattens `print.ams.ams[].tray[]` + external `vt_tray`
 into loaded-filament dicts (global tray id = unit*4+tray, external=254; color = 8-hex RGBA→`#RRGGBB`;
-skip empty). `on_ams_change` auto-syncs trays → DB `loaded_filaments`. `start_print` sends `ams_mapping`
+skip empty). `on_filament_change` auto-syncs trays → DB `loaded_filaments`. `start_print` sends `ams_mapping`
 (from the matched tray) + per-printer flags `use_ams/bed_leveling/flow_cali/timelapse`. Per-printer
 config = those flags. Status: `gcode_state` (IDLE/RUNNING/PAUSE/FINISH/FAILED), `stg_cur`, fans (0–15
 gears → %). Camera: X1 = RTSP `:322`; **P1/A1 differ** (chamber image `:6000`, not yet handled).
@@ -229,13 +226,30 @@ loop + `check_staleness` closes the WS to force reconnect on silence. RPC ids vi
 `standby→IDLE, printing→RUNNING, paused→PAUSE, complete→FINISH, cancelled→FAILED, error→FAILED` (app
 vocab is IDLE/RUNNING/PAUSE/FINISH/FAILED only). **Filaments**: 4 **manual** slots (slot 0-3 ↔
 extruder0-3); `get_loaded_filaments` is unused — slots are user-set in the DB `loaded_filaments`, no
-`_on_ams_change` auto-sync. **Camera**: snapshot `http://<ip>/webcam/snapshot.jpg`; `camera_mjpeg_url` =
+`_on_filament_change` auto-sync. **Camera**: snapshot `http://<ip>/webcam/snapshot.jpg`; `camera_mjpeg_url` =
 `/webcam/stream` (best-effort). Per-tool temps in `state.temperatures["extruders"]`.
 **Single-filament tool pick** (Project 2 — delivered): user selects a tool (T0–T3) per printer in
 `NewJobScreen`; persisted as `job_printer_configs.tool_index`; queue routes via `_slot_for_config` and
-applies the routing via the slicing provider's `apply_tool_mapping` → `snapmaker/remap.remap_3mf` (see Slicing pipeline above).
+applies the routing via the slicing provider's `apply_tool_mapping` → `plugins/_protocols/three_mf/remap.remap_3mf` (see Slicing pipeline above).
 **Multi-material model→tool mapping** (Project 2b — delivered): `job_printer_configs.filament_map`
 maps each declared model filament to a physical tool; routing applied via `apply_tool_mapping` →
-`snapmaker/remap.remap_3mf` (rewrites `paint_color` bitstreams + object `extruder` metadata; see Slicing pipeline above).
+`plugins/_protocols/three_mf/remap.remap_3mf` (rewrites `paint_color` bitstreams + object `extruder` metadata; see Slicing pipeline above).
 **Validation status**: built + unit-tested; live Moonraker connectivity confirmed
 (`scripts/snapmaker_smoke_test.py`, reads `SNAPMAKER_IP`); test print pending.
+
+## Live topology and neutral dispatch
+
+See [required printer contract](../printer-interface.md#required-neutral-printer-contract-architecture-decision-2026-11-21).
+`plugins/printer_topology.py` validates per-tool sizes, stable position IDs,
+`m >= n`, and swapping capability. `services/printer_topology.py` publishes live
+snapshots and checks dispatch assignments. v082 persists topology/configuration,
+errors/revisions and the revision claimed by each job-printer config. Missing or
+stale topology blocks new work without disconnecting the existing client.
+
+Use `POST /printers/{id}/topology/refresh` (API prefix `/api/v1`) or Refresh topology
+in the printer editor. Empty configured positions remain present. Sizes not
+reported by firmware require explicit user configuration. The existing
+`single_colour_only` setting is the printer-level single-filament policy.
+Vendor file/print commands and G-code controls live in plugins; core passes
+neutral selections and per-tool sizes. A refresh changes neither plugin binding
+nor connection. Hardware protocol checks remain opt-in and read-only by default.

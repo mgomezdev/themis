@@ -23,6 +23,7 @@ MANIFEST = PluginManifest(
     default_enabled=True,
     job_fields=PRINTER_JOB_FIELDS,
     factory=ElegooCentauriClient,
+    legacy_printer_types={"elegoo_centauri": ("elegoo", "centauri")},
     manufacturers=(
     Manufacturer("elegoo", "Elegoo", (PrinterModel("centauri", "Centauri Carbon", bed_mm=(256, 256), toolheads=1),)),
     ),

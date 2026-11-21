@@ -14,6 +14,7 @@ These references describe the implementation in this checkout. For operator-faci
 | [styling.md](styling.md) | Frontend styling and design tokens. |
 | [backend-review.md](backend-review.md), [frontend-review.md](frontend-review.md) | Change-review checklists. |
 | [events.md](../events.md) | Event contracts, durability, subscribers, and operator endpoints. |
+| [printer-interface.md](../printer-interface.md), [printer-validation.md](../printer-validation.md) | Neutral topology/dispatch contract, sequence diagram, and post-build checks on the owned physical printers. |
 | [plugins.md](../plugins.md) | Plugin manifests, capabilities, lifecycle, and installation behavior. |
 | [linear-sync.md](linear-sync.md) | Linear status names, how an agent moves an issue, and when *Human review* applies. |
 | [mcp-server.md](../mcp-server.md) | Optional MCP package setup and tools. |

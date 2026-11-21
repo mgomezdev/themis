@@ -36,6 +36,9 @@
     "fan_box"
   ],
   "printer": [
+    "topology",
+    "topology_revision",
+    "topology_error",
     "id",
     "name",
     "printer_type",

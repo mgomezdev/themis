@@ -129,7 +129,7 @@ class PrintingMixin:
                 return False
         loaded = (printer.loaded_filaments if printer else None) or []
         try:
-            ams_tray_id = _qe._ams_mapping(filament_matching.plan_for(config, loaded), loaded)
+            filament_selection = _qe._filament_selection(filament_matching.plan_for(config, loaded), loaded)
         except ValueError as exc:
             await self._handle_slice_failure(job.id, printer_id, str(exc))
             return False
@@ -148,16 +148,30 @@ class PrintingMixin:
             return False  # no longer claimable
         await session.commit()
         self._spawn(
-            self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
+            self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, filament_selection),
             name=f"upload-{job.id}-{printer_id}",
         )
         await self._broadcast_job(job.id)
         return True
 
     async def _do_upload_and_print(
-        self, job_id: int, printer_id: int, gcode_path: str, plate_number: int, ams_tray_id
+        self, job_id: int, printer_id: int, gcode_path: str, plate_number: int, filament_selection
     ) -> None:
-        """Upload an already-sliced gcode file to the printer and start the print."""
+        """Serialize refresh and dispatch; reject a preparation against an obsolete topology."""
+        from ..printer_topology import lock_for, check_assignment
+        async with lock_for(printer_id):
+            try:
+                async with self._factory() as session:
+                    await check_assignment(session, job_id, printer_id)
+                await self._upload_and_start_current(job_id, printer_id, gcode_path, plate_number, filament_selection)
+            except ValueError as exc:
+                async with self._factory() as session:
+                    current = await session.get(Job, job_id)
+                    still_assigned = current is not None and current.status == 'uploading' and current.assigned_printer_id == printer_id
+                if still_assigned:
+                    await self._handle_slice_failure(job_id, printer_id, str(exc))
+
+    async def _upload_and_start_current(self, job_id, printer_id, gcode_path, plate_number, filament_selection):
         loop = asyncio.get_running_loop()
         client = self._mgr.get_client(printer_id)
         gcode_filename = os.path.basename(gcode_path)
@@ -185,8 +199,14 @@ class PrintingMixin:
         opts = StartPrintOptions(
             plate_id=plate_number,
             gcode_path=gcode_filename,
-            ams_mapping=ams_tray_id if isinstance(ams_tray_id, list) else ([ams_tray_id] if ams_tray_id is not None else None),
+            slot_plan=(filament_selection or {}).get('slot_plan'),
+            loaded_filaments=(filament_selection or {}).get('loaded_filaments'),
         )
+        from ..printer_topology import check_assignment
+        async with self._factory() as session:
+            await check_assignment(session, job_id, printer_id)
+        if self._mgr.get_client(printer_id) is not client or not client.connected:
+            raise ValueError("Printer session changed or disconnected during upload")
         start_error_msg = None
         try:
             start_ok = await loop.run_in_executor(

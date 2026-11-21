@@ -1,21 +1,32 @@
 """Printer identity (BIZ-251/262): which plugin serves a printer and which manufacturer/model it is, validated against the
-plugin manifests. Core names no plugin: the legacy table below is only the mapping for old `printer_type` values."""
+plugin manifests. Core resolves legacy printer-type aliases from plugin declarations."""
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections.abc import Mapping
 from typing import Any
 
 from ..plugins import get_plugin, registered_plugins
 from ..plugins.host import plugin_host
 from ..plugins.manifest import PrinterModel, PluginManifest
 
-# legacy printer_type -> (plugin_id, manufacturer_id, model_id); the same mapping v042 backfilled.
-LEGACY_IDENTITY: dict[str, tuple[str, str, str]] = {
-    "bambu": ("bambu", "bambu", "p1s"),
-    "elegoo_centauri": ("elegoo_centauri", "elegoo", "centauri"),
-    "snapmaker_extended": ("snapmaker", "snapmaker", "u1_extended"),
-    "mock": ("mock", "mock", "mock"),
-}
+class _LegacyIdentities(Mapping):
+    """Compatibility aliases belong to their declaring plugins, including late registrations."""
+    def _entries(self):
+        return {key: (manifest.id, *identity) for manifest in registered_plugins()
+                for key, identity in manifest.legacy_printer_types.items()}
+
+    def __iter__(self):
+        return iter(self._entries())
+
+    def __len__(self):
+        return len(self._entries())
+
+    def __getitem__(self, key):
+        return self._entries()[key]
+
+
+LEGACY_IDENTITY = _LegacyIdentities()
 
 
 class IdentityError(ValueError):

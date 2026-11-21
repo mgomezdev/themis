@@ -52,14 +52,14 @@ async def test_duplicate_ip_and_model_is_409(client, session_factory):
     assert (await _post(client, name="A", **ELEGOO, connection_config={"ip_address": "10.0.0.5"})).status_code == 201
     r = await _post(client, name="B", **ELEGOO, connection_config={"ip_address": " 10.0.0.5 "})
     assert r.status_code == 409
-    assert r.json()["detail"] == "A already uses 10.0.0.5 as Centauri Carbon"
+    assert "A already owns this printer" in r.json()["detail"]
     async with session_factory() as s:
         assert (await s.execute(text("SELECT COUNT(*) FROM printers"))).scalar() == 1
 
 
-async def test_same_ip_other_model_is_allowed(client):
+async def test_same_ip_other_model_cannot_claim_another_plugin(client):
     assert (await _post(client, name="A", **ELEGOO, connection_config={"ip_address": "10.0.0.5"})).status_code == 201
-    assert (await _post(client, name="B", **P1S, connection_config={"ip_address": "10.0.0.5"})).status_code == 201
+    assert (await _post(client, name="B", **P1S, connection_config={"ip_address": "10.0.0.5"})).status_code == 409
 
 
 async def test_default_name_from_model_and_octet(client):

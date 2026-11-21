@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from .._protocols.slot_tools import SlotTools
+
 import logging
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-import httpx  # noqa: F401  (the transport lives in services/moonraker; tests patch `<this module>.httpx.*`)
+import httpx  # noqa: F401  (the transport lives in plugins/_protocols/moonraker; tests patch `<this module>.httpx.*`)
 
 from ...services.filament_tuple import canon_subtype, split_type
 from ...services.abstract_printer_client import PrinterCapabilities
-from ...services.moonraker.client import DEFAULT_PORT, MoonrakerClientBase, MoonrakerState
+from .._protocols.moonraker.client import DEFAULT_PORT, MoonrakerClientBase, MoonrakerState
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,9 @@ def serialize_snapmaker(state, printer_id: int) -> dict:
     }
 
 
-class SnapmakerExtendedClient(MoonrakerClientBase):
+class SnapmakerExtendedClient(SlotTools, MoonrakerClientBase):
     """Moonraker/Klipper client for the Snapmaker U1 Extended firmware: the shared Moonraker transport
-    (`services/moonraker/client.py`) plus what is the U1's own — four tools, `print_task_config` filament setup, its camera
+    (`plugins/_protocols/moonraker/client.py`) plus what is the U1's own — four tools, `print_task_config` filament setup, its camera
     endpoint, tool-mapping at slice time."""
     slice_tool_mapping = True    # filament->tool routing is baked into the 3MF at slice time (the slicing provider rewrites it)
     printer_type: ClassVar[str] = "snapmaker_extended"
@@ -116,6 +118,13 @@ class SnapmakerExtendedClient(MoonrakerClientBase):
 
     def serialize_state(self, printer_id: int) -> dict:
         return serialize_snapmaker(self.state, printer_id)
+
+    def _topology_positions(self, status, configuration, names):
+        cfg = status.get('print_task_config')
+        if cfg is None:
+            raise ValueError('Printer did not report its filament setup')
+        trays = _trays_from_task_config(cfg)
+        return [{'id': str(i), 'filament': None if tray.get('empty') else tray, 'reported': True} for i, tray in enumerate(trays)]
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(

@@ -11,6 +11,8 @@ FAKE_ID = "fake_vendor"
 
 
 class FakeClient(AbstractPrinterClient):
+    print_artifact_kind = "gcode"
+    raw_gcode_supported = True
     printer_type = FAKE_ID
     instances: list["FakeClient"] = []
     discover_target = "192.168.7.20"
@@ -19,6 +21,9 @@ class FakeClient(AbstractPrinterClient):
         self.ip_address, self.use_tls, self.on_state = ip_address, use_tls, on_state
         self._connected = False
         FakeClient.instances.append(self)
+
+    def refresh_topology(self, configuration):
+        return {'tools': [{'id': 'T0', 'nozzle_mm': .4}], 'positions': [{'id': 'S0'}], 'swapping': False}
 
     @classmethod
     def connection_fields(cls):

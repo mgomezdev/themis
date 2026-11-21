@@ -4,7 +4,7 @@ from __future__ import annotations
 import urllib.parse
 from datetime import datetime, timezone
 
-from ..abstract_printer_client import PrinterFile
+from ....services.abstract_printer_client import PrinterFile
 
 
 def gcodes_url_path(file_id: str) -> str:

@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -61,10 +61,12 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('NewJobScreen — cached sliced versions', () => {
   it('asks nothing when the model has no cached versions', async () => {
-    const api = open([]);
+    let finishLookup!: (versions: unknown[]) => void;
+    const lookup = new Promise<unknown[]>(resolve => { finishLookup = resolve; });
+    const api = open([], { 'GET /api/v1/files/42/sliced-versions?plate=1': lookup });
     await upload();
-    await screen.findByRole('button', { name: '+ Printer' });
-    expect(api.to('GET', '/api/v1/files/42/sliced-versions?plate=1')).toHaveLength(1);
+    await waitFor(() => expect(api.to('GET', '/api/v1/files/42/sliced-versions?plate=1')).toHaveLength(1));
+    await act(async () => { finishLookup([]); });
     expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
   });
 

@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ...services import printer_ownership
 from ...auth import require_scope
 from ...database import get_session
 from ...models import BrandConversionPreference, CostConfig, PrintConversionDefault, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
@@ -366,6 +368,7 @@ async def fleet_backup(
                 "machine_profile_override": p.machine_profile_override,
                 "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
                 "nozzle_variant": p.nozzle_variant,
+                "topology_config": p.topology_config,
                 "loaded_filaments": p.loaded_filaments or [],
                 "build_plate_type": p.build_plate_type,
                 "enabled": p.enabled,
@@ -553,6 +556,7 @@ async def fleet_import(
             preferred_slicer_plugin_id=preferred_slicer,
             nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()
             if slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")) else None,
+            topology_config=pr.get("topology_config") or {},
             loaded_filaments=inventory_refs.normalize_slots(loaded),
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),
@@ -560,8 +564,21 @@ async def fleet_import(
             queue_paused_reason=pr.get("queue_paused_reason") if not pr.get("queue_on", True) else None,
             configured=False,                   # BIZ-369: re-tested here, never trusted from the backup
         )
-        session.add(printer)
-        await session.flush()
+        other = await printer_ownership.conflict(session, printer.connection_config)
+        if other is not None:
+            warnings.append(f"'{pname}': skipped — {printer_ownership.reason(other)}")
+            skipped += 1
+            continue
+        try:
+            async with session.begin_nested():
+                session.add(printer)
+                await session.flush()
+        except IntegrityError as exc:
+            if printer_ownership.ERROR not in str(exc.orig):
+                raise
+            warnings.append(f"'{pname}': skipped — printer already owned by another binding")
+            skipped += 1
+            continue
         printer_manager.set_printer_plugin(printer.id, printer.plugin_id)
         printer_manager.set_configured(printer.id, False)
         new_ids.append(printer.id)

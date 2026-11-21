@@ -8,7 +8,6 @@ from typing import ClassVar
 
 @dataclass
 class PrinterCapabilities:
-    ams: bool = False
     file_upload: bool = False
     bed_levelling: bool = False
     flow_calibration: bool = False
@@ -42,13 +41,8 @@ class PrinterCapabilities:
 @dataclass
 class StartPrintOptions:
     plate_id: int = 1
-    ams_mapping: list[int] | None = None
-    bed_levelling: bool = True
-    flow_cali: bool = False
-    vibration_cali: bool = True
-    layer_inspect: bool = False
-    timelapse: bool = False
-    use_ams: bool = True
+    slot_plan: list[dict] | None = None
+    loaded_filaments: list[dict] | None = None
     gcode_path: str | None = None
 
 
@@ -117,6 +111,25 @@ class AbstractPrinterClient(ABC):
     # The rewrite itself is the slicing provider's job (SlicingProvider.apply_tool_mapping); the vendor only declares the need.
     slice_tool_mapping: ClassVar[bool] = False
 
+    @classmethod
+    def slice_tool_for_position(cls, pinned_position, plan, loaded, multicolor=False):
+        """Optional plugin translation from neutral selected positions to a slicer tool."""
+        return None
+
+    def subscribe_topology(self, callback) -> None:
+        self._topology_callback = callback
+
+    def notify_topology_changed(self) -> None:
+        callback = getattr(self, '_topology_callback', None)
+        loop = getattr(self, '_loop', None)
+        if callback is not None and loop is not None:
+            import asyncio
+            asyncio.run_coroutine_threadsafe(callback(), loop)
+
+    def refresh_topology(self, configuration: dict):
+        """Return the plugin's complete current topology without reconnecting. No core defaults."""
+        raise NotImplementedError("This printer plugin does not implement topology refresh")
+
     # --- Connection lifecycle (must implement) ---
 
     @property
@@ -152,31 +165,16 @@ class AbstractPrinterClient(ABC):
     def request_status_update(self) -> None: ...
 
     def home(self) -> bool:
-        return self.send_gcode("G28")
+        return False
 
     def jog(self, axis: str, distance_mm: float) -> bool:
-        """Relative move of one axis (X/Y/Z). Default: G-code; vendors with a native command override."""
-        axis = axis.upper()
-        if not self.send_gcode("G91"):
-            return False
-        try:
-            return bool(self.send_gcode(f"G1 {axis}{distance_mm}"))
-        finally:
-            self.send_gcode("G90")      # never leave the printer in relative mode
+        return False
 
     def home_axes(self, axes: str) -> bool:
-        """Home specific axes (e.g. 'X', 'XY'). Default: G28 with the listed axes."""
-        return self.send_gcode("G28 " + " ".join(axes.upper()))
+        return False
 
     def jog_z(self, distance_mm: float, force: bool = False) -> bool:
-        if force:
-            self.send_gcode("M211 S0")
-        self.send_gcode("G91")
-        self.send_gcode(f"G1 Z{distance_mm}")
-        self.send_gcode("G90")
-        if force:
-            self.send_gcode("M211 S1")
-        return True
+        return False
 
     def set_chamber_light(self, on: bool) -> bool:
         return False
@@ -188,22 +186,22 @@ class AbstractPrinterClient(ABC):
         return False
 
     def set_nozzle_temp(self, celsius: int) -> bool:
-        return self.send_gcode(f"M104 S{int(celsius)}") if self.gcode_supported else False
+        return False
 
     def set_chamber_temp(self, celsius: int) -> bool:
         return False
 
     @property
     def gcode_supported(self) -> bool:
-        return True
+        return False
 
     # --- Print artifact requirements (overridable per printer plugin) ---
 
-    print_artifact_kind = "gcode"    # preferred output when a model needs conversion
+    print_artifact_kind = None    # preferred output when a model needs conversion
 
     # Whether the printer can be handed a plain .gcode file (pre-sliced job, BIZ-188). Vendors that only ingest a
     # sliced archive (Bambu: .gcode.3mf) set this False until a raw-gcode start has been verified on hardware.
-    raw_gcode_supported: bool = True
+    raw_gcode_supported: bool = False
     # Whether the printer also accepts pre-generated .gcode.3mf files.
     sliced_archive_supported: bool = False
 

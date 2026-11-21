@@ -16,6 +16,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Printer
 from ...services.library_scanner import is_presliced_name
+from ...services.printer_topology import check_device, lock_for
 
 from . import printers as _printers
 from .printers import (  # noqa: I001
@@ -27,8 +28,14 @@ from .printers import (  # noqa: I001
 from .printer_controls import _CONSOLE_RESPONSES, _direct_start_locks, _ok_or_502, _require_capability
 
 
-async def _start_stored_file(client, file_id: str, failure: str) -> None:
+async def _start_stored_file(client, file_id: str, failure: str, *, session, printer_id: int) -> None:
     from ...services.abstract_printer_client import StartPrintOptions
+    try:
+        await check_device(session, printer_id)
+        if _printers.printer_manager.get_client(printer_id) is not client or not client.connected:
+            raise ValueError("Printer session changed or disconnected during upload")
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(409, str(exc)) from exc
     opts = StartPrintOptions(gcode_path=os.path.basename(file_id))     # same options the queue engine passes
     if not await asyncio.to_thread(client.start_print, file_id, opts):
         raise HTTPException(502, failure)
@@ -40,7 +47,11 @@ async def _direct_start(session: AsyncSession, client, printer_id: int, steps) -
     and released again if nothing ended up printing."""
     # One direct start per printer at a time: the checks below await, so without this two concurrent requests
     # could both pass them before either has claimed the printer.
-    async with _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
+    async with lock_for(printer_id), _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
+        try:
+            await check_device(session, printer_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         if not client.is_idle:
             raise HTTPException(409, "Printer is not idle")
         if _printers.printer_manager.is_awaiting_plate_clear(printer_id):
@@ -108,7 +119,7 @@ async def upload_to_printer(
     async def steps() -> None:
         if not await asyncio.to_thread(client.upload_file, data, name):
             raise HTTPException(502, "Printer rejected the upload")
-        await _start_stored_file(client, name, "Uploaded, but the printer would not start the print")
+        await _start_stored_file(client, name, "Uploaded, but the printer would not start the print", session=session, printer_id=printer_id)
 
     await _direct_start(session, client, printer_id, steps)
     return {"ok": True, "filename": name, "started": True}
@@ -167,7 +178,7 @@ async def print_stored_file(printer_id: int, body: FileRef, session: AsyncSessio
         raise HTTPException(422, "Not a printable file")
 
     async def steps() -> None:
-        await _start_stored_file(client, body.file_id, "The printer would not start the print")
+        await _start_stored_file(client, body.file_id, "The printer would not start the print", session=session, printer_id=printer_id)
 
     await _direct_start(session, client, printer_id, steps)
     return {"ok": True, "file_id": body.file_id, "started": True}

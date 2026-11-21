@@ -1,5 +1,6 @@
 """Queue claim rules across several jobs/printers: strict queue_position order, head-of-line blocking,
 one claim per job, and what happens when slicing fails. Real QueueEngine + DB; fake printer manager/slicer."""
+from tests.fake_topology import declared_topology
 import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -64,7 +65,7 @@ async def seed(factory, printers: dict[int, dict], jobs: list[dict]) -> list[int
     "printers": [ids], "type": "any", "color": "any", "failed": {printer_id: "error"}}. Returns job ids."""
     async with factory() as s:
         for pid, spec in printers.items():
-            s.add(Printer(configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
+            s.add(Printer(topology=declared_topology(spec.get("loaded", [])), configured=True, id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
                           machine_profile_override=spec.get("machine", f"Machine P{pid}"),
                           loaded_filaments=spec.get("loaded", [])))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")

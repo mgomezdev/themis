@@ -2,7 +2,7 @@
 `print_stats.state == "error"` + `print_stats.message` -> normalised alarms. Shared by every Moonraker-protocol plugin."""
 from __future__ import annotations
 
-from ..abstract_printer_client import Alarm
+from ....services.abstract_printer_client import Alarm
 
 
 def klipper_alarms(webhooks: dict | None, print_stats: dict | None) -> list[Alarm]:

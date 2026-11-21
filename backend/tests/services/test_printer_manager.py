@@ -60,6 +60,7 @@ def test_printer_ready_requires_idle_and_no_plate():
     mgr = PrinterManager()
     client = _make_mock_client(is_idle=True)
     mgr._clients[1] = client
+    mgr._topology_validated.add(1)
     assert mgr.is_printer_ready(1) is True
     mgr._awaiting_plate_clear.add(1)
     assert mgr.is_printer_ready(1) is False

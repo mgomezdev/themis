@@ -8,6 +8,7 @@ Themis is a self-hosted web app for operating a fleet of 3D printers. It manages
 - [Operator guide](docs/user-guide.md): queue, printers, files, projects, customers, inventory, alarms, and analytics.
 - [Installation and administration](docs/operations.md): Docker deployment, configuration, authentication, backups, and recovery.
 - [Integrations guide](docs/integrations.md): REST API, OpenAPI, API keys, webhooks, plugins, and the MCP server.
+- [Local printer validation](docs/printer-validation.md): verify topology refresh and printing after a `develop` build.
 - [Developer guide](CONTRIBUTING.md): local setup, code layout, and change workflow.
 - [Architecture references](docs/agent/README.md): current backend, frontend, data model, provider, and printer notes.
 

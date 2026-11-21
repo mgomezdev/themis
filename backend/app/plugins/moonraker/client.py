@@ -1,16 +1,26 @@
-"""Generic Moonraker/Klipper printer client (BIZ-148): the shared transport (`services/moonraker/client.py`) with the user's
+"""Generic Moonraker/Klipper printer client (BIZ-148): the shared transport (`plugins/_protocols/moonraker/client.py`) with the user's
 declared toolhead count. Model-specific quirks belong in a model declaration or a focused subclass, never in core."""
 from __future__ import annotations
+
+from .._protocols.slot_tools import SlotTools
 
 from typing import ClassVar
 
 from ...services.abstract_printer_client import ConnectionField, DiscoveredPrinter
-from ...services.moonraker.client import MoonrakerClientBase
+from .._protocols.moonraker.client import MoonrakerClientBase
 
 
-class MoonrakerClient(MoonrakerClientBase):
+class MoonrakerClient(SlotTools, MoonrakerClientBase):
     printer_type: ClassVar[str] = "moonraker"
     label = "Moonraker"
+
+    def _topology_positions(self, status, configuration, names):
+        positions = super()._topology_positions(status, configuration, names)
+        if len(positions) > 1:
+            settings = {key.casefold() for key in status['configfile']['settings']}
+            if any(f'gcode_macro t{i}' not in settings for i in range(len(positions))):
+                raise ValueError('Multiple filament positions require configured T0..Tn tool-selection macros')
+        return positions
 
     @classmethod
     async def discover_host(cls, net, ip: str) -> DiscoveredPrinter | None:

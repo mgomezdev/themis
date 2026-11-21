@@ -26,6 +26,16 @@ Filament inventory is exposed through the `inventory.filament` capability. Provi
 
 Slicing uses the configured Laminus provider. The sidecar must be reachable and have the required machine, process, and filament profiles. Themis stores provider references as opaque values; integrations should use the IDs returned by the API rather than constructing them.
 
+## Live printer topology
+
+Each physical printer has one plugin binding. Bambu, Elegoo Centauri Carbon and Snapmaker U1 use their manufacturer plugins; the generic Klipper plugin is manufacturer-neutral. A second binding for the same configured host or serial is rejected, including one using a different port or plugin.
+
+`GET /api/v1/printers/{id}` and fleet responses include `topology`, `topology_revision`, and `topology_error`. Refresh the existing session with `POST /api/v1/printers/{id}/topology/refresh` (`printers:control`), sending `{}` or `{"configuration":{"nozzle_sizes_mm":[0.4,0.6]}}`. Supply one size per tool when the printer cannot report it; configuration remains saved for later rescans. The response is `{topology, revision}`. Fleet backups preserve saved topology configuration; restored printers acquire a fresh snapshot.
+
+Topology counts configured positions, including empty ones. Contents and per-tool sizes can change without deleting/recreating or reconnecting the printer. Duplicate filaments remain separate positions. A failed refresh retains the last snapshot and blocks starts; an unchanged refresh retains its revision. Queued and direct starts use the same topology guard. Saved slices also require matching recorded nozzle sizes; older saved slices without these facts must be resliced. The `printer_topology` live event signals clients to refetch authoritative state.
+
+See the [printer contract and sequence diagram](printer-interface.md#runtime-use-and-dispatch-safety) and [local printer validation](printer-validation.md).
+
 ## MCP server
 
 `mcp-server/` is a separate Python package exposing selected Themis operations over MCP stdio. Install with `pip install -e mcp-server`, configure `THEMIS_URL` and `THEMIS_API_KEY`, and launch `themis-mcp` from the MCP client. `THEMIS_MCP_READ_ONLY=1` removes control tools. The server probes the key's scopes and offers only tools the key can use; Themis still enforces the scopes itself.
