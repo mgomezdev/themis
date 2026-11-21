@@ -15,6 +15,7 @@ from app.services.library_materialization import (
     materialize,
 )
 from app.services.library_store import get_library_store
+from app.services.library_catalog import CatalogSyncError
 
 
 class Source:
@@ -236,3 +237,171 @@ async def test_external_local_edit_is_not_reused_as_a_fresh_source_download(
         new = await session.get(UploadedFile, second["file_id"])
     with store.open(new.relative_path) as content:
         assert content.read() == catalog.source.data
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_file_id": "different"},
+        {"source_url": "https://source.test/different"},
+        {"revision": 42},
+        {"revision": "v" * 1025},
+        {"name": "a" * 181 + ".stl"},
+        {"size_bytes": 512 * 1024 * 1024 + 1},
+    ],
+)
+async def test_invalid_descriptor_never_publishes_or_updates_cache(
+    session_factory, catalog, changes
+):
+    catalog.source.descriptor = replace(catalog.source.descriptor, **changes)
+    with pytest.raises((MaterializationError, CatalogSyncError)):
+        await materialize(session_factory, catalog, "entry")
+    assert not list(get_library_store().list())
+    async with session_factory() as session:
+        assert (await session.get(LibraryCatalogEntry, "entry")).cached_file_id is None
+        assert not list((await session.execute(select(UploadedFile))).scalars())
+
+
+@pytest.mark.parametrize(
+    "stream_changes",
+    [
+        {"invalid_stream": True},
+        {"revision": 42},
+        {"revision": "v" * 1025},
+        {"revision": "changed"},
+        {"size_bytes": True},
+        {"size_bytes": -1},
+        {"size_bytes": 512 * 1024 * 1024 + 1},
+        {"invalid_chunk": True},
+    ],
+)
+async def test_invalid_download_closes_source_without_partial_artifacts(
+    session_factory, catalog, stream_changes
+):
+    @asynccontextmanager
+    async def bad_download(*args, **kwargs):
+        async def chunks():
+            yield (
+                "invalid"
+                if stream_changes.get("invalid_chunk")
+                else catalog.source.data
+            )
+
+        try:
+            if stream_changes.get("invalid_stream"):
+                yield None
+            else:
+                yield SourceDownload(
+                    chunks(),
+                    stream_changes.get("revision", "v1"),
+                    stream_changes.get("size_bytes"),
+                )
+        finally:
+            catalog.source.closed = True
+
+    catalog.source.download = bad_download
+    with pytest.raises(MaterializationError):
+        await materialize(session_factory, catalog, "entry")
+    assert catalog.source.closed and not list(get_library_store().list())
+    assert not list(config.get_library_dir().rglob("*.part"))
+    async with session_factory() as session:
+        assert (await session.get(LibraryCatalogEntry, "entry")).cached_file_id is None
+
+
+@pytest.mark.parametrize("stage", ["enter", "write"])
+async def test_cancellation_reaps_disk_worker_before_closing_writer(
+    session_factory, catalog, monkeypatch, stage
+):
+    from contextlib import contextmanager
+    from threading import Event
+    from app.services import library_materialization as module
+
+    store = get_library_store()
+    original = store.writer
+    entered, release = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+
+    def block():
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(10), "test did not release disk worker"
+
+    @contextmanager
+    def writer(*args, **kwargs):
+        with original(*args, **kwargs) as target:
+            if stage == "enter":
+                block()
+
+            class DelayedWriter:
+                @property
+                def size(self):
+                    return target.size
+
+                def write(self, chunk):
+                    block()
+                    target.write(chunk)
+
+            yield DelayedWriter() if stage == "write" else target
+
+    monkeypatch.setattr(store, "writer", writer)
+    monkeypatch.setattr(module, "get_library_store", lambda: store)
+    task = asyncio.create_task(materialize(session_factory, catalog, "entry"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+    finally:
+        task.cancel()
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert catalog.source.closed and not list(store.list())
+    assert not list(config.get_library_dir().rglob("*.part"))
+    async with session_factory() as session:
+        assert (await session.get(LibraryCatalogEntry, "entry")).cached_file_id is None
+
+
+async def test_materialization_heartbeats_while_stream_waits(
+    session_factory, catalog, monkeypatch
+):
+    from app.services import library_catalog, library_materialization
+
+    monkeypatch.setattr(library_catalog, "LEASE_SECONDS", 3)
+    original = library_materialization._renew
+    renewed = asyncio.Event()
+    catalog.source.entered, catalog.source.hold = asyncio.Event(), renewed
+
+    async def renew(session, provider, owner):
+        await original(session, provider, owner)
+        if catalog.source.entered.is_set():
+            renewed.set()
+
+    monkeypatch.setattr(library_materialization, "_renew", renew)
+    result = await asyncio.wait_for(materialize(session_factory, catalog, "entry"), 10)
+    assert result["fresh"] and renewed.is_set() and catalog.source.closed
+
+
+async def test_post_download_inspection_failure_preserves_previous_revision(
+    session_factory, catalog, monkeypatch
+):
+    from app.services.library_materialization import LibraryScanner
+
+    first = await materialize(session_factory, catalog, "entry")
+    catalog.source.descriptor = replace(catalog.source.descriptor, revision="v2")
+    catalog.source.data = b"changed bytes"
+
+    def fail_inspection(*args):
+        raise MaterializationError("Model inspection failed")
+
+    monkeypatch.setattr(LibraryScanner, "parse_plates", fail_inspection)
+    result = await materialize(session_factory, catalog, "entry")
+    assert result["file_id"] == first["file_id"] and not result["fresh"]
+    assert "inspection failed" in result["warning"]
+    assert len(list(get_library_store().list())) == 1
+    async with session_factory() as session:
+        assert len(list((await session.execute(select(UploadedFile))).scalars())) == 1
+        assert (
+            len(list((await session.execute(select(LibrarySourceRevision))).scalars()))
+            == 1
+        )
+        assert (
+            await session.get(LibraryCatalogEntry, "entry")
+        ).cached_file_id == first["file_id"]

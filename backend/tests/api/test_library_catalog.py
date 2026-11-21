@@ -208,3 +208,48 @@ async def test_local_files_have_no_invented_source_and_missing_file_is_404(
         "origin": None
     }
     assert (await client.get("/api/v1/library/files/99999/origin")).status_code == 404
+
+
+async def test_busy_operations_are_conflicts_and_invalid_streams_are_upstream_errors(
+    client, session_factory
+):
+    from app.services.library_catalog import _lease
+
+    class InvalidDownload(Source):
+        async def list_catalog(self, cursor=None, changed_since=None):
+            return CatalogPage((await self.describe("one"),), full_scan=True)
+
+        async def describe(self, source_file_id):
+            return SourceFile("one", "part.stl", "https://source.test/one")
+
+    plugins.register_plugin(
+        PluginManifest(
+            id="busy_source",
+            name="Busy source",
+            version="1.0.0",
+            host_api=HOST_API,
+            settings_model=DummySettings,
+            factory=InvalidDownload,
+            provides={CAPABILITY: Provide()},
+        )
+    )
+    await client.put("/api/v1/plugins/busy_source", json={"enabled": True})
+    assert (
+        await client.post("/api/v1/library/sources/busy_source/sync")
+    ).status_code == 200
+    entry = (await client.get("/api/v1/library/entries")).json()["items"][0]
+    async with _lease(session_factory, "busy_source", "another-process"):
+        assert (
+            await client.post("/api/v1/library/sources/busy_source/sync")
+        ).status_code == 409
+        assert (
+            await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
+        ).status_code == 409
+    failed = await client.post(f"/api/v1/library/entries/{entry['id']}/materialize")
+    assert (
+        failed.status_code == 502
+        and "invalid download stream" in failed.json()["detail"]
+    )
+    assert (await client.get(f"/api/v1/library/entries/{entry['id']}")).json()[
+        "cached_file_id"
+    ] is None

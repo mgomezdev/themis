@@ -1,6 +1,7 @@
 """Versioned v0 wire shapes against a local transport, never a live library."""
 
 import asyncio
+import json
 from urllib.parse import parse_qs
 
 import httpx
@@ -222,4 +223,359 @@ async def test_only_missing_file_metadata_is_a_confirmed_absence():
         lambda r: httpx.Response(404) if r.url.path == "/creators/c" else None
     )
     with pytest.raises(ManyfoldError):
+        await provider.describe(BASE + FILE)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://manyfold.test",
+        "https://user:fixture-secret@manyfold.test",
+        "https://manyfold.test?token=fixture-secret",
+        "https://manyfold.test/#private",
+        "https://manyfold.test:bad",
+        "https://[broken",
+    ],
+)
+def test_invalid_configuration_is_rejected_without_echoing_credentials(url):
+    with pytest.raises(ManyfoldError) as failure:
+        ManyfoldSource(
+            ManyfoldSettings(
+                url=url, client_id="client", client_secret="fixture-secret"
+            )
+        )
+    assert "fixture-secret" not in str(failure.value)
+
+
+def test_unconfigured_plugin_has_an_actionable_error():
+    with pytest.raises(ManyfoldError, match="client ID"):
+        ManyfoldSource(ManyfoldSettings())
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        None,
+        [],
+        {},
+        {"access_token": "", "expires_in": 10},
+        {"access_token": "private-token", "expires_in": True},
+        {"access_token": "private-token", "expires_in": -1},
+        {"access_token": "private-token", "expires_in": float("inf")},
+        {"access_token": "private-token", "expires_in": "7200"},
+    ],
+)
+async def test_malformed_oauth_success_is_rejected_without_echoing_token(token):
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, content=json.dumps(token).encode())
+            if r.url.path == "/oauth/token"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError) as failure:
+        await provider.test_connection()
+    assert "private-token" not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        ("/models", {"member": [None], "view": {}}),
+        ("/models/m", {**MODEL, "hasPart": [None]}),
+        ("/models/m", {**MODEL, "hasPart": None}),
+        ("/models/m", {**MODEL, "isPartOf": [None]}),
+        ("/models/m", {**MODEL, "isPartOf": {"name": "bad"}}),
+        ("/models/m", {**MODEL, "isPartOf": [{"name": {}}]}),
+        (FILE, {**DETAIL, "creator": "private-wire-value"}),
+        (FILE, {**DETAIL, "spdx:license": "private-wire-value"}),
+        (FILE, {**DETAIL, "spdx:license": {"licenseId": {"private-wire-value": True}}}),
+        (FILE, {**DETAIL, "spdx:license": {"@id": []}}),
+        (FILE, {**DETAIL, "filename": {"private-wire-value": True}}),
+        (FILE, {**DETAIL, "encodingFormat": []}),
+        (FILE, {**DETAIL, "contentSize": True}),
+        (FILE, {**DETAIL, "contentSize": -1}),
+        (FILE, {**DETAIL, "filename": "", "name": ""}),
+        (FILE, {**DETAIL, "@id": "/models/m/model_files/other"}),
+        ("/creators/c", {"name": {}, "links": []}),
+        ("/creators/c", {"name": "Artist", "links": {"private-wire-value": True}}),
+    ],
+)
+async def test_malformed_nested_catalog_data_fails_closed_with_a_safe_error(path, body):
+    provider, _ = source(
+        lambda r: httpx.Response(200, json=body) if r.url.path == path else None
+    )
+    with pytest.raises(ManyfoldError) as failure:
+        await provider.list_catalog()
+    assert "private-wire-value" not in str(failure.value)
+
+
+async def test_bad_parent_reference_is_not_treated_as_an_absent_file():
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, json={**DETAIL, "isPartOf": []})
+            if r.url.path == FILE
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="parent model"):
+        await provider.describe(BASE + FILE)
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        "",
+        "https://manyfold.test:bad/file",
+        "https://[broken",
+        "https://manyfold.test/file?token=private-wire-value",
+        "https://user:private-wire-value@manyfold.test/file",
+    ],
+)
+async def test_invalid_resource_urls_are_rejected_before_an_authenticated_request(
+    resource,
+):
+    provider, requests = source()
+    with pytest.raises(ManyfoldError) as failure:
+        await provider.describe(resource)
+    assert requests == [] and "private-wire-value" not in str(failure.value)
+
+
+@pytest.mark.parametrize("path", ["/oauth/token", "/models", "/models/m/raw/part.stl"])
+async def test_transport_errors_are_safe_for_token_metadata_and_download(path):
+    def fail(request):
+        if request.url.path == path:
+            raise httpx.ConnectError("fixture-secret private-token", request=request)
+
+    provider, _ = source(fail)
+    with pytest.raises(ManyfoldError) as failure:
+        if "/raw/" in path:
+            async with provider.download(BASE + FILE) as stream:
+                async for _ in stream.chunks:
+                    pass
+        else:
+            await provider.test_connection()
+    assert "fixture-secret" not in str(failure.value) and "private-token" not in str(
+        failure.value
+    )
+
+
+@pytest.mark.parametrize("path", ["/models", "/models/m/raw/part.stl"])
+async def test_repeated_401_stops_after_one_token_refresh(path):
+    provider, requests = source(
+        lambda r: httpx.Response(401) if r.url.path == path else None
+    )
+    with pytest.raises(ManyfoldError, match="credentials|token"):
+        if "/raw/" in path:
+            async with provider.download(BASE + FILE):
+                pass
+        else:
+            await provider.test_connection()
+    assert sum(r.url.path == "/oauth/token" for r in requests) == 2
+    assert sum(r.url.path == path for r in requests) == 2
+
+
+async def test_expired_token_is_refreshed_using_the_response_expiry(monkeypatch):
+    from app.plugins.manyfold import provider as module
+
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    provider, requests = source()
+    await provider.test_connection()
+    clock[0] = 7300.0
+    await provider.test_connection()
+    assert sum(r.url.path == "/oauth/token" for r in requests) == 2
+
+
+@pytest.mark.parametrize("body", [b"not JSON private-wire-value", b"[]"])
+async def test_invalid_api_json_never_echoes_response_body(body):
+    provider, _ = source(
+        lambda r: httpx.Response(200, content=body) if r.url.path == "/models" else None
+    )
+    with pytest.raises(ManyfoldError) as failure:
+        await provider.test_connection()
+    assert "private-wire-value" not in str(failure.value)
+
+
+async def test_metadata_limit_applies_to_decoded_response_bytes(monkeypatch):
+    import gzip
+    from app.plugins.manyfold import provider as module
+
+    monkeypatch.setattr(module, "MAX_JSON_BYTES", 128)
+    body = gzip.compress(b'{"private":"' + b"x" * 1000 + b'"}')
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, content=body, headers={"Content-Encoding": "gzip"})
+            if r.url.path == "/models"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="metadata limit"):
+        await provider.list_catalog()
+
+
+async def test_compressed_download_uses_decoded_size_not_wire_length():
+    import gzip
+
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(
+                200,
+                content=gzip.compress(b"model"),
+                headers={"Content-Encoding": "gzip"},
+            )
+            if "/raw/" in r.url.path
+            else None
+        ),
+        max_download_bytes=5,
+    )
+    async with provider.download(BASE + FILE) as stream:
+        assert stream.size_bytes is None
+        assert b"".join([chunk async for chunk in stream.chunks]) == b"model"
+
+
+async def test_truncated_download_closes_its_stream():
+    class Truncated(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b"mod"
+
+        async def aclose(self):
+            self.closed = True
+
+    data = Truncated()
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, stream=data, headers={"Content-Length": "5"})
+            if "/raw/" in r.url.path
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="declared size"):
+        async with provider.download(BASE + FILE) as stream:
+            async for _ in stream.chunks:
+                pass
+    assert data.closed
+
+
+async def test_extreme_token_expiry_does_not_escape_as_an_overflow():
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(
+                200, json={"access_token": "private-token", "expires_in": 10**400}
+            )
+            if r.url.path == "/oauth/token"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError) as failure:
+        await provider.test_connection()
+    assert "private-token" not in str(failure.value)
+
+
+async def test_malformed_creator_link_does_not_echo_its_private_url():
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(
+                200,
+                json={
+                    "name": "Artist",
+                    "links": [{"url": "https://[private-wire-value]/"}],
+                },
+            )
+            if r.url.path == "/creators/c"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="creator link") as failure:
+        await provider.describe(BASE + FILE)
+    assert "private-wire-value" not in str(failure.value)
+
+
+async def test_file_attribution_wins_without_using_invalid_parent_attribution():
+    def handler(request):
+        if request.url.path == FILE:
+            return httpx.Response(
+                200,
+                json={
+                    **DETAIL,
+                    "creator": {"@id": "/creators/override"},
+                    "spdx:license": {"licenseId": "CC0-1.0"},
+                },
+            )
+        if request.url.path == "/models/m":
+            return httpx.Response(
+                200,
+                json={
+                    **MODEL,
+                    "creator": "unused legacy value",
+                    "spdx:license": "unused legacy value",
+                },
+            )
+        if request.url.path == "/creators/override":
+            return httpx.Response(200, json={"name": "File artist", "links": None})
+
+    provider, _ = source(handler)
+    file = await provider.describe(BASE + FILE)
+    assert file.creator.name == "File artist" and file.creator.links == ()
+    assert file.license_code == "CC0-1.0"
+
+
+async def test_missing_attribution_remains_unknown_instead_of_being_invented():
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, json={**MODEL, "creator": None, "spdx:license": None})
+            if r.url.path == "/models/m"
+            else None
+        )
+    )
+    file = await provider.describe(BASE + FILE)
+    assert file.creator is None and file.license_code is None
+
+
+@pytest.mark.parametrize("status", [302, 403, 412])
+async def test_download_status_failure_never_follows_redirects_or_echoes_body(status):
+    provider, requests = source(
+        lambda r: (
+            httpx.Response(
+                status,
+                text="private-wire-value",
+                headers={"Location": "https://other.test/private"},
+            )
+            if "/raw/" in r.url.path
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError) as failure:
+        async with provider.download(BASE + FILE):
+            pass
+    assert "private-wire-value" not in str(failure.value)
+    assert all(request.url.host == "manyfold.test" for request in requests)
+    assert sum("/raw/" in request.url.path for request in requests) == 1
+
+
+@pytest.mark.parametrize("value", [False, "", {}])
+async def test_falsy_invalid_collection_containers_are_not_treated_as_empty(value):
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, json={**MODEL, "isPartOf": value})
+            if r.url.path == "/models/m"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="collection"):
+        await provider.list_catalog()
+
+
+@pytest.mark.parametrize("value", [False, "", {}])
+async def test_falsy_invalid_creator_link_containers_are_not_treated_as_empty(value):
+    provider, _ = source(
+        lambda r: (
+            httpx.Response(200, json={"name": "Artist", "links": value})
+            if r.url.path == "/creators/c"
+            else None
+        )
+    )
+    with pytest.raises(ManyfoldError, match="creator links"):
         await provider.describe(BASE + FILE)

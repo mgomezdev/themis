@@ -7,7 +7,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(typeof body.detail === 'string' ? body.detail : 'Library source request failed');
+    throw new Error(body && typeof body.detail === 'string' ? body.detail : 'Library source request failed');
   }
   return response.json();
 }

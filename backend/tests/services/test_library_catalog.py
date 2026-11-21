@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy import select
 
 from app.models import LibraryCatalogEntry, LibraryCatalogSyncLease
-from app.plugins.capabilities.library_source import CatalogPage, SourceFile
+from app.plugins.capabilities.library_source import (
+    CatalogPage,
+    SourceCreator,
+    SourceFile,
+)
 from app.services.library_catalog import CatalogSyncError, _lease, _renew, sync_catalog
 
 
@@ -273,3 +277,73 @@ async def test_a_slow_page_renews_its_lease_without_a_network_transaction(
         sync_catalog(session_factory, SlowHost(), "source"), timeout=5
     )
     assert result["full_scan"] and heartbeat.is_set()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"license_code": {"bad": "private-wire-value"}},
+        {"media_type": []},
+        {"creator": {"name": "not a SourceCreator"}},
+        {"creator": SourceCreator("creator", {"bad": True})},
+        {"creator": SourceCreator("", "Artist")},
+        {"creator": SourceCreator("creator", "Artist", ({"bad": True},))},
+        {"collections": ({"bad": True},)},
+        {"revision": 42},
+    ],
+)
+async def test_invalid_optional_metadata_preserves_existing_catalog(
+    session_factory, changes
+):
+    from dataclasses import replace
+
+    await sync_catalog(
+        session_factory,
+        Host({None: CatalogPage((entry("retained"),), full_scan=True)}),
+        "source",
+    )
+    bad = replace(entry("bad"), **changes)
+    with pytest.raises(CatalogSyncError) as failure:
+        await sync_catalog(
+            session_factory, Host({None: CatalogPage((bad,), full_scan=True)}), "source"
+        )
+    assert "private-wire-value" not in str(failure.value)
+    after = await rows(session_factory)
+    assert set(after) == {"retained"} and not after["retained"].missing
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        None,
+        CatalogPage("invalid", full_scan=True),
+        CatalogPage((entry("one"),) * 5001, full_scan=True),
+    ],
+)
+async def test_malformed_page_cannot_turn_into_an_empty_authoritative_sweep(
+    session_factory, page
+):
+    await sync_catalog(
+        session_factory,
+        Host({None: CatalogPage((entry("retained"),), full_scan=True)}),
+        "source",
+    )
+    with pytest.raises(CatalogSyncError):
+        await sync_catalog(session_factory, Host({None: page}), "source")
+    assert not (await rows(session_factory))["retained"].missing
+
+
+async def test_page_limit_preserves_unseen_entries(session_factory):
+    await sync_catalog(
+        session_factory,
+        Host({None: CatalogPage((entry("retained"),), full_scan=True)}),
+        "source",
+    )
+    with pytest.raises(CatalogSyncError, match="page limit"):
+        await sync_catalog(
+            session_factory,
+            Host({None: CatalogPage((entry("new"),), "next", True)}),
+            "source",
+            max_pages=1,
+        )
+    assert not (await rows(session_factory))["retained"].missing
