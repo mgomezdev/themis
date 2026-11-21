@@ -131,15 +131,18 @@ describe('PrintGroupsCard (BIZ-360)', () => {
 
   it('re-reads the groups after a refused change', async () => {
     let reads = 0;
-    stubFetch({
+    const api = stubFetch({
       'GET /api/v1/projects/7/groups': () => { reads += 1; return [group(1, 'Default Group')]; },
       'GET /api/v1/printers': PRINTERS,
       'PATCH /api/v1/projects/7/groups/1': new Reply(422, 'name too long'),
     });
     render(<PrintGroupsCard projectId={7} items={[]} />);
     const name = await screen.findByLabelText('Group name');
-    fireEvent.change(name, { target: { value: 'Renamed' } });
-    fireEvent.blur(name);
+    const user = userEvent.setup();
+    await user.clear(name);
+    await user.type(name, 'Renamed');
+    await user.tab();
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/1').map(c => c.body)).toEqual([{ name: 'Renamed' }]));
     expect(await screen.findByText(/422/)).toBeTruthy();
     await waitFor(() => expect(reads).toBe(2));
   });
