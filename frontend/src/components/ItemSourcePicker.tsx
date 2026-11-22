@@ -56,7 +56,7 @@ export function ItemSourcePicker({ fileId, fileKind, plateCount, kind, sourceRef
   };
 
   return (
-    <span className="row gap-1" style={{ flexWrap: 'wrap', marginTop: 4 }}>
+    <span className="row gap-1 item-source-controls" style={{ flexWrap: 'wrap', marginTop: 4 }}>
       {(is3mf || fileKind === 'gcode_3mf') && (
         <select className="select" aria-label="Plate or object" value={value} disabled={fixedSource}
                 onChange={e => pick(e.target.value)} style={{ maxWidth: 200, fontSize: 12 }}>

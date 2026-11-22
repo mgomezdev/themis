@@ -624,6 +624,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             continue                                         # an empty group adds nothing to the queue
         saved = [(t.target_key, t.process_profile) for t in await project_groups.targets_of(session, pgroup.id)]
         targets = saved or (legacy if pgroup.is_default else [])
+        pool_parts = None
         if pgroup.strategy == "pool":
             # BIZ-362: Split / Together items wait in the pool for printers to claim; the pool takes its place in the queue.
             from ...services import pools
@@ -638,12 +639,17 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 pgroup.queue_position = await _max_queue_position(session) + 1.0
                 await session.commit()
             pooled = any(pools.poolable(i) for i in pg_items)
+            if pooled:
+                pool_parts = sum((await pools.remaining(session, pgroup)).values())
             pg_items = [i for i in pg_items if not pools.poolable(i)]
             if not pg_items:
                 warning = await pools.warning(session, pgroup) if pooled else None
-                groups_out.append({"id": pgroup.id, "pool": True, **({"warning": warning} if warning else {})})
+                groups_out.append({"id": pgroup.id, "pool": True, "pool_parts": pool_parts,
+                                   **({"warning": warning} if warning else {})})
                 continue
         group_packs, out, explicit = await _plan_group_packs(session, pgroup, pg_items, targets, library)
+        if pool_parts is not None:
+            out["pool_parts"] = pool_parts
         packs.extend(group_packs)
         groups_out.append(out)
         all_explicit.update({p.id: p for p in explicit})

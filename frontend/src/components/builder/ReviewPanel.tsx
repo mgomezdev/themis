@@ -24,13 +24,18 @@ export function ReviewPanel({ review, loading, error, onGo }: {
     <div className="col gap-2" data-testid="review-checks" aria-busy={loading}>
       <div className="label">Checks</div>
       {checks.map((ch, i) => (
-        <div key={i} className="row gap-3" data-testid={`check-${ch.level}`}
+        <div key={i} className="row gap-3 builder-review-check" data-testid={`check-${ch.level}`}
              style={{ alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border-1)', borderRadius: 6 }}>
           <span className={PILL[ch.level].cls}>{PILL[ch.level].label}</span>
           <span className="small grow">{ch.message}</span>
-          {ch.level === 'error'
-            ? <button className="btn sm" onClick={() => onGo(ch.tab, ch)}>Go to {TAB_LABEL[ch.tab]}</button>
-            : <span className="tiny muted">—</span>}
+          {ch.level === 'error' && (
+            <div className="row gap-2 wrap builder-review-actions">
+              {ch.item_id != null && ch.tab !== 'items' && (
+                <button className="btn sm" onClick={() => onGo('items', ch)}>Edit item</button>
+              )}
+              <button className="btn sm" onClick={() => onGo(ch.tab, ch)}>Go to {TAB_LABEL[ch.tab]}</button>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -50,7 +55,7 @@ export function BuilderTabs({ tab, onTab, counts }: {
     ['review', 'Review', counts.toFix ? `${counts.toFix} to fix` : null],
   ];
   return (
-    <div className="row gap-1" role="tablist" aria-label="Project sections" style={{ borderBottom: '1px solid var(--border-1)' }}>
+    <div className="row gap-1 builder-tabs" role="tablist" aria-label="Project sections" style={{ borderBottom: '1px solid var(--border-1)' }}>
       {tabs.map(([key, label, n]) => (
         <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => onTab(key)}
                 style={{ padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14,

@@ -23,7 +23,7 @@ export function ModelPicker({ files, onAdd, selectedFolder, setSelectedFolder, s
     <div className="card" style={{ padding: 10, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 0, maxHeight: '70vh' }}>
       <div style={{ padding: '4px 6px 8px', fontSize: 11, fontWeight: 600,
                     color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        STL Files
+        File library
       </div>
       <input
         className="input"
@@ -38,12 +38,13 @@ export function ModelPicker({ files, onAdd, selectedFolder, setSelectedFolder, s
       <div style={{ borderTop: '1px solid var(--border-1)', marginTop: 4, paddingTop: 6 }}>
         {folderFiles.length === 0 && (
           <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
-            {searchLower ? 'No matching STL files' : 'No STL files here'}
+            {searchLower ? 'No matching files' : 'No printable files here'}
           </div>
         )}
         {folderFiles.map(f => (
           <button
             key={f.id}
+            className="builder-library-file"
             onClick={() => onAdd(f)}
             title={`Add ${f.original_filename}`}
             style={{

@@ -131,13 +131,13 @@ function GroupRow({ group, index, count, groups, printers, items, onPatch, onMov
 
   return (
     <div className="card" style={{ padding: 12, background: 'var(--bg-0)' }} data-testid={`group-${group.id}`}>
-      <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 10 }}>
+      <div className="row gap-2 builder-group-header" style={{ alignItems: 'center', marginBottom: 10 }}>
         <input className="input" aria-label="Group name" value={name} onChange={e => setName(e.target.value)}
                onBlur={() => { if (name.trim() && name !== group.name) onPatch({ name: name.trim() }); }}
                style={{ maxWidth: 260, fontWeight: 600 }} />
         {group.is_default && <span className="pill idle">Default</span>}
         <span className="tiny muted grow">{scoped ? '' : `${items.length} item${items.length === 1 ? '' : 's'}`}</span>
-        {!scoped && <>
+        {count > 1 && <>
           <button className="btn ghost sm" aria-label={`Move ${group.name} up`} disabled={index === 0} onClick={() => onMove(-1)}>↑</button>
           <button className="btn ghost sm" aria-label={`Move ${group.name} down`} disabled={index === count - 1} onClick={() => onMove(1)}>↓</button>
         </>}

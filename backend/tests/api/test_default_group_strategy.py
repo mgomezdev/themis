@@ -84,7 +84,7 @@ async def test_printers_picked_at_generate_become_the_pools_targets(client, uplo
     assert r.status_code == 200, r.text
     (g,) = await _groups(client, pid)
     assert [(t["target_key"], t["process_profile"]) for t in g["targets"]] == [(str(a), "0.2")]      # the unknown id is dropped
-    assert r.json()["groups"] == [{"id": g["id"], "pool": True}]                                    # takeable: no warning
+    assert r.json()["groups"] == [{"id": g["id"], "pool": True, "pool_parts": 2}]
 
     await _claim(session_factory, _engine(session_factory, [a]), a, tmp_path, packer)
     async with session_factory() as s:

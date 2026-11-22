@@ -7,6 +7,8 @@ import { NO_ASK } from '../lib/filamentAsk';
 import { askOf, parseGenerateError } from '../lib/projectDraft';
 import { currentSnapshot, type HeaderFields } from '../lib/projectBuilderState';
 import { useAutoDismiss } from '../components/useAutoDismiss';
+import { useMediaQuery } from '../components/useMediaQuery';
+import { initialSource, ItemSourcePicker } from '../components/ItemSourcePicker';
 import { useProjectDraft } from '../components/builder/useProjectDraft';
 import { PrintGroupsCard } from '../components/PrintGroupsCard';
 import { GroupBanner, type BannerSelection } from '../components/builder/GroupBanner';
@@ -65,7 +67,9 @@ export function ProjectBuilderScreen() {
   const [saveError, setSaveError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [generateResult, setGenerateResult] = useState<{ jobCount: number; pools: number; warnings: string[] } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{
+    jobCount: number; pools: number; poolParts?: number; warnings: string[]; snapshot: string; groupRevision: number;
+  } | null>(null);
   // Review (BIZ-363)
   const [review, setReview] = useState<ProjectReview | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -79,6 +83,13 @@ export function ProjectBuilderScreen() {
   // The model picker's folder and search live here: the Items tab unmounts it, and nothing is lost between tabs.
   const [selectedFolder, setSelectedFolder] = useState('');
   const [search, setSearch] = useState('');
+  const phone = useMediaQuery('(max-width: 640px)');
+  const compact = useMediaQuery('(max-width: 1100px)');
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<{
+    file: LibraryFile; groupId: number | null; source: ReturnType<typeof initialSource>;
+  } | null>(null);
+  const [focusItem, setFocusItem] = useState<string>();
 
   // Print groups of a saved project, in queue order (the Default Group is created lazily by the list).
   useEffect(() => {
@@ -106,6 +117,10 @@ export function ProjectBuilderScreen() {
   /** New rows join the badge being shown (BIZ-363), else the Default Group. */
   const addFile = (file: LibraryFile) =>
     dispatch({ type: 'addFile', file, groupId: typeof bannerSel === 'number' ? bannerSel : null, defaultGroupId });
+  const chooseFile = (file: LibraryFile) => {
+    if (!compact) { addFile(file); return; }
+    setPendingFile({ file, groupId: typeof bannerSel === 'number' ? bannerSel : defaultGroupId, source: initialSource(file.kind) });
+  };
 
   async function newGroup(moveIds: string[] = []) {
     if (!projectId) return;
@@ -173,7 +188,10 @@ export function ProjectBuilderScreen() {
       const pid = await save();
       setGenerating(true);
       const result = await generateProject(pid);
-      setGenerateResult({ jobCount: result.jobs.length, pools: pooledGroups(result), warnings: generateWarnings(result) });
+      const queuedParts = result.groups?.flatMap(group => group.pool_parts == null ? [] : [group.pool_parts]) ?? [];
+      setGenerateResult({ jobCount: result.jobs.length, pools: pooledGroups(result), warnings: generateWarnings(result),
+                          poolParts: queuedParts.length ? queuedParts.reduce((total, count) => total + count, 0) : undefined,
+                          snapshot: currentSnap, groupRevision: groupsTick });
       loadReview(pid, currentSnap);
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
@@ -184,6 +202,7 @@ export function ProjectBuilderScreen() {
   }
 
   const currentSnap = currentSnapshot(state);
+  const receipt = generateResult?.snapshot === currentSnap && generateResult.groupRevision === groupsTick ? generateResult : null;
   const canSave = name.trim().length > 0 && !saving && !generating;
 
   // Entering Review saves what changed (the checks read the saved project), then runs the checks.
@@ -260,10 +279,48 @@ export function ProjectBuilderScreen() {
   );
 
   const itemsTab = (
-    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16, alignItems: 'start' }}>
-      {/* Left: model file tree */}
-      <ModelPicker files={allFiles} onAdd={addFile} selectedFolder={selectedFolder} setSelectedFolder={setSelectedFolder}
-                   search={search} setSearch={setSearch} />
+    <div className="builder-items-layout">
+      <div className="col min-0 gap-2">
+        {phone && (
+          <button className="btn" aria-expanded={libraryOpen} aria-controls="builder-file-library"
+                  onClick={() => { setLibraryOpen(!libraryOpen); setPendingFile(null); }}>
+            {libraryOpen ? 'Close file library' : 'Add files'}
+          </button>
+        )}
+        {(!phone || libraryOpen) && (
+          <div id="builder-file-library">
+            {pendingFile ? (
+              <div className="card col gap-3 builder-file-selection">
+                <strong className="builder-item-name">{pendingFile.file.original_filename}</strong>
+                <ItemSourcePicker fileId={pendingFile.file.id} fileKind={pendingFile.file.kind}
+                  plateCount={pendingFile.file.plate_count ?? 1} kind={pendingFile.source.kind}
+                  sourceRef={pendingFile.source.source_ref} packRule={pendingFile.source.pack_rule}
+                  onChange={source => setPendingFile({ ...pendingFile, source })} />
+                <label className="col gap-1 small">
+                  Print group
+                  <select className="select" value={pendingFile.groupId ?? ''}
+                          onChange={e => setPendingFile({ ...pendingFile, groupId: Number(e.target.value) || null })}>
+                    {groups.length === 0 && <option value="">Default Group</option>}
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </label>
+                <div className="row gap-2 wrap">
+                  <button className="btn primary" onClick={() => {
+                    dispatch({ type: 'addFile', ...pendingFile, defaultGroupId });
+                    setBannerSel(pendingFile.groupId ?? 'all');
+                    setPendingFile(null);
+                    setLibraryOpen(false);
+                  }}>Add to project</button>
+                  <button className="btn" onClick={() => setPendingFile(null)}>Back to files</button>
+                </div>
+              </div>
+            ) : (
+              <ModelPicker files={allFiles} onAdd={chooseFile} selectedFolder={selectedFolder} setSelectedFolder={setSelectedFolder}
+                           search={search} setSearch={setSearch} />
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="col gap-3 min-0">
         {banner(true, false)}
@@ -273,21 +330,21 @@ export function ProjectBuilderScreen() {
                             onChange={setBulkAsk} onCancel={() => setBulkAsk(null)}
                             onApply={() => { dispatch({ type: 'setItemsAsk', localIds: bulkAsk.ids, ask: bulkAsk.value }); setBulkAsk(null); }} />
         )}
-        <ItemSections items={items} groups={groups} filter={bannerSel} onBulk={onBulk}
+        <ItemSections items={items} groups={groups} filter={bannerSel} onBulk={onBulk} focusItem={focusItem}
           emptyHint={(
             <div style={{
               border: '1px dashed var(--border-1)', borderRadius: 6,
               padding: '24px 16px', textAlign: 'center',
               color: 'var(--text-4)', fontSize: 13,
             }}>
-              Click an STL file on the left to add parts
+              {phone ? 'Use Add files to add parts' : 'Choose a file from the library to add parts'}
             </div>
           )}
           renderRow={row => {
             const it = items.find(x => x.localId === row.localId)!;
             return (
               <ItemRow item={it} file={fileById.get(it.file_id)} serverItem={it.serverId ? serverItems.get(it.serverId) : undefined}
-                       materials={materials} catalogEnabled={catalogEnabled} canApplyToAll={items.length > 1} dispatch={dispatch} />
+                       materials={materials} catalogEnabled={catalogEnabled} canApplyToAll={items.length > 1} groups={groups} dispatch={dispatch} />
             );
           }} />
       </div>
@@ -307,12 +364,20 @@ export function ProjectBuilderScreen() {
 
   const reviewTab = !projectId ? needsSave('check and queue it') : (
     <div className="col gap-3">
-      <ReviewPanel review={review} loading={reviewLoading || saving} error={reviewError}
-                   onGo={(t, ch) => { if (ch.group_id != null) setBannerSel(ch.group_id); setTab(t); }} />
-      {generateResult && (
-        <QueueSuccess jobCount={generateResult.jobCount} pools={generateResult.pools} warnings={generateResult.warnings}
-                      onOpenQueue={() => navigate('/queue')} onOpenProject={() => navigate(`/projects/${projectId}`)} />
+      {receipt && (
+        <QueueSuccess jobCount={receipt.jobCount} pools={receipt.pools} poolParts={receipt.poolParts}
+                      warnings={receipt.warnings} onOpenProject={() => navigate(`/projects/${projectId}`)} />
       )}
+      <ReviewPanel review={review} loading={reviewLoading || saving} error={reviewError}
+                   onGo={(t, ch) => {
+                     const item = items.find(it => it.serverId != null && it.serverId === ch.item_id);
+                     if (t === 'items') {
+                       setFocusItem(item?.localId);
+                       setBannerSel(item?.group_id ?? ch.group_id ?? 'all');
+                       setLibraryOpen(false);
+                     } else if (ch.group_id != null) setBannerSel(ch.group_id);
+                     setTab(t);
+                   }} />
       {generateError && (
         <QueueError message={generateError} busy={generating || saving} onRetry={handleQueue} />
       )}
@@ -337,7 +402,7 @@ export function ProjectBuilderScreen() {
         <BuilderTabs tab={tab} onTab={setTab} counts={{ items: items.length, groups: groups.length, toFix: open }} />
         {saveError && <div role="alert" style={{ color: 'var(--err)', fontSize: 13 }}>Save failed: {saveError}</div>}
 
-        <div className="card" style={{ padding: 20, overflow: 'auto', flex: 1 }}>
+        <div className="card builder-content" key={tab}>
           {tab === 'details' && detailsTab}
           {tab === 'items' && itemsTab}
           {tab === 'groups' && groupsTab}
@@ -345,7 +410,7 @@ export function ProjectBuilderScreen() {
         </div>
 
         {/* Back / Next */}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="builder-footer">
           <div className="row gap-2">
             <button className="btn sm" onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')} disabled={saving || generating}>
               Cancel
@@ -355,7 +420,7 @@ export function ProjectBuilderScreen() {
           <span className="tiny muted">{tab === 'review' && open ? `Fix ${open} issue${open === 1 ? '' : 's'} to queue` : ''}</span>
           {tab !== 'review'
             ? <button className="btn primary sm" onClick={() => setTab(ORDER[at + 1])}>Next →</button>
-            : (
+            : receipt ? <button className="btn primary sm" onClick={() => navigate('/queue')}>View queue</button> : (
               <button className="btn primary sm" onClick={handleQueue} disabled={queueBlocked || !canSave}
                       title={isDraft ? 'Promote to planning before creating jobs' : undefined}>
                 {generating ? 'Queueing…' : 'Queue project'}

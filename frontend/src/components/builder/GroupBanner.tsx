@@ -77,12 +77,12 @@ export function GroupBanner({ groups, counts, selected, onSelect, showAll, onDro
   return (
     <div className="card" style={{ padding: '10px 12px' }} data-testid="group-banner">
       <div className="row between" style={{ marginBottom: 8 }}>
-        <span className="label" style={{ margin: 0 }}>{onDropItems ? 'Groups · drag items onto a badge' : 'Groups'}</span>
-        <span className="tiny muted">{onReorder ? 'Drag badges to set queue order' : 'Select a badge to show its items'}</span>
+        <span className="label" style={{ margin: 0 }}>Groups</span>
+        <span className="tiny muted">{onReorder ? 'Groups queue in this order' : 'Select a group to filter items'}</span>
       </div>
       <div className="row gap-2 wrap" role="tablist" aria-label="Print groups">
         {showAll && (
-          <button type="button" role="tab" aria-selected={selected === 'all'} style={badge(selected === 'all', 'var(--accent)', false)}
+          <button type="button" role="tab" className="builder-group-tab" aria-selected={selected === 'all'} style={badge(selected === 'all', 'var(--accent)', false)}
                   onClick={() => onSelect('all')}>
             All <span className="tiny muted">{count('all')}</span>
           </button>
@@ -90,7 +90,7 @@ export function GroupBanner({ groups, counts, selected, onSelect, showAll, onDro
         {groups.map(g => {
           const colour = groupColour(groups, g.id);
           return (
-            <button key={g.id} type="button" role="tab" aria-selected={selected === g.id} data-testid={`badge-${g.id}`}
+            <button key={g.id} type="button" role="tab" className="builder-group-tab" aria-selected={selected === g.id} data-testid={`badge-${g.id}`}
                     style={badge(selected === g.id, colour, over === g.id)} onClick={() => onSelect(g.id)}
                     draggable={!!onReorder}
                     onDragStart={onReorder ? e => e.dataTransfer.setData(DRAG_GROUP, String(g.id)) : undefined}

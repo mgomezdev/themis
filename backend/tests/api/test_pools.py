@@ -224,6 +224,7 @@ async def test_a_solo_item_in_a_pool_is_still_generated_as_a_job_and_not_pooled(
         r = await client.post(f"/api/v1/projects/{pid}/generate", json={})
     assert r.status_code == 200, r.text
     assert len(r.json()["jobs"]) >= 1                                               # the Solo item is packed now
+    assert r.json()["groups"][0]["pool_parts"] == 3
     async with session_factory() as s:
         assert all(j.pool_group_id is None for j in (await s.execute(select(Job))).scalars())
     (grp,) = (await client.get(f"/api/v1/projects/{pid}/groups")).json()
