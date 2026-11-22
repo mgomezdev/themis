@@ -146,6 +146,7 @@ export function FleetScreen() {
         backLabel="Fleet"
         onCancel={() => setAdding(false)}
         onCreated={() => { setAdding(false); refetchFleet(); }}
+        onPrinterAdded={refetchFleet}
       />
     );
   }
