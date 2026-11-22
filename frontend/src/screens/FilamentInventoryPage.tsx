@@ -57,7 +57,7 @@ export function FilamentInventoryPage() {
 
       {inventory.has(CAP.TRACKS_WEIGHT) && inventory.has(CAP.WRITE_WEIGHT) && (
         <FieldRow label="Deduct filament when a job completes" hint="Subtracts the grams a finished print used from its spool. If off, Themis reads weights but never changes them.">
-          {deduct !== null && <Toggle checked={deduct} onChange={toggleDeduct} />}
+          {deduct !== null && <Toggle checked={deduct} onChange={toggleDeduct} label="Deduct filament when a job completes" />}
         </FieldRow>
       )}
 

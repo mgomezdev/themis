@@ -37,6 +37,7 @@ export function FolderTreeNode({ node, depth, openSet, toggle, current, setCurre
   return (
     <div>
       <button
+        className="folder-tree-button"
         onClick={() => { setCurrent(node.path); if (hasChildren) toggle(node.path); }}
         style={{
           width: '100%',

@@ -41,7 +41,7 @@ function TagChip({ tag, large }: { tag: Tag; large?: boolean }) {
 
 function TagRow({ tag, onEdit, onDelete }: { tag: Tag; onEdit: () => void; onDelete: () => void }) {
   return (
-    <div className="row gap-3" style={{
+    <div className="row gap-3 tag-row" style={{
       padding: '10px 16px',
       borderBottom: '1px solid var(--border-1)',
       alignItems: 'center',
@@ -50,10 +50,10 @@ function TagRow({ tag, onEdit, onDelete }: { tag: Tag; onEdit: () => void; onDel
       <span style={{ width: 4, height: 28, borderRadius: 2, flexShrink: 0, background: tag.color }}/>
       <TagChip tag={tag} />
       <div className="col grow min-0" />
-      <div style={{ width: 140, flexShrink: 0 }}>
+      <div className="tag-row-category" style={{ width: 140, flexShrink: 0 }}>
         <span className="tiny muted">{tag.category || '—'}</span>
       </div>
-      <div style={{ width: 110, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
+      <div className="tag-row-actions" style={{ width: 110, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
         <button className="btn ghost icon sm" title="Edit" onClick={onEdit}>
           {React.cloneElement(Icons.settings, { size: 14 } as React.SVGProps<SVGSVGElement>)}
         </button>
@@ -84,11 +84,11 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
   }
 
   return (
-    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
-      <div className="row gap-3" style={{ alignItems: 'flex-start' }}>
+    <div className="tag-editor" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
+      <div className="row gap-3 tag-editor-row" style={{ alignItems: 'flex-start' }}>
         <span style={{ width: 4, height: 28, borderRadius: 2, flexShrink: 0, marginTop: 8, background: color }}/>
         <div className="col" style={{ flex: 1, minWidth: 0, gap: 10 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 10 }}>
+          <div className="tag-editor-grid">
             <div>
               <label className="label">Name</label>
               <input className="input" autoFocus value={name}
@@ -113,7 +113,8 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
             <label className="label">Color</label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {TAG_COLOR_PALETTE.map(c => (
-                <button key={c} onClick={() => setColor(c)}
+                <button key={c} onClick={() => setColor(c)} className="tag-color-button"
+                        aria-label={`Choose color ${c}`}
                         style={{
                           width: 24, height: 24, borderRadius: 6,
                           background: c,
@@ -126,7 +127,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
             </div>
           </div>
         </div>
-        <div className="col gap-2" style={{ flexShrink: 0, paddingTop: 22 }}>
+        <div className="col gap-2 tag-editor-actions" style={{ flexShrink: 0, paddingTop: 22 }}>
           <button className="btn primary sm" onClick={submit} disabled={!name.trim()}>
             {Icons.check} {isNew ? 'Create' : 'Save'}
           </button>
@@ -226,7 +227,7 @@ export function TagsPage() {
 
   return (
     <div className="col gap-3">
-      <div className="card" style={{ padding: 28 }}>
+      <div className="card tags-card" style={{ padding: 28 }}>
         <PageHeader
           title="Tags"
           sub="Labels you can attach to files, jobs, and orders. Tags are shared across the app — renaming one updates everywhere it's used."
@@ -239,8 +240,8 @@ export function TagsPage() {
         </div>
 
         <div className="row gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-          <div className="row gap-2" style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
+          <div className="row gap-2 tag-search-wrap" style={{ flex: 1, minWidth: 280 }}>
+            <div className="tag-search" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background:'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8 }}>
               {React.cloneElement(Icons.search, { size: 14 } as React.SVGProps<SVGSVGElement>)}
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search tags…"
                      style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--text-1)', outline: 'none', fontSize: 13, fontFamily: 'var(--font-sans)' }}/>
@@ -272,7 +273,7 @@ export function TagsPage() {
         </div>
 
         <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-0)' }}>
-          <div className="row gap-3" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-1)' }}>
+          <div className="row gap-3 tag-list-header" style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-1)', color: 'var(--text-4)', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, background: 'var(--bg-1)' }}>
             <div style={{ width: 4, flexShrink: 0 }}/>
             <div className="grow">Tag</div>
             <div style={{ width: 140, flexShrink: 0 }}>Category</div>

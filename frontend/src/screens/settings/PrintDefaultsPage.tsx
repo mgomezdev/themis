@@ -447,7 +447,7 @@ export function PrintDefaultsPage() {
 
       <FieldRow label="Enable estimate generation"
                 hint="When enabled, a test slice runs immediately after job creation to estimate print time and filament use. The gcode is discarded — only time and grams are stored.">
-        <Toggle checked={estimatesEnabled} onChange={commitEstimatesEnabled} />
+        <Toggle checked={estimatesEnabled} onChange={commitEstimatesEnabled} label="Enable estimate generation" />
       </FieldRow>
 
       <FieldRow label="Always use latest slicer settings"

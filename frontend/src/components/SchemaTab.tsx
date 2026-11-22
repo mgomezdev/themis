@@ -20,7 +20,7 @@ function fieldValue(f: SchemaField, raw: string | boolean | undefined): unknown 
 }
 
 function FieldInput({ f, value, onChange }: { f: SchemaField; value: unknown; onChange: (v: string | boolean) => void }) {
-  if (f.type === 'checkbox') return <Toggle checked={!!value} onChange={onChange} />;
+  if (f.type === 'checkbox') return <Toggle checked={!!value} onChange={onChange} label={f.label} />;
   if (f.type === 'select') {
     return (
       <select className="select" aria-label={f.label} value={String(value ?? '')} onChange={e => onChange(e.target.value)}>

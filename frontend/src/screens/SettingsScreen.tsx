@@ -17,6 +17,7 @@ import { MaintenancePage } from './settings/MaintenancePage';
 import { ApiKeysPage } from './settings/ApiKeysPage';
 import { AdminAccountPage } from './settings/AdminAccountPage';
 import { SettingsIcons } from './settings/icons';
+import { useMediaQuery } from '../components/useMediaQuery';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -58,6 +59,7 @@ export function SettingsScreen() {
   const activePage = pageFromPath(location.pathname);
   const setActivePage = (id: PageId) => navigate(`/settings/${id}`);
   const { plugins } = usePlugins();
+  const phone = useMediaQuery('(max-width: 600px)');
   // A plugin that asks for its own page gets a sidebar entry only while it is installed, running and enabled.
   const pluginPages = navigablePlugins(plugins).filter(p => p.ui.nav_placement === 'settings');
 
@@ -104,8 +106,19 @@ export function SettingsScreen() {
 
   return (
     <div>
+      {phone && <label className="settings-mobile-picker">
+        <span className="label">Settings section</span>
+        <select className="select" value={`/settings/${activePage}`} onChange={e => navigate(e.target.value)}>
+          {pluginPages.map(p => (
+            <option key={p.id} value={`/plugins/${p.id}`}>{p.ui.nav_label}</option>
+          ))}
+          {sections.flatMap(s => s.items).map(item => (
+            <option key={item.id} value={`/settings/${item.id}`}>{item.label}</option>
+          ))}
+        </select>
+      </label>}
       {/* mobile tab bar */}
-      <nav className="settings-tabs" style={{ gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
+      {!phone && <nav className="settings-tabs" style={{ gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
         {pluginPages.map(p => (
           <button key={p.id} onClick={() => navigate(`/plugins/${p.id}`)} className="settings-tab nowrap">
             {p.ui.nav_label}
@@ -119,7 +132,7 @@ export function SettingsScreen() {
             {item.label}
           </button>
         ))}
-      </nav>
+      </nav>}
 
       {/* page content */}
       {activePage === 'tags'              && <TagsPage />}

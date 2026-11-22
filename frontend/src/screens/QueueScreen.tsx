@@ -260,7 +260,7 @@ export function QueueScreen() {
             <button className="btn sm">
               <span style={{ display: 'inline-flex' }}>{Icons.sort}</span> Sort
             </button>
-            <button className="btn primary sm" onClick={() => navigate('/queue/new')}>
+            <button className="btn primary sm mobile-redundant" onClick={() => navigate('/queue/new')}>
               {Icons.plus} New job
             </button>
           </div>

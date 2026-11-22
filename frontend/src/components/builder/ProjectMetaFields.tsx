@@ -14,7 +14,7 @@ export function ProjectMetaFields({ fields, projectId, onChange }: {
   return (
     <>
       {/* Project metadata fields */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="project-meta-grid">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label className="label" htmlFor="proj-name">
           Project name *
@@ -68,7 +68,7 @@ export function ProjectMetaFields({ fields, projectId, onChange }: {
       </div>
 
       {/* Customer + notes row */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
+      <div className="project-meta-secondary">
         {orderType === 'customer' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label className="label">Customer</label>
@@ -87,7 +87,7 @@ export function ProjectMetaFields({ fields, projectId, onChange }: {
             onChange={e => onChange({ notes: e.target.value })}
           />
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        <label className="touch-check" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
                         fontSize: 13, color: onHold ? 'var(--warn)' : 'var(--text-1)',
                         paddingBottom: 4, whiteSpace: 'nowrap' }}>
           <input
@@ -100,7 +100,7 @@ export function ProjectMetaFields({ fields, projectId, onChange }: {
       </div>
 
       {/* Payment row */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
+      <div className="project-meta-payment">
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label className="label" htmlFor="proj-price">Price</label>
           <input

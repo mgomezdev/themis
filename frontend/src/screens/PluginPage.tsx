@@ -34,7 +34,7 @@ export function PluginPage() {
   return (
     <div>
       {tabs.length > 1 && (
-        <nav className="settings-tabs" style={{ display: 'flex', gap: 4, marginBottom: 16 }} aria-label={`${plugin.name} tabs`}>
+        <nav className="settings-tabs plugin-tabs-scroll" style={{ display: 'flex', gap: 4, marginBottom: 16 }} aria-label={`${plugin.name} tabs`}>
           {tabs.map(t => (
             <NavLink key={t.id} to={`/plugins/${plugin.id}/${t.id}`} className={({ isActive }) => `settings-tab ${isActive ? 'active' : ''}`}>
               {t.label}

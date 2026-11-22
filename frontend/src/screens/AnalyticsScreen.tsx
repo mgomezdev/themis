@@ -109,8 +109,9 @@ export function AnalyticsScreen() {
             {data.printers.length === 0 ? (
               <Empty icon={Icons.printer} title="No printers yet." />
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <>
+              <div className="analytics-table-wrap">
+                <table className="analytics-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-1)', textAlign: 'left', color: 'var(--text-3)' }}>
                       <th style={th}>Printer</th><th style={th}>Completed</th><th style={th}>Failed</th>
@@ -136,6 +137,25 @@ export function AnalyticsScreen() {
                   </tbody>
                 </table>
               </div>
+              <div className="analytics-mobile-list">
+                {data.printers.map(p => (
+                  <article className="analytics-printer-card" key={p.printer_id} data-testid={`printer-card-${p.printer_id}`}>
+                    <h3>{p.name}</h3>
+                    <dl>
+                      <div><dt>Completed</dt><dd>{p.completed}</dd></div>
+                      <div><dt>Failed</dt><dd>{p.failed}</dd></div>
+                      <div><dt>Success</dt><dd>{fmtRate(p.success_rate)}</dd></div>
+                      <div><dt>Print time</dt><dd>{fmtHours(p.print_seconds)}</dd></div>
+                    </dl>
+                    <div className="analytics-utilization">
+                      <span className="small muted">Utilization</span>
+                      <span className="num small">{p.utilization_pct}%</span>
+                      <Progress value={p.utilization_pct} />
+                    </div>
+                  </article>
+                ))}
+              </div>
+              </>
             )}
           </Card>
 

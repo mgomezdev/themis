@@ -79,7 +79,7 @@ export function PrinterFilesScreen() {
   return (
     <div data-testid="printer-files">
       <div className="row gap-3" style={{ alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-        <input className="input" placeholder="Filter by file name…" aria-label="Filter files" style={{ maxWidth: 280 }}
+        <input className="input printer-files-filter" placeholder="Filter by file name…" aria-label="Filter files" style={{ maxWidth: 280 }}
                value={filter} onChange={e => setFilter(e.target.value)} />
         <button className="btn sm" onClick={() => void load()} disabled={loading}>{Icons.refresh} Refresh</button>
         <span className="small muted">Files stored on the printers themselves. Printing from here bypasses the queue.</span>
@@ -115,22 +115,22 @@ export function PrinterFilesScreen() {
               ) : rows.length === 0 ? (
                 <div className="small muted">{s.files.length === 0 ? 'No files.' : 'No files match the filter.'}</div>
               ) : (
-                <table className="tbl w-full">
+                <table className="tbl w-full printer-files-table">
                   <thead><tr><th>Name</th><th>Size</th><th>Print</th><th>Modified</th><th /></tr></thead>
                   <tbody>
                     {rows.map(f => (
                       <tr key={f.id}>
-                        <td>
+                        <td className="printer-file-name" data-label="Name">
                           {f.is_dir
                             ? <button className="btn ghost sm" disabled={s.busy} onClick={() => void open(s, f.id)}>📁 {f.name}</button>
                             : f.name}
                         </td>
-                        <td className="num small">{f.is_dir ? '' : fmtBytes(f.size)}</td>
-                        <td className="small">{f.is_dir ? '' : metaText(f)}</td>
-                        <td className="small muted">{f.modified_at ? f.modified_at.slice(0, 10) : ''}</td>
-                        <td>
+                        <td className="num small" data-label="Size">{f.is_dir ? '' : fmtBytes(f.size)}</td>
+                        <td className="small" data-label="Print">{f.is_dir ? '' : metaText(f)}</td>
+                        <td className="small muted" data-label="Modified">{f.modified_at ? f.modified_at.slice(0, 10) : ''}</td>
+                        <td className="printer-file-actions">
                           {!f.is_dir && (
-                            <span className="row gap-1">
+                            <span className="row gap-1 wrap">
                               {f.printable && (
                                 <button className="btn sm" disabled={s.busy} aria-label={`Print ${f.name}`}
                                         onClick={() => {

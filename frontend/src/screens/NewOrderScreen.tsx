@@ -128,7 +128,7 @@ export function NewOrderScreen() {
 
   return (
     <div className="col gap-4">
-      <div className="row gap-2">
+      <div className="row gap-2 mobile-redundant">
         <button className="btn ghost sm" onClick={() => navigate('/orders')}>{Icons.chevL} Orders</button>
         <span className="muted small">/</span>
         <span className="small">{editingId == null ? 'New order' : 'Edit order'}</span>
@@ -138,7 +138,7 @@ export function NewOrderScreen() {
         <div className="tone-err tint tone-text" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>{error}</div>
       )}
 
-      <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
+      <div className="layout-main-sidebar order-layout">
         <div className="col gap-4">
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader title="Order info" />
@@ -152,7 +152,7 @@ export function NewOrderScreen() {
               instead so their sales and payments show on their page.
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div className="order-info-grid">
               <div>
                 <label className="label">{orderType === 'internal' ? 'Project name' : 'Customer'}</label>
                 <input className="input" value={customer} onChange={e => setCustomer(e.target.value)}
@@ -176,7 +176,7 @@ export function NewOrderScreen() {
                         placeholder="Material preferences, finishing, anything special…" />
             </div>
 
-            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="order-payment-grid">
               <div>
                 <label className="label">Amount paid</label>
                 <input type="number" min="0" step="0.01" className="input" value={amountPaid}
@@ -194,12 +194,12 @@ export function NewOrderScreen() {
             </div>
           </div>
 
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="card order-parts-card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-1)' }}>
               <SectionHeader title="Parts to print" sub={`${parts.length} parts · ${totalQty} units total`} />
             </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="tbl">
+            <div className="order-parts-scroll">
+              <table className="tbl order-parts-table">
                 <thead>
                   <tr>
                     <th style={{ width: 40 }}></th>
@@ -213,18 +213,18 @@ export function NewOrderScreen() {
                 <tbody>
                   {parts.map((p, i) => (
                     <tr key={i} style={{ cursor: 'default' }}>
-                      <td>
+                      <td className="order-part-swatch">
                         <div style={{
                           width: 32, height: 32, borderRadius: 4,
                           background: p.filament_color ?? matColor(p.material),
                           border: '1px solid var(--border-1)', opacity: 0.85,
                         }} />
                       </td>
-                      <td>
+                      <td data-label="Part name">
                         <input className="input" placeholder="Part name" value={p.name}
                                onChange={e => updPart(i, { name: e.target.value })} />
                       </td>
-                      <td style={{ verticalAlign: 'top', paddingTop: 10 }}>
+                      <td data-label="Filament" style={{ verticalAlign: 'top', paddingTop: 10 }}>
                         <FilamentCell
                           part={p}
                           catalogActive={catalogActive}
@@ -232,15 +232,15 @@ export function NewOrderScreen() {
                           onChange={patch => updPart(i, patch)}
                         />
                       </td>
-                      <td>
+                      <td data-label="Quantity">
                         <input className="input num" type="number" min="1" value={p.qty}
                                onChange={e => updPart(i, { qty: Number(e.target.value) })} />
                       </td>
-                      <td>
+                      <td data-label="Est. each">
                         <input className="input num" type="number" min="0" step="5" value={p.est_minutes}
                                onChange={e => updPart(i, { est_minutes: Number(e.target.value) })} />
                       </td>
-                      <td>
+                      <td className="order-part-remove">
                         <button className="btn ghost icon sm" aria-label="Remove part"
                                 onClick={() => delPart(i)}>{Icons.x}</button>
                       </td>
@@ -255,7 +255,7 @@ export function NewOrderScreen() {
           </div>
         </div>
 
-        <div className="col gap-4">
+        <div className="col gap-4 order-sidebar">
           <div className="card" style={{ padding: 18 }}>
             <div className="tag-key">Summary</div>
             <div className="row between" style={{ marginTop: 12 }}>

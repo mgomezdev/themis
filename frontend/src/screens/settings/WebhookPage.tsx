@@ -81,7 +81,7 @@ export function WebhookPage() {
         <div className="col" style={{ gap: 10 }}>
           {ALL_WEBHOOK_EVENTS.map(ev => (
             <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-              <Toggle checked={events.includes(ev)} onChange={() => toggleEvent(ev)} />
+              <Toggle checked={events.includes(ev)} onChange={() => toggleEvent(ev)} label={`Send ${ev} webhooks`} />
               <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-1)' }}>{ev}</span>
             </label>
           ))}

@@ -164,7 +164,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       )}
 
       <FieldRow label={`Enable ${plugin.name}`} hint="When off, Themis ignores this plugin entirely.">
-        <Toggle checked={plugin.enabled} onChange={setEnabled} />
+        <Toggle checked={plugin.enabled} onChange={setEnabled} label={`Enable ${plugin.name}`} />
       </FieldRow>
       {plugin.enabled && unselected.map(p => (
         <FieldRow key={p.capability} label={`Use for ${p.capability}`}
@@ -187,12 +187,12 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
             {type === 'unsupported'
               ? <div className="small muted" data-testid={`unsupported-${key}`}>Not editable here.</div>
               : type === 'boolean'
-              ? <Toggle checked={!!draft[key]} onChange={v => setDraft(d => ({ ...d, [key]: v }))} />
+              ? <Toggle checked={!!draft[key]} onChange={v => setDraft(d => ({ ...d, [key]: v }))} label={label} />
               : type === 'choices'
               ? <div className="col" style={{ gap: 10 }} role="group" aria-label={label}>
                   {(prop.items?.enum ?? []).map(choice => (
                     <label key={choice} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                      <Toggle checked={asList(draft[key]).includes(choice)}
+                      <Toggle checked={asList(draft[key]).includes(choice)} label={choice}
                               onChange={on => setDraft(d => {
                                 const cur = asList(d[key]);
                                 return { ...d, [key]: on ? [...cur, choice] : cur.filter(c => c !== choice) };

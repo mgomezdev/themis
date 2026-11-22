@@ -36,7 +36,7 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
           }}>{triggerChipText(t)}</span>
         ))}
       </div>
-      <Toggle checked={item.enabled} onChange={onToggle} />
+      <Toggle checked={item.enabled} onChange={onToggle} label={`Enable ${item.name}`} />
       <button className="btn ghost sm" onClick={onEdit}>Edit</button>
       <button className="btn ghost sm" onClick={onDelete}>Delete</button>
     </div>
