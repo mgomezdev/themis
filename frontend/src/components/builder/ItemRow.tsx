@@ -58,7 +58,7 @@ export function ItemRow({ item: it, file, serverItem, materials, catalogEnabled,
         <span>Quantity</span>
       <input
         type="number"
-        className="input project-item-quantity"
+        className="input"
         aria-label={`Quantity of ${it.file_name}`}
         min={1} max={99}
         value={it.quantity}
