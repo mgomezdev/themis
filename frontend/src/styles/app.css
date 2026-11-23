@@ -517,7 +517,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   overflow: hidden;
   border: 1px solid var(--border-1);
 }
-.video.live::before {
+.video.live::before,
+.video:has(> img[data-live-camera])::before {
   content: "● LIVE";
   position: absolute;
   top: 8px; left: 8px;

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { StatusPill, Progress, Card, Empty, Kv, VideoTile } from './ui';
 import { Icons } from './icons';
 
@@ -86,9 +86,47 @@ describe('VideoTile', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('hides img when onError fires', () => {
-    render(<VideoTile live={true} printerId="42" />);
-    fireEvent.error(document.querySelector('img')!);
-    expect(document.querySelector('img')).toBeNull();
+  it('retries a failed first snapshot and retains the last frame until its replacement loads', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<VideoTile printerId="42" intervalMs={100} />);
+      const frame = (tick: number) => container.querySelector<HTMLImageElement>(`img[src*="t=${tick}"]`)!;
+      fireEvent.error(frame(0));
+      expect(frame(0)).toBeNull();
+      act(() => vi.advanceTimersByTime(100));
+      const recovered = frame(1);
+      expect(recovered.style.visibility).toBe('hidden');
+      act(() => vi.advanceTimersByTime(500));
+      expect(frame(2)).toBeNull();
+      fireEvent.load(recovered);
+      expect(frame(1)).toBe(recovered);
+      expect(recovered.style.visibility).toBe('');
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.error(frame(2));
+      expect(frame(1)).toBe(recovered);
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.load(frame(3));
+      expect(frame(1)).toBeNull();
+      expect(frame(3).style.visibility).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to snapshots if the stream fails and tries live again when reopened', () => {
+    const { container, rerender } = render(<VideoTile printerId="42" stream />);
+    const image = () => container.querySelector('img')!;
+    expect(image().getAttribute('src')).toContain('/42/camera');
+    fireEvent.error(image());
+    expect(image().getAttribute('src')).toContain('/42/snapshot');
+    expect(image()).not.toHaveAttribute('data-live-camera');
+    rerender(<VideoTile printerId="42" stream live={false} />);
+    rerender(<VideoTile printerId="42" stream />);
+    expect(image().getAttribute('src')).toContain('/42/camera');
+  });
+
+  it('leaves idle cameras alone when idle polling is disabled', () => {
+    const { container } = render(<VideoTile printerId="42" status="idle" stream noSnapshotsWhileIdle />);
+    expect(container.querySelector('img')).toBeNull();
   });
 });
