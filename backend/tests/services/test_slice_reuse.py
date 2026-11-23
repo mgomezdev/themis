@@ -239,6 +239,7 @@ async def test_reslicing_a_stale_version_saves_a_fresh_one_that_wins_next_time(s
     async with session_factory() as s:
         fresh = (await s.execute(select(SlicedVersion).where(SlicedVersion.id != stale_id))).scalar_one()
         (await s.get(Job, first)).status = "complete"
+        (await s.get(Printer, 1)).awaiting_plate_clear = False
         await s.commit()
     assert fresh.cache_key == slice_cache.cache_key(INPUTS) and fresh.preset_content_hash == "presethash"
 

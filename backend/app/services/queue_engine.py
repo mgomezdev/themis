@@ -455,8 +455,9 @@ class QueueEngine(EstimatesMixin, LivenessMixin, SlicingMixin, PrintingMixin, Ev
             try:
                 async with self._factory() as session:
                     printer = await session.get(Printer, printer_id)
-                    if printer is not None and scheduling.in_quiet_hours(printer.quiet_start, printer.quiet_end):
-                        continue  # quiet hours: don't start anything new on this printer
+                    if (printer is None or not printer.queue_on or printer.awaiting_plate_clear
+                            or scheduling.in_quiet_hours(printer.quiet_start, printer.quiet_end)):
+                        continue
                     if not await self._try_resume_sliced_job(session, printer_id):
                         await self._try_claim_for_printer(session, printer_id)
             except Exception:

@@ -29,6 +29,7 @@ def _make_mock_printer_manager(printer_ids_ready: list[int]) -> PrinterManager:
     mgr = MagicMock(spec=PrinterManager)
     mgr.get_all_printer_ids.return_value = printer_ids_ready
     mgr.is_printer_ready.side_effect = lambda pid: pid in printer_ids_ready
+    mgr.is_awaiting_plate_clear.return_value = False
     mock_client = MagicMock()
     mock_client.file_upload_supported = False
     mock_client.start_print.return_value = True
@@ -436,6 +437,7 @@ def _make_mock_printer_manager_with_offline(ready_ids: list[int], offline_ids: l
     mgr = MagicMock(spec=PrinterManager)
     mgr.get_all_printer_ids.return_value = all_ids
     mgr.is_printer_ready.side_effect = lambda pid: pid in ready_ids
+    mgr.is_awaiting_plate_clear.return_value = False
     mock_client = MagicMock()
     mock_client.file_upload_supported = False
     mock_client.start_print.return_value = True

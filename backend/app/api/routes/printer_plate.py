@@ -1,7 +1,7 @@
 """A printer's plate and part waivers: waived parts and test prints, reporting what printed on a cleared plate, and the plate-cleared (ready for new work) gate.
 
 Part of the `printers` routes: registered on the same `router` and imported at the bottom of printers.py.
-What tests replace on that module (_LIST_TIMEOUT_S, _MAX_DIRECT_UPLOAD_BYTES, _discovery_lock, _discovery_network, _fetch_sidecar_catalog, _get_connected_client, _set_plate_gate, create_client, printer_manager, queue_engine) is read as `_printers.<name>` at call time, so one patch
+What tests replace on that module is read as `_printers.<name>` at call time, so one patch
 point covers every printers route.
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobModelTarget, JobPrinterConfig, Printer
+from ...services import print_start, print_results
 
 from . import printers as _printers
 from .printers import (  # noqa: I001
@@ -155,6 +156,7 @@ async def plate_results(printer_id: int, session: AsyncSession = Depends(get_ses
     summary="Confirm plate cleared",
     responses={
         404: {"description": "Printer not found"},
+        409: {"description": "Printer is busy or the supplied job is not a finished project job"},
     },
     dependencies=[],      # printers:control is checked by the `key` dependency below (results also need jobs:write)
 )
@@ -167,12 +169,36 @@ async def plate_cleared(
     """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
     what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
     they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
-    printer = await _get_or_404(printer_id, session)
+    lock = print_start.lock_for(printer_id)
+    if lock.locked():
+        raise HTTPException(409, "Printer is busy. Confirm clearance once it is ready.")
+    async with lock:
+        job, recorded, assumed = await _save_plate_clear(printer_id, body, key, session)
     outcome: dict = {}
+    if recorded:
+        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
+        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
+    for a in assumed:                      # a plate counted as failed by default: its parts are packed again
+        if a["requeue"]:
+            again = await print_results.requeue_reported(session, await session.get(Job, a["job_id"]), a["requeue"])
+            a["requeued_job_ids"] = again["requeued_job_ids"]
+            for key in ("held", "requeue_errors"):          # a repack that could not be built holds the parts for a person
+                if again.get(key):
+                    a[key] = again[key]
+    if assumed:
+        outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
+    _printers.queue_engine.wake()
+    return {"ok": True, **outcome}
+
+
+async def _save_plate_clear(printer_id: int, body: PlateResults | None, key, session: AsyncSession):
+    printer = await _get_or_404(printer_id, session)
+    client = _printers.printer_manager._clients.get(printer_id)
+    if client is not None and client.connected and not client.is_idle:
+        raise HTTPException(409, "Printer is busy. Confirm clearance once it is ready.")
     recorded: dict | None = None
     job = None
     if body is not None and body.job_id is not None:
-        from ...services import print_results
         if "jobs:write" not in (getattr(key, "scopes", None) or []):
             raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
         job = await session.get(Job, body.job_id)
@@ -187,13 +213,12 @@ async def plate_cleared(
                 session, job, printer_id, {r.project_item_id: r.quantity_failed for r in body.results})
     # Every other finished plate of this printer that nobody reported (all of them, on a clear without results) gets the
     # Settings default for how its print ended: nothing is left in limbo, and what was assumed is recorded on the job.
-    from ...services import print_results as _results
     # A write first, so the transaction is open before the savepoint: with SQLite a SAVEPOINT that opens the transaction is
     # committed for good by its RELEASE, and assumed results could then outlive a failed clear.
     await session.execute(sa_update(Printer).where(Printer.id == printer_id).values(awaiting_plate_clear=Printer.awaiting_plate_clear))
     try:
         async with session.begin_nested():     # bookkeeping must never fail the clear itself (the QR / home-automation hook)
-            assumed = await _results.apply_clear_defaults(session, printer)
+            assumed = await print_results.apply_clear_defaults(session, printer)
     except Exception:                          # noqa: BLE001 - the plates stay awaiting results; History can still report them
         import logging
         logging.getLogger("app").exception("Applying the plate-clear defaults for printer %s failed", printer_id)
@@ -211,17 +236,4 @@ async def plate_cleared(
     printer.awaiting_plate_clear = False
     await session.commit()                 # results + the clear are in before any repacking
     _printers.printer_manager.set_awaiting_plate_clear(printer_id, False)
-    if recorded:
-        requeued = await print_results.requeue_reported(session, job, recorded["requeue"])
-        outcome = {**requeued, "held": recorded["held"] + requeued["held"]}
-    for a in assumed:                      # a plate counted as failed by default: its parts are packed again
-        if a["requeue"]:
-            again = await _results.requeue_reported(session, await session.get(Job, a["job_id"]), a["requeue"])
-            a["requeued_job_ids"] = again["requeued_job_ids"]
-            for key in ("held", "requeue_errors"):          # a repack that could not be built holds the parts for a person
-                if again.get(key):
-                    a[key] = again[key]
-    if assumed:
-        outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
-    _printers.queue_engine.wake()
-    return {"ok": True, **outcome}         # + requeued_job_ids / held (/ requeue_errors) when results were reported
+    return job, recorded, assumed

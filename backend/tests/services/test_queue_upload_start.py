@@ -1,6 +1,4 @@
-"""_do_upload_and_print: the last hop before a physical print. Upload/start failures must end the job as
-`failed` with a specific reason and leave the printer un-gated; success must hand the printer the right
-file + options and raise the ready-for-work gate. Real QueueEngine/PrinterManager/DB, fake vendor client."""
+"""Verify upload/start failures and the durable plate gate on the real queue with a simulated printer."""
 from tests.fake_topology import declared_topology
 import os
 from unittest.mock import MagicMock
@@ -83,7 +81,7 @@ async def _state(factory, job_id):
     pytest.param({"start": False}, "Start print reported failure by printer", True, id="start-returns-false"),
     pytest.param({"start": RuntimeError("busy")}, "Start print failed: busy", True, id="start-raises"),
 ])
-async def test_upload_or_start_failure_fails_the_job_and_leaves_the_printer_ungated(
+async def test_upload_or_start_failure_fails_the_job_and_holds_the_plate_if_start_was_attempted(
     engine, mgr, session_factory, tmp_path, broadcasts, client_kwargs, expected_reason, start_called,
 ):
     job_id, gcode = await _seed_uploading_job(session_factory, tmp_path)
@@ -98,8 +96,8 @@ async def test_upload_or_start_failure_fails_the_job_and_leaves_the_printer_unga
     assert job.assigned_printer_id is None
     assert job.completed_at is not None
     assert gcode_rows == [] and not os.path.exists(gcode)
-    assert printer.awaiting_plate_clear is False
-    assert mgr.is_awaiting_plate_clear(1) is False
+    assert printer.awaiting_plate_clear is start_called
+    assert mgr.is_awaiting_plate_clear(1) is start_called
     assert client.start_print.called is start_called
     assert broadcasts.job_updates[-1]["status"] == "failed"
 
