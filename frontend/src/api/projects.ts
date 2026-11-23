@@ -133,7 +133,7 @@ export interface GenerateOut {
   pack_bed_x: number;
   pack_bed_y: number;
   /** Per print group (BIZ-360): its pack bed (none for a pool), and why its jobs may sit unclaimed. */
-  groups?: { id: number; pack_bed_x?: number | null; pack_bed_y?: number | null; pool?: boolean; warning?: string }[];
+  groups?: { id: number; pack_bed_x?: number | null; pack_bed_y?: number | null; pool?: boolean; pool_parts?: number; warning?: string }[];
 }
 
 export interface ProjectCreate {
@@ -367,7 +367,7 @@ export function useProjects() {
 
 /** What a generate queued besides jobs: pool groups wait for printers to pack their own plates (so "0 jobs" is not "nothing"). */
 export function pooledGroups(result: Pick<GenerateOut, 'groups'>): number {
-  return (result.groups ?? []).filter(g => g.pool).length;
+  return (result.groups ?? []).filter(g => g.pool || (g.pool_parts ?? 0) > 0).length;
 }
 
 /** The one-line outcome of a generate: jobs, pooled groups, or both. */

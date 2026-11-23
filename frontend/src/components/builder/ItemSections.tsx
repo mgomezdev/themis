@@ -38,18 +38,21 @@ function TriBox({ ids, selected, onChange, label }: {
  * rows coloured by group and filtered by the banner selection. Rows and section headers have checkboxes; the bulk bar acts on the
  * checked rows the current filter shows. Rows drag (every checked row when the dragged one is checked) onto a banner badge.
  */
-export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHint }: {
+export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHint, focusItem }: {
   items: SectionItem[];
   groups: ProjectGroup[];
   filter: BannerSelection;
   renderRow: (item: SectionItem) => ReactNode;
   onBulk: (ids: string[], action: BulkAction) => void;
   emptyHint: ReactNode;
+  focusItem?: string;
 }) {
   const [view, setView] = useState<'file' | 'group'>('file');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [qty, setQty] = useState('');
+  const focusRow = useRef<HTMLDivElement>(null);
+  useEffect(() => { focusRow.current?.focus(); }, [focusItem]);
 
   const defaultId = groups.find(g => g.is_default)?.id ?? null;
   const groupOf = (it: SectionItem) => it.group_id ?? defaultId;
@@ -150,15 +153,16 @@ export function ItemSections({ items, groups, filter, renderRow, onBulk, emptyHi
                 {sec.rows.map(r => {
                   const g = groups.find(x => x.id === groupOf(r));
                   return (
-                    <div key={r.localId} className="row gap-2" draggable data-testid={`row-${r.localId}`}
+                     <div key={r.localId} className="row gap-2 builder-item-section-row" draggable data-testid={`row-${r.localId}`}
+                         ref={focusItem === r.localId ? focusRow : undefined} tabIndex={-1}
                          style={{ alignItems: 'start', borderLeft: `3px solid ${groupColour(groups, groupOf(r))}`, paddingLeft: 6 }}
                          onDragStart={e => e.dataTransfer.setData(DRAG_ITEMS,
                            JSON.stringify(selected.has(r.localId) ? ids : [r.localId]))}>
                       <input type="checkbox" aria-label={`Select ${r.file_name}`} checked={selected.has(r.localId)}
                              onChange={e => toggle([r.localId], e.target.checked)} style={{ marginTop: 8 }} />
-                      <span aria-hidden title="Drag onto a group" style={{ cursor: 'grab', color: 'var(--text-4)', paddingTop: 6 }}>⋮⋮</span>
+                      <span className="builder-drag-handle" aria-hidden title="Drag onto a group" style={{ cursor: 'grab', color: 'var(--text-4)', paddingTop: 6 }}>⋮⋮</span>
                       <div className="grow min-0">{renderRow(r)}</div>
-                      {r.kind !== 'gcode' && g && (
+                      {groups.length <= 1 && r.kind !== 'gcode' && g && (
                         <span className="tiny" style={{ paddingTop: 8, whiteSpace: 'nowrap', color: groupColour(groups, g.id) }}>{g.name}</span>
                       )}
                     </div>

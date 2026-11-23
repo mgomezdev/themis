@@ -32,7 +32,8 @@ export type BuilderAction =
   | { type: 'loaded'; project: Project }
   | { type: 'setFields'; fields: Partial<HeaderFields> }
   /** `groupId`: the group a new row joins (null = the Default Group, whose id is `defaultGroupId` once known). */
-  | { type: 'addFile'; file: Pick<LibraryFile, 'id' | 'original_filename' | 'kind'>; groupId: number | null; defaultGroupId: number | null }
+  | { type: 'addFile'; file: Pick<LibraryFile, 'id' | 'original_filename' | 'kind'>; groupId: number | null; defaultGroupId: number | null;
+      source?: ReturnType<typeof initialSource> }
   | { type: 'updateItem'; localId: string; patch: Partial<LocalItem> }
   | { type: 'applyFilamentToAll'; ask: FilamentAsk }
   | { type: 'setItemsAsk'; localIds: string[]; ask: FilamentAsk }
@@ -119,7 +120,7 @@ export function builderReducer(s: BuilderState, a: BuilderAction): BuilderState 
         ? update(rows, existing.localId, { quantity: existing.quantity + 1 })
         : [...rows, {
             localId: newLocalId(), file_id: a.file.id, file_name: a.file.original_filename, quantity: 1,
-            ...NO_ASK, sort_order: rows.length, group_id: a.groupId, ...initialSource(a.file.kind),
+            ...NO_ASK, sort_order: rows.length, group_id: a.groupId, ...(a.source ?? initialSource(a.file.kind)),
           }]));
     }
     case 'updateItem':

@@ -30,7 +30,7 @@ describe('ModelPicker', () => {
     render(<Picker onAdd={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'x' }));
     expect(listed()).toEqual([]);
-    expect(screen.getByText('No STL files here')).toBeInTheDocument();
+    expect(screen.getByText('No printable files here')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'y' }));
     expect(listed()).toEqual(['Deep.stl']);
   });
@@ -42,6 +42,6 @@ describe('ModelPicker', () => {
     expect(listed()).toEqual(['Root.stl']);
     expect(screen.queryByRole('button', { name: 'All files' })).toBeNull();
     await userEvent.type(screen.getByPlaceholderText('Search files…'), 'zz');
-    expect(screen.getByText('No matching STL files')).toBeInTheDocument();
+    expect(screen.getByText('No matching files')).toBeInTheDocument();
   });
 });

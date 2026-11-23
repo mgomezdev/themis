@@ -83,7 +83,7 @@ export function draftSnapshot(d: ProjectDraft, deletedItemIds: readonly number[]
     name: d.name, customer: isCustomer ? d.customer : '', customerId: isCustomer ? d.customerId : null, orderType: d.orderType,
     onHold: d.onHold, dueDate: d.dueDate, notes: d.notes, price: d.price,
     items: d.items.map(i => ({
-      fid: i.file_id, qty: i.quantity, rule: i.pack_rule, gid: i.group_id,
+      fid: i.file_id, qty: i.quantity, kind: i.kind, source: i.source_ref, rule: i.pack_rule, gid: i.group_id,
       fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
     })),
     del: deletedItemIds,

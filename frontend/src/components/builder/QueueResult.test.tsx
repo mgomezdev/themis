@@ -5,23 +5,21 @@ import { QueueError, QueueSuccess } from './QueueResult';
 
 describe('QueueSuccess', () => {
   it.each([[1, '1 job added to queue'], [3, '3 jobs added to queue']])('counts %d job(s)', (n, text) => {
-    render(<QueueSuccess jobCount={n} warnings={[]} onOpenQueue={() => {}} onOpenProject={() => {}} />);
+    render(<QueueSuccess jobCount={n} warnings={[]} onOpenProject={() => {}} />);
     expect(screen.getByText(text)).toBeInTheDocument();
   });
 
   it('lists each group warning', () => {
-    render(<QueueSuccess jobCount={2} warnings={['Fine: no printer', 'Draft: slow']} onOpenQueue={() => {}} onOpenProject={() => {}} />);
+    render(<QueueSuccess jobCount={2} warnings={['Fine: no printer', 'Draft: slow']} onOpenProject={() => {}} />);
     expect(screen.getByText('Fine: no printer')).toBeInTheDocument();
     expect(screen.getByText('Draft: slow')).toBeInTheDocument();
   });
 
-  it('opens the queue or the project', async () => {
-    const onOpenQueue = vi.fn();
+  it('shows pooled parts separately and opens the project', async () => {
     const onOpenProject = vi.fn();
-    render(<QueueSuccess jobCount={1} warnings={[]} onOpenQueue={onOpenQueue} onOpenProject={onOpenProject} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Queue' }));
+    render(<QueueSuccess jobCount={1} poolParts={3} warnings={[]} onOpenProject={onOpenProject} />);
+    expect(screen.getByText('3 parts waiting in pools')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(onOpenQueue).toHaveBeenCalledTimes(1);
     expect(onOpenProject).toHaveBeenCalledTimes(1);
   });
 });

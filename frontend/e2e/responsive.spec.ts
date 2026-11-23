@@ -107,6 +107,36 @@ for (const { name, viewport } of SIZES) {
       await expect(page.getByRole('button', { name: /Remove from queue/ })).toBeVisible();
       await expectNoHorizontalScroll(page);
     });
+
+    test('Project Builder exposes mixed-file controls without horizontal scrolling', async ({ page }) => {
+      const archive = 'a-long-project-archive-name-with-a-second-plate.gcode.3mf';
+      await mockApi(page, { files: [{ id: 2, original_filename: archive, kind: 'gcode_3mf',
+        plate_count: 2, relative_path: archive, folder: '/', missing: false }] });
+      await page.route('**/api/v1/projects/7', route => route.fulfill({ json: {
+        id: 7, name: 'Mixed files', order_type: 'internal', items: [{ id: 1, file_id: 1,
+          file_name: 'another-long-file-name-for-a-project-part.stl', kind: 'stl', pack_rule: 'split', quantity: 1, group_id: 10 }],
+      } }));
+      await page.route('**/api/v1/projects/7/groups', route => route.fulfill({ json: [
+        { id: 10, name: 'Default Group', is_default: true, strategy: 'fixed', targets: [] },
+        { id: 11, name: 'On-demand group', is_default: false, strategy: 'pool', targets: [] },
+      ] }));
+      await page.goto('/projects/7/edit');
+      await expect(page.getByRole('tab', { name: /^Items.*1/ })).toBeVisible();
+      const packing = await page.getByRole('combobox', { name: 'Packing rule' }).boundingBox();
+      expect(packing?.width).toBeGreaterThanOrEqual(44);
+      expect(packing?.height).toBeGreaterThanOrEqual(44);
+      if (viewport.width <= 640) await page.getByRole('button', { name: 'Add files' }).click();
+      await page.getByRole('button', { name: archive, exact: true }).click();
+      const library = page.locator('#builder-file-library');
+      await library.getByRole('combobox', { name: 'Plate or object' }).selectOption('p:2');
+      await library.getByRole('combobox', { name: 'Print group' }).selectOption('11');
+      await library.getByRole('button', { name: 'Add to project' }).click();
+      const row = page.getByTestId('item-sections');
+      await expect(row.getByRole('combobox', { name: 'Plate or object' })).toHaveValue('p:2');
+      await expect(row.getByRole('combobox', { name: `Move ${archive} to group` })).toHaveValue('11');
+      await expectNoHorizontalScroll(page);
+      expect(await page.locator('.builder-content').evaluate(el => el.scrollWidth - el.clientWidth)).toBe(0);
+    });
   });
 }
 

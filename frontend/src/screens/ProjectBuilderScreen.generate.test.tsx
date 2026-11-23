@@ -244,8 +244,20 @@ describe('ProjectBuilderScreen - Review and Queue project', () => {
     await reviewAndQueue();
     await screen.findByText('1 job added to queue');
     expect(screen.getByText('Fine: no printer can take these jobs')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Queue' }));
+    await userEvent.click(screen.getByRole('button', { name: 'View queue' }));
     expect(where()).toBe('/queue');
+  });
+
+  it('focuses the affected item when a group check names one', async () => {
+    await existing(open('/projects/7/edit', {
+      'GET /api/v1/projects/7/review': { open: 1, checks: [
+        { level: 'error', tab: 'groups', message: 'Choose a compatible group', group_id: 1, item_id: 50 },
+      ] },
+    }));
+    await toTab(/^Review/);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit item' }));
+    expect(screen.getByRole('tab', { name: /^Items/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText('Quantity of Bracket.stl').closest('[data-testid^="row-"]')).toHaveFocus();
   });
 
   it('opens the project from the result banner', async () => {

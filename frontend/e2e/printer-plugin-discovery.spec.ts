@@ -1,6 +1,53 @@
 import { test, expect } from '@playwright/test';
 import { mockApi } from './mock-api';
 
+test('Fleet shows a scan quick-add and requests its camera without a page reload', async ({ page }) => {
+  const ip = '192.168.7.40';
+  const model = {
+    plugin_id: 'elegoo_centauri', manufacturer_id: 'elegoo', manufacturer_name: 'Elegoo', model_id: 'centauri',
+    display_name: 'Centauri Carbon', bed_mm: [256, 256], toolheads: 1, custom: false,
+    plugin_enabled: true, model_enabled: true, model_uuid: 'centauri-uuid', connection_fields: [],
+  };
+  const printer = {
+    id: 501, name: 'Stevie', printer_type: model.plugin_id, model_label: model.display_name,
+    configured: true, connected: true, enabled: true, queue_on: true, state: 'IDLE',
+    loaded_filaments: [], temperatures: {},
+  };
+  let added = false;
+  // mockApi sends no WebSocket notifications, as on a connection without live updates.
+  await mockApi(page, {
+    fleet: () => added ? [printer] : [],
+    printers: [printer],
+    respond: (method, path) => {
+      if (method === 'POST' && path === '/printers/discover') return {
+        ranges: [ip], scanned: 1, truncated: false, found: [{
+          plugin_id: model.plugin_id, printer_type: model.plugin_id, display_name: model.manufacturer_name,
+          model: model.display_name, name: printer.name, ip, model_uuid: model.model_uuid,
+          connection_config: { ip_address: ip }, already_added: false,
+        }],
+      };
+      if (method === 'POST' && path === '/printers') {
+        added = true;
+        return printer;
+      }
+    },
+  });
+  await page.route('**/api/v1/printers/types', route => route.fulfill({ json: [model] }));
+  await page.goto('/fleet');
+  await expect(page.getByText('Stevie', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add printer', exact: true }).click();
+  await page.getByRole('button', { name: /scan network for printers/i }).click();
+  await page.getByRole('button', { name: 'Scan', exact: true }).click();
+  await page.getByRole('button', { name: `Add ${ip}`, exact: true }).click();
+  await expect(page.getByTestId('row-status')).toHaveText('Added · configured');
+
+  await Promise.all([
+    page.waitForRequest(request => new URL(request.url()).pathname === '/api/v1/printers/501/snapshot', { timeout: 5000 }),
+    page.getByRole('button', { name: 'Fleet', exact: true }).click(),
+  ]);
+  await expect(page.getByText('Stevie', { exact: true })).toBeVisible();
+});
+
 test('Bambu settings add a scanned printer in place with only the quick-add fields', async ({ page }) => {
   const plugin = {
     id: 'bambu', name: 'Bambu Lab', version: '1.0.0', description: 'Printer plug-in', docs_url: null,

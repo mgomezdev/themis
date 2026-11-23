@@ -72,7 +72,7 @@ async function save() {
 const itemRows = () => screen.queryAllByText(/\.(stl|3mf|gcode)$/i, { selector: 'span[title]' }).map(e => e.textContent);
 /** Label of every file button in the model picker, in order. */
 const pickerFiles = () => screen.queryAllByTitle(/^Add /).map(e => e.getAttribute('title')!.slice(4));
-const rowOf = (fileName: string) => screen.getByLabelText(`Quantity of ${fileName}`).parentElement!;
+const rowOf = (fileName: string) => screen.getByLabelText(`Quantity of ${fileName}`).closest('.builder-item-grid')! as HTMLElement;
 
 /** An existing project, loaded, on its Details tab. */
 async function loadedDetails() {
@@ -393,7 +393,7 @@ describe('ProjectBuilderScreen - model folder tree', () => {
     file(9, 'notes.txt', 'Toys'),
     file(10, 'Sliced.gcode', 'Toys', { kind: 'gcode' }),
   ];
-  const tree = () => screen.getByText('STL Files').parentElement!;
+  const tree = () => screen.getByText('File library').parentElement!;
   const folder = (name: string) => within(tree()).queryAllByRole('button').filter(b => b.textContent === name);
   const openTree = async () => {
     open('/projects/new', { 'GET /api/v1/files': TREE_FILES });
@@ -457,6 +457,6 @@ describe('ProjectBuilderScreen - model folder tree', () => {
     await openTree();
     await userEvent.type(screen.getByPlaceholderText('Search files…'), 'zzz');
     expect(folder('All files')).toHaveLength(0);
-    expect(screen.getByText('No matching STL files')).toBeInTheDocument();
+    expect(screen.getByText('No matching files')).toBeInTheDocument();
   });
 });
