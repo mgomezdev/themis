@@ -17,7 +17,7 @@ from ...models import (
     Printer,
     QueueConfig,
 )
-from .. import completion_events, job_details
+from .. import completion_events, job_details, print_start
 from ...eventing.hub import hub as event_hub
 from .. import filament_matching
 
@@ -162,7 +162,12 @@ class PrintingMixin:
         async with lock_for(printer_id):
             try:
                 async with self._factory() as session:
-                    await check_assignment(session, job_id, printer_id)
+                    printer = await check_assignment(session, job_id, printer_id)
+                    client = self._mgr.get_client(printer_id)
+                    if (not printer.queue_on or printer.awaiting_plate_clear or not client.is_idle
+                            or self._mgr.is_awaiting_plate_clear(printer_id)):
+                        await self._park_upload(session, job_id, printer_id)
+                        return
                 await self._upload_and_start_current(job_id, printer_id, gcode_path, plate_number, filament_selection)
             except ValueError as exc:
                 async with self._factory() as session:
@@ -202,32 +207,48 @@ class PrintingMixin:
             slot_plan=(filament_selection or {}).get('slot_plan'),
             loaded_filaments=(filament_selection or {}).get('loaded_filaments'),
         )
-        from ..printer_topology import check_assignment
-        async with self._factory() as session:
-            await check_assignment(session, job_id, printer_id)
-        if self._mgr.get_client(printer_id) is not client or not client.connected:
-            raise ValueError("Printer session changed or disconnected during upload")
+        async with print_start.lock_for(printer_id):
+            from ..printer_topology import check_assignment
+            async with self._factory() as session:
+                await check_assignment(session, job_id, printer_id)
+                if self._mgr.get_client(printer_id) is not client or not client.connected:
+                    raise ValueError("Printer session changed or disconnected during upload")
+                reserved = client.is_idle and await print_start.reserve_plate(session, self._mgr, printer_id, queued=True)
+                if not reserved:
+                    await self._park_upload(session, job_id, printer_id)
+                    return
+            start_error_msg = await self._send_start(client, printer_id, job_id, gcode_filename, opts)
+            if not start_error_msg:
+                async with self._factory() as session:
+                    origin = await self._origin_of(session, printer_id)
+                if not await self.mark_printing(job_id, printer_id, origin=origin):
+                    return
+        if start_error_msg:
+            await self._fail_job_post_slice(job_id, printer_id, start_error_msg)
+        else:
+            await self._broadcast_job(job_id)
+
+    async def _park_upload(self, session: AsyncSession, job_id: int, printer_id: int) -> None:
+        await session.execute(update(Job).where(Job.id == job_id, Job.status == "uploading", Job.assigned_printer_id == printer_id)
+                              .values(status="sliced", assigned_printer_id=None, updated_at=_qe._now()))
+        await session.commit()
+        await self._broadcast_job(job_id)
+        self.wake()
+
+    async def _send_start(self, client, printer_id, job_id, filename, options) -> str | None:
+        # A failed return or exception can mean a lost response. Keep the durable plate gate.
         start_error_msg = None
         try:
-            start_ok = await loop.run_in_executor(
-                self._executor, client.start_print, gcode_filename, opts
-            )
+            start_ok = await print_start.send(client, filename, options, executor=self._executor)
         except Exception as e:
             _qe.logger.exception("start_print failed for job %s on printer %s", job_id, printer_id)
             start_ok = False
             start_error_msg = f"Start print failed: {e}"
         if not start_ok:
             _qe.logger.warning("start_print of %s on printer %s reported failure for job %s",
-                           gcode_filename, printer_id, job_id)
-            reason = start_error_msg or "Start print reported failure by printer"
-            await self._fail_job_post_slice(job_id, printer_id, reason)
-            return
-
-        async with self._factory() as session:
-            origin = await self._origin_of(session, printer_id)
-        if not await self.mark_printing(job_id, printer_id, origin=origin):
-            return
-        await self._broadcast_job(job_id)
+                           filename, printer_id, job_id)
+            return start_error_msg or "Start print reported failure by printer"
+        return None
 
     async def _origin_of(self, session: AsyncSession, printer_id: int | None) -> str | None:
         """The plugin that owns a printer: the `origin` of the events core publishes for what that printer's plugin reported."""
@@ -360,7 +381,7 @@ class PrintingMixin:
         forget the run: one more failed print pauses it again, until a print succeeds. Never raises (it runs inside failure
         handling)."""
         try:
-            async with self._factory() as session:
+            async with print_start.lock_for(printer_id), self._factory() as session:
                 cfg = await session.get(QueueConfig, 1)
                 limit = int(cfg.pause_after_failed_prints) if cfg is not None and cfg.pause_after_failed_prints is not None else 3
                 printer = await session.get(Printer, printer_id)

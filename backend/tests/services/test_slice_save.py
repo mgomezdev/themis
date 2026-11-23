@@ -170,6 +170,7 @@ async def test_a_second_identical_slice_is_not_saved_twice(session_factory, tmp_
     await _run_to_printing(qe, session_factory, first)
     async with session_factory() as s:   # the printer finishes and is cleared for the next job
         (await s.get(Job, first)).status = "complete"
+        (await s.get(Printer, 1)).awaiting_plate_clear = False
         await s.commit()
     second = await _seed(session_factory)
 
@@ -332,6 +333,7 @@ async def test_a_version_whose_file_went_missing_is_not_a_duplicate(session_fact
         (old,) = (await s.execute(select(SlicedVersion))).scalars().all()
         (await s.get(UploadedFile, old.file_id)).missing = True
         (await s.get(Job, first)).status = "complete"
+        (await s.get(Printer, 1)).awaiting_plate_clear = False
         await s.commit()
     second = await _seed(session_factory)
 

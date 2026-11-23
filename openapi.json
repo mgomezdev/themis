@@ -2244,6 +2244,9 @@
           "404": {
             "description": "Printer not found"
           },
+          "409": {
+            "description": "Printer is busy or the supplied job is not a finished project job"
+          },
           "422": {
             "description": "Validation Error",
             "content": {

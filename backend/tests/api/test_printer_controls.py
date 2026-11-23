@@ -461,7 +461,7 @@ async def test_upload_failure_modes(client, printer_id):
     mock.start_print.return_value = False
     resp = await _upload(client, printer_id, start=True)
     assert resp.status_code == 502 and "would not start" in resp.json()["detail"]
-    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["awaiting_plate_clear"] is False   # not marked: nothing printing
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["awaiting_plate_clear"] is True
 
 
 async def test_upload_needs_the_capability(client, printer_id):
@@ -481,18 +481,22 @@ def test_default_client_commands_are_plain_gcode():
     assert sent == ["G91", "G1 X-2.5", "G90", "G28 X Y", "M104 S210"]
 
 
-async def test_upload_and_print_claims_the_printer_before_uploading_so_the_queue_cannot_race_it(client, printer_id):
+async def test_upload_and_print_reserves_the_plate_after_upload_and_before_start(client, printer_id):
     mock = _console_client(direct_upload=True)
     seen: dict = {}
 
     def upload(data, name):
         seen["gate_during_upload"] = printer_manager.is_awaiting_plate_clear(printer_id)
         return True
+    def start(name, options):
+        seen["gate_during_start"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        return True
     mock.upload_file.side_effect = upload
+    mock.start_print.side_effect = start
     printer_manager._clients[printer_id] = mock
 
     assert (await _upload(client, printer_id, start=True)).status_code == 200
-    assert seen["gate_during_upload"] is True
+    assert seen == {"gate_during_upload": False, "gate_during_start": True}
 
 
 async def test_upload_and_print_refuses_an_uncleared_plate_but_upload_only_is_fine(client, printer_id):

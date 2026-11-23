@@ -1,13 +1,14 @@
 """Files on the printer itself: direct upload-and-print, listing, printing, deleting and copying stored files to the library.
 
 Part of the `printers` routes: registered on the same `router` and imported at the bottom of printers.py.
-What tests replace on that module (_LIST_TIMEOUT_S, _MAX_DIRECT_UPLOAD_BYTES, _discovery_lock, _discovery_network, _fetch_sidecar_catalog, _get_connected_client, _set_plate_gate, create_client, printer_manager, queue_engine) is read as `_printers.<name>` at call time, so one patch
+What tests replace on that module is read as `_printers.<name>` at call time, so one patch
 point covers every printers route.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Awaitable, Callable
 from fastapi import Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Printer
+from ...services import print_start
 from ...services.library_scanner import is_presliced_name
 from ...services.printer_topology import check_device, lock_for
 
@@ -25,57 +27,45 @@ from .printers import (  # noqa: I001
     _stem,
     router,
 )
-from .printer_controls import _CONSOLE_RESPONSES, _direct_start_locks, _ok_or_502, _require_capability
+from .printer_controls import _CONSOLE_RESPONSES, _ok_or_502, _require_capability
 
 
-async def _start_stored_file(client, file_id: str, failure: str, *, session, printer_id: int) -> None:
-    from ...services.abstract_printer_client import StartPrintOptions
+async def _check_start_client(session, client, printer_id: int) -> Printer:
     try:
-        await check_device(session, printer_id)
+        printer = await check_device(session, printer_id)
         if _printers.printer_manager.get_client(printer_id) is not client or not client.connected:
             raise ValueError("Printer session changed or disconnected during upload")
     except (ValueError, KeyError) as exc:
         raise HTTPException(409, str(exc)) from exc
-    opts = StartPrintOptions(gcode_path=os.path.basename(file_id))     # same options the queue engine passes
-    if not await asyncio.to_thread(client.start_print, file_id, opts):
-        raise HTTPException(502, failure)
+    if not client.is_idle:
+        raise HTTPException(409, "Printer is not idle")
+    return printer
 
 
-async def _direct_start(session: AsyncSession, client, printer_id: int, steps) -> None:
-    """Run `steps` (which end in a start_print) on a printer that is idle, uncleared-plate-free and not held by
-    a queue job. The printer is claimed (plate gate set) BEFORE the steps so the queue engine cannot race them,
-    and released again if nothing ended up printing."""
-    # One direct start per printer at a time: the checks below await, so without this two concurrent requests
-    # could both pass them before either has claimed the printer.
-    async with lock_for(printer_id), _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
-        try:
-            await check_device(session, printer_id)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        if not client.is_idle:
-            raise HTTPException(409, "Printer is not idle")
-        if _printers.printer_manager.is_awaiting_plate_clear(printer_id):
-            raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
+async def _direct_start(session: AsyncSession, client, printer_id: int, file_id: str, failure: str,
+                        *, upload: Callable[[], Awaitable[None]] | None = None) -> None:
+    """Hold the topology lock through preparation and reserve the plate before submitting a start."""
+    from ...services.abstract_printer_client import StartPrintOptions
+
+    manager = _printers.printer_manager
+    plate_error = "The previous plate has not been cleared; mark the printer ready first"
+    async with lock_for(printer_id):
+        printer = await _check_start_client(session, client, printer_id)
+        if printer.awaiting_plate_clear or manager.is_awaiting_plate_clear(printer_id):
+            raise HTTPException(409, plate_error)
         busy = await session.execute(
             select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
         if busy.first() is not None:
             raise HTTPException(409, "A queued job currently holds this printer")
-        printer = await session.get(Printer, printer_id)
-        await _printers._set_plate_gate(session, printer, printer_id, True)
-        started = False
-        try:
-            await steps()
-            started = True
-        finally:
-            if not started:
-                await _printers._set_plate_gate(session, printer, printer_id, False)
-
-
-async def _set_plate_gate(session: AsyncSession, printer, printer_id: int, value: bool) -> None:
-    _printers.printer_manager.set_awaiting_plate_clear(printer_id, value)
-    if printer is not None:
-        printer.awaiting_plate_clear = value
-        await session.commit()
+        if upload is not None:
+            await upload()
+        async with print_start.lock_for(printer_id):
+            await _check_start_client(session, client, printer_id)
+            if not await print_start.reserve_plate(session, manager, printer_id, queued=False):
+                raise HTTPException(409, plate_error)
+            options = StartPrintOptions(gcode_path=os.path.basename(file_id))
+            if not await print_start.send(client, file_id, options):
+                raise HTTPException(502, failure)
 
 
 _UPLOAD_EXTENSIONS = (".gcode", ".gcode.3mf", ".3mf", ".bgcode")
@@ -116,12 +106,11 @@ async def upload_to_printer(
             raise HTTPException(502, "Printer rejected the upload")
         return {"ok": True, "filename": name, "started": False}
 
-    async def steps() -> None:
+    async def upload() -> None:
         if not await asyncio.to_thread(client.upload_file, data, name):
             raise HTTPException(502, "Printer rejected the upload")
-        await _start_stored_file(client, name, "Uploaded, but the printer would not start the print", session=session, printer_id=printer_id)
 
-    await _direct_start(session, client, printer_id, steps)
+    await _direct_start(session, client, printer_id, name, "Uploaded, but the printer would not start the print", upload=upload)
     return {"ok": True, "filename": name, "started": True}
 
 
@@ -177,10 +166,7 @@ async def print_stored_file(printer_id: int, body: FileRef, session: AsyncSessio
     if not body.file_id.lower().endswith((".gcode", ".3mf", ".bgcode")):
         raise HTTPException(422, "Not a printable file")
 
-    async def steps() -> None:
-        await _start_stored_file(client, body.file_id, "The printer would not start the print", session=session, printer_id=printer_id)
-
-    await _direct_start(session, client, printer_id, steps)
+    await _direct_start(session, client, printer_id, body.file_id, "The printer would not start the print")
     return {"ok": True, "file_id": body.file_id, "started": True}
 
 
