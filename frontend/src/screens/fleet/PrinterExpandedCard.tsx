@@ -203,6 +203,7 @@ export function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, on
               printerId={p.id}
               intervalMs={snapshotIntervalMs}
               noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
+              stream={p.capabilities.includes('camera')}
             />
 
             <div className="row gap-6 wrap">

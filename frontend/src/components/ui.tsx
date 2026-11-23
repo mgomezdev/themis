@@ -53,6 +53,44 @@ export function MaterialChip({ material, color }: { material: string; color: str
 
 const SNAPSHOT_INTERVAL_MS = 2000;
 
+const cameraImageStyle: React.CSSProperties = {
+  position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+};
+
+function SnapshotFeed({ printerId, interval }: { printerId: string; interval: number }) {
+  const [visible, setVisible] = React.useState<number | null>(null);
+  const [pending, setPending] = React.useState<number | null>(0);
+  const next = React.useRef(1);
+
+  React.useEffect(() => {
+    if (pending !== null) return;
+    const timer = setTimeout(() => setPending(next.current++), interval);
+    return () => clearTimeout(timer);
+  }, [interval, pending]);
+
+  // Promote the same decoded image so no-store snapshots are fetched only once per frame.
+  return [visible, pending].map(frame => frame === null ? null : (
+    <img
+      key={frame}
+      src={withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${frame}`)}
+      style={frame === visible ? cameraImageStyle : { ...cameraImageStyle, visibility: 'hidden' }}
+      onLoad={frame === pending ? () => {
+        setVisible(frame);
+        setPending(null);
+      } : undefined}
+      onError={frame === pending ? () => setPending(null) : undefined}
+      alt=""
+    />
+  ));
+}
+
+function CameraTileFeed({ printerId, interval, stream }: { printerId: string; interval: number; stream: boolean }) {
+  const [streamFailed, setStreamFailed] = React.useState(false);
+  return stream && !streamFailed
+    ? <img src={withKeyParam(`/api/v1/printers/${printerId}/camera`)} style={cameraImageStyle} data-live-camera onError={() => setStreamFailed(true)} alt="" />
+    : <SnapshotFeed printerId={printerId} interval={interval} />;
+}
+
 export function VideoTile({
   live = true,
   status,
@@ -60,6 +98,7 @@ export function VideoTile({
   printerId,
   intervalMs,
   noSnapshotsWhileIdle,
+  stream = false,
 }: {
   live?: boolean;
   status?: StatusKey;
@@ -67,52 +106,15 @@ export function VideoTile({
   printerId?: string;
   intervalMs?: number;
   noSnapshotsWhileIdle?: boolean;
+  stream?: boolean;
 }) {
-  const [imgError, setImgError] = React.useState(false);
-  const [snapTick, setSnapTick] = React.useState(0);
-  const [displayedTick, setDisplayedTick] = React.useState(0);
-
   const paused = noSnapshotsWhileIdle && status !== 'printing';
-  const interval = intervalMs ?? SNAPSHOT_INTERVAL_MS;
-
-  React.useEffect(() => {
-    setImgError(false);
-    setSnapTick(0);
-    setDisplayedTick(0);
-  }, [printerId]);
-
-  React.useEffect(() => {
-    if (!live || !printerId || paused) return;
-    const id = setInterval(() => setSnapTick(t => t + 1), interval);
-    return () => clearInterval(id);
-  }, [live, printerId, paused, interval]);
-
-  // Load each new snapshot off-screen. Keep the last decoded frame visible until the
-  // replacement is ready; swapping/remounting the <img> on every timer tick flashes black.
-  React.useEffect(() => {
-    if (!live || !printerId || paused || snapTick === displayedTick) return;
-    const image = new Image();
-    image.onload = () => setDisplayedTick(snapTick);
-    image.src = withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`);
-    return () => { image.onload = null; };
-  }, [live, printerId, paused, snapTick, displayedTick]);
-
-  const showCamera = live && printerId && !imgError && !paused;    // an idle printer set to be left alone is not even fetched once
-
   return (
-    <div className={`video ${live ? 'live' : ''}`}>
-      {showCamera ? (
-        <img
-          src={withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${displayedTick}`)}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-          onError={() => setImgError(true)}
-          alt=""
-        />
-      ) : (
-        <>
-          <div className="feed-scene" />
-          <div className="feed-noise" />
-        </>
+    <div className="video">
+      <div className="feed-scene" />
+      <div className="feed-noise" />
+      {live && printerId && !paused && (
+        <CameraTileFeed key={printerId} printerId={printerId} interval={intervalMs ?? SNAPSHOT_INTERVAL_MS} stream={stream} />
       )}
       {time != null && <div className="feed-time mono">{fmtClock(time)}</div>}
       {status && (

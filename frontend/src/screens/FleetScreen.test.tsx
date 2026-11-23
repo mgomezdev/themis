@@ -96,6 +96,18 @@ describe('FleetScreen', () => {
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
   });
 
+  it('uses snapshots in the grid and streams the camera when the printer is expanded', async () => {
+    mockFetch([{ ...PRINTER_1, capabilities: { camera: true } }]);
+    const { container } = render(<FleetScreen />);
+    const name = await screen.findByText('Forge');
+    expect(container.querySelector('img[src*="/printers/1/snapshot"]')).toBeInTheDocument();
+    fireEvent.click(name);
+    expect(container.querySelector('img[src*="/printers/1/camera"]')).toBeInTheDocument();
+    expect(container.querySelector('img[src*="/printers/1/snapshot"]')).toBeNull();
+    fireEvent.click(screen.getByTitle('Collapse'));
+    expect(container.querySelector('img[src*="/printers/1/snapshot"]')).toBeInTheDocument();
+  });
+
   it('shows correct printer count in header', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
