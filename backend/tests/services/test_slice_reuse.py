@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models import GcodeFile, Job, QueueConfig, SlicedVersion, UploadedFile
+from app.models import GcodeFile, Job, Printer, QueueConfig, SlicedVersion, UploadedFile
 from app.services import slice_cache
 from tests.services.test_slice_save import (  # noqa: F401 — `env` is a fixture
     FINGERPRINT, GCODE, MACHINE, _engine, _run_to_printing, _seed, env,
