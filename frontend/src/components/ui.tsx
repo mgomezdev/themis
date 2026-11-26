@@ -53,6 +53,25 @@ export function MaterialChip({ material, color }: { material: string; color: str
 
 const SNAPSHOT_INTERVAL_MS = 2000;
 
+/** The printer model's picture, served by the printer's plugin (`GET /printers/{id}/image`). No picture (no plugin
+ * image, plugin disabled/removed): a generic printer icon. Makes no camera requests. */
+export function PrinterImage({ printerId }: { printerId: string }) {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => { setFailed(false); }, [printerId]);
+  return (
+    <div className="video" data-testid="printer-image"
+         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-1)' }}>
+      {failed
+        ? <span data-testid="printer-image-fallback" style={{ color: 'var(--text-3)' }}>
+            {React.cloneElement(Icons.printer, { size: 56 } as React.SVGProps<SVGSVGElement>)}
+          </span>
+        : <img src={withKeyParam(`/api/v1/printers/${printerId}/image`)} alt=""
+               style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', padding: 8 }}
+               onError={() => setFailed(true)} />}
+    </div>
+  );
+}
+
 export function VideoTile({
   live = true,
   status,

@@ -3380,6 +3380,49 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/image": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Printer model picture (from its plugin)",
+        "operationId": "printer_image_api_v1_printers__printer_id__image_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found, or its plugin declares no picture for the model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/topology/refresh": {
       "post": {
         "tags": [

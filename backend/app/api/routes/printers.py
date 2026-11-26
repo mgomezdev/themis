@@ -1004,4 +1004,5 @@ from .printer_camera import (  # noqa: E402,F401,I001
     stream_camera,  # noqa: F401
 )
 
+from . import printer_image  # noqa: E402,F401
 from . import printer_topology  # noqa: E402,F401
