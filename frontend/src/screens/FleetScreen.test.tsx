@@ -90,6 +90,45 @@ describe('FleetScreen', () => {
     vi.unstubAllGlobals();
   });
 
+  describe('card media toggle (camera / image)', () => {
+    const imgSrcs = (c: HTMLElement) => Array.from(c.querySelectorAll('img')).map(i => i.getAttribute('src') ?? '');
+
+    beforeEach(() => { localStorage.clear(); });
+    afterEach(() => { localStorage.clear(); });
+
+    it('defaults to the camera and switches every card to the plugin-served image, persisting the choice', async () => {
+      mockFetch([PRINTER_1]);
+      const { container, unmount } = render(<FleetScreen />);
+      await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
+      expect(screen.queryByTestId('printer-image')).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Image' }));
+      expect(await screen.findByTestId('printer-image')).toBeInTheDocument();
+      expect(imgSrcs(container).some(src => src.includes('/printers/1/image'))).toBe(true);
+      expect(imgSrcs(container).some(src => src.includes('/snapshot'))).toBe(false);   // no camera requests in image mode
+      expect(localStorage.getItem('themis.fleet.media')).toBe('image');
+
+      unmount();                                                       // a reload remembers it
+      mockFetch([PRINTER_1]);
+      render(<FleetScreen />);
+      expect(await screen.findByTestId('printer-image')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Camera' }));
+      await waitFor(() => expect(screen.queryByTestId('printer-image')).toBeNull());
+      expect(localStorage.getItem('themis.fleet.media')).toBe('camera');
+    });
+
+    it('falls back to a generic printer icon when the plugin has no picture', async () => {
+      localStorage.setItem('themis.fleet.media', 'image');
+      mockFetch([PRINTER_1]);
+      const { container } = render(<FleetScreen />);
+      await screen.findByTestId('printer-image');
+      fireEvent.error(container.querySelector('[data-testid="printer-image"] img')!);
+      expect(await screen.findByTestId('printer-image-fallback')).toBeInTheDocument();
+      expect(container.querySelector('[data-testid="printer-image"] img')).toBeNull();
+    });
+  });
+
   it('shows printer name loaded from API', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);

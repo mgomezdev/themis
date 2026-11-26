@@ -68,6 +68,9 @@ class PrinterModel:
     # True for a generic/user-defined model: its bed size (and any capability the plugin lets the user state) is the user's input
     # when the printer is added, not a vendor fact. The add-printer flow asks for it; it is stored on the printer row.
     custom: bool = False
+    # Picture of this model for the Fleet card: a `.png` path inside the plugin package, relative to its root (e.g.
+    # `images/p1s.png`). The plugin owns the file; core serves it through `services/printer_images.py` and stores nothing.
+    image: str | None = None
 
 
 @dataclass(frozen=True)

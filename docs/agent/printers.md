@@ -253,3 +253,7 @@ reported by firmware require explicit user configuration. The existing
 Vendor file/print commands and G-code controls live in plugins; core passes
 neutral selections and per-tool sizes. A refresh changes neither plugin binding
 nor connection. Hardware protocol checks remain opt-in and read-only by default.
+
+## Printer pictures (BIZ-406)
+
+`PrinterModel.image` (plugin-relative `.png`) is the model's picture; `GET /api/v1/printers/{id}/image` serves it (`services/printer_images.py`, route in `api/routes/printer_image.py`). Fleet's Camera/Image toggle (`themis.fleet.media` in localStorage) picks `VideoTile` vs `PrinterImage` on cards. Bundled PNGs are placeholders; drop real ones over `plugins/<vendor>/images/<model_id>.png`.
