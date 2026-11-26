@@ -1,5 +1,7 @@
 """Model -> slicer machine profile mapping (BIZ-294): CRUD, variant validation, default uniqueness, a printer's nozzle variant, the
 resolved profile on printers, and suggestions from the provider (stubbed to the Laminus profiles contract)."""
+import asyncio
+
 from tests.printer_ips import ip_config
 from dataclasses import replace
 from unittest.mock import patch
@@ -9,6 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Printer, PrinterModelSlicerProfile
+from app.api.routes import printer_model_slicer_profiles as mapping_routes
 from app.plugins import get_plugin, register_plugin
 from app.services import slice_resolution, slicer_profiles
 from tests.fake_providers import FakeGcodeProducer, FakeSlicingProvider, make_catalog
@@ -147,6 +150,70 @@ async def test_the_default_cannot_be_deleted_while_other_variants_exist(client, 
     await client.delete(f"/api/v1/printers/{pid}")
     assert (await client.delete(url(model, first["id"]))).status_code == 204       # nobody follows it any more
     assert (await client.get(url(model))).json() == []
+
+
+async def test_a_variant_promoted_while_its_delete_is_in_flight_is_kept_as_the_default(client, p1s, monkeypatch):
+    """GH #232: DELETE judged the mapping non-default, a PATCH promoted it (demoting the old default), then DELETE removed it,
+    leaving the pair with no default. The stale delete is refused instead."""
+    _, model = p1s
+    first = (await add(client, model)).json()
+    second = (await add(client, model, P1S_06, d=0.6)).json()
+    read, resume = asyncio.Event(), asyncio.Event()
+    lookup = mapping_routes._row_or_404
+
+    async def pause_after_first_read(*args, **kwargs):
+        row = await lookup(*args, **kwargs)
+        if not read.is_set():
+            read.set()
+            await resume.wait()
+        return row
+
+    monkeypatch.setattr(mapping_routes, "_row_or_404", pause_after_first_read)
+    deleting = asyncio.create_task(client.delete(url(model, second["id"])))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        assert (await client.patch(url(model, second["id"]), json={"is_default": True})).status_code == 200
+    finally:
+        resume.set()
+        deleted = await deleting
+    assert deleted.status_code == 409, deleted.text
+    assert "changed while" in deleted.json()["detail"]
+    rows = {r["id"]: r["is_default"] for r in (await client.get(url(model))).json()}
+    assert rows == {first["id"]: False, second["id"]: True}
+
+
+async def test_a_variant_created_while_the_last_default_is_being_deleted_keeps_a_default(client, create_printer, model_uuid_of,
+                                                                                         monkeypatch):
+    """GH #232, second interleaving: DELETE of the only (default) mapping saw no siblings, a create committed a non-default
+    sibling, and the delete left that sibling without a default."""
+    pid = await create_printer(machine_profile_override=None)
+    model = await model_uuid_of(pid)
+    only = (await add(client, model)).json()
+    overridden = await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": "Custom"})
+    assert overridden.status_code == 200, overridden.text  # nobody follows the default, so only the race can refuse the delete
+    read, resume = asyncio.Event(), asyncio.Event()
+    rows_of = slicer_profiles.mapping_rows
+
+    async def pause_first_sibling_read(*args, **kwargs):
+        rows = await rows_of(*args, **kwargs)
+        if not read.is_set():
+            read.set()
+            await resume.wait()
+        return rows
+
+    monkeypatch.setattr(slicer_profiles, "mapping_rows", pause_first_sibling_read)
+    deleting = asyncio.create_task(client.delete(url(model, only["id"])))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        created = await add(client, model, P1S_06, d=0.6)
+        assert created.status_code == 201 and not created.json()["is_default"], created.text
+    finally:
+        resume.set()
+        deleted = await deleting
+    assert deleted.status_code == 409, deleted.text
+    assert "changed while" in deleted.json()["detail"]
+    rows = {r["id"]: r["is_default"] for r in (await client.get(url(model))).json()}
+    assert rows == {only["id"]: True, created.json()["id"]: False}
 
 
 async def test_a_variant_a_printer_uses_cannot_be_deleted(client, p1s):
