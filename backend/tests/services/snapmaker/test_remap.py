@@ -7,6 +7,9 @@ Paint node construction:
 """
 import re
 import zipfile
+from itertools import permutations
+
+import pytest
 
 from app.plugins._protocols.three_mf.paint_remap import encode_nodes, decode_nodes
 from app.plugins._protocols.three_mf.remap import remap_3mf
@@ -59,6 +62,22 @@ def test_remap_3mf_filament_map_remaps_paint_and_object(tmp_path):
     # filament 1 (state 3) remapped to tool_index 2 → state 5
     assert decode_nodes(pc) == ("L", 5)
     assert 'key="extruder" value="3"' in ms
+
+
+@pytest.mark.parametrize("with_model_settings", [True, False], ids=["settings", "no-settings"])
+@pytest.mark.parametrize("slots", list(permutations(range(3), 2)))
+def test_filament_map_routes_default_extruder_with_paint(tmp_path, slots, with_model_settings):
+    # Regression (GH #233): without model_settings.config the synthesized
+    # object extruder was hardcoded to 1 while the paint followed the map.
+    p = _prepared(tmp_path, paint=encode_nodes(("L", 3)), with_model_settings=with_model_settings)
+    routing = [{"model_filament": f, "tool_index": t} for f, t in enumerate(slots, 1)]
+    remap_3mf(p, filament_map=routing)
+    with zipfile.ZipFile(p) as z:
+        assert z.read("Metadata/project_settings.config") == b"{}"
+        pc = re.search(r'paint_color="([^"]+)"', z.read("3D/Objects/o.model").decode()).group(1)
+        ms = z.read("Metadata/model_settings.config").decode()
+    assert decode_nodes(pc) == ("L", slots[0] + 3)
+    assert f'key="extruder" value="{slots[0] + 1}"' in ms
 
 
 def test_remap_3mf_noop_when_both_none(tmp_path):
