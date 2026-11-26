@@ -3808,7 +3808,7 @@
             "description": "Unknown mapping"
           },
           "409": {
-            "description": "It is the default of a model with other variants, or a printer uses it"
+            "description": "It is the default of a model with other variants, a printer uses it, or it changed concurrently"
           },
           "422": {
             "description": "Validation Error",
