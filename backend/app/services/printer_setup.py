@@ -6,6 +6,7 @@ import asyncio
 import logging
 import socket
 from dataclasses import dataclass
+from typing import Callable
 
 from .abstract_printer_client import ConnectionField
 from .printer_client_factory import client_class, create_client_from_config
@@ -153,6 +154,35 @@ async def _persist(session_factory, printer_id: int, configured: bool, error: st
             await session.commit()
 
 
+async def write_if_current(session_factory, printer_id: int, still_current, configured: bool, error: str | None) -> bool:
+    """Record a test result only if `still_current(printer)` holds for the committed row. A no-op UPDATE takes SQLite's write lock
+    first, so no connection edit can commit between the check and the write."""
+    from sqlalchemy import update
+    from ..models import Printer
+    async with session_factory() as session:
+        await session.execute(update(Printer).where(Printer.id == printer_id).values(id=Printer.id)
+                              .execution_options(synchronize_session=False))
+        printer = await session.get(Printer, printer_id, populate_existing=True)
+        if printer is None or not still_current(printer):
+            await session.rollback()
+            return False
+        printer.configured, printer.config_error = configured, error
+        from .printer_manager import printer_manager
+        was = printer_manager.is_configured(printer_id)
+        printer_manager.set_configured(printer_id, configured)   # before the lock is released: an edit's own reset always lands last
+        try:
+            await session.commit()
+        except BaseException:
+            printer_manager.set_configured(printer_id, was)
+            raise
+        return True
+
+
+def _tested_with(tested: dict, fields) -> Callable:
+    """The row still connects the way the test did: a result for since-edited credentials must not mark the printer."""
+    return lambda printer: not connection_changed(tested, printer.connection_config, fields)
+
+
 async def _report(printer_id: int, outcome: TestOutcome) -> None:
     from .printer_manager import printer_manager
     if printer_manager._on_state_broadcast:
@@ -225,19 +255,25 @@ async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
         printer_manager.disconnect_printer(printer_id)
         printer_manager.set_printer_plugin(printer_id, printer.plugin_id)
         client = create_client(printer)
+        current = _tested_with(dict(printer.connection_config or {}), fields_for(printer))
     printer_manager.connect_printer(printer_id, client)
-    if await wait_connected(client, TEST_CONNECT_POLL_S):
-        await printer_manager.mark_configured(printer_id, session_factory, broadcast=False)
-        return TestOutcome(True, None, True)
-    hint, reachable = await failure_hint(client)
-    if client.connected:                                    # it came up while the port was probed
-        await printer_manager.mark_configured(printer_id, session_factory, broadcast=False)
-        return TestOutcome(True, None, True)
+    connected = await wait_connected(client, TEST_CONNECT_POLL_S)
+    if not connected:
+        hint, reachable = await failure_hint(client)
+        connected = client.connected                        # it came up while the port was probed
+    if connected:
+        if await printer_manager.mark_configured(printer_id, session_factory, broadcast=False, still_current=current):
+            return TestOutcome(True, None, True)
+        return _superseded()
+    if not await write_if_current(session_factory, printer_id, current, False, hint):
+        return _superseded()                                # the edit's own retest owns the client and the state now
     if reachable is True and printer_manager._clients.get(printer_id) is client:
         printer_manager.disconnect_printer(printer_id)      # login failed: don't let its reconnect loop hammer the printer
-    printer_manager.set_configured(printer_id, False)
-    await _persist(session_factory, printer_id, False, hint)
     return TestOutcome(False, hint, reachable)
+
+
+def _superseded() -> TestOutcome:
+    return TestOutcome(False, "The connection settings changed during the test; the new settings are tested separately", None)
 
 
 def schedule(printer_id: int, session_factory) -> None:
