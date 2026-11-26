@@ -339,6 +339,42 @@ async def test_same_version_is_refused_and_leaves_the_original_intact(data_dir, 
         assert (await s.get(InstalledPlugin, "acme_inv")).name == "Acme inventory"
 
 
+async def test_an_upgrade_interrupted_after_the_move_can_be_retried(data_dir, session_factory):
+    """GH #230: a crash between moving the package into its version folder and committing the row left that folder behind;
+    the recorded version still loads, but retrying the same release was refused as "already installed"."""
+    import shutil
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.0.0")), session_factory)
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
+    new = pb.make_zip(pb.files("acme_inv", version="1.1.0", name="Acme v1.1"))
+    debris = await stage(new)                                    # durable state at the crash: moved, row unchanged
+    (debris.root / installer.INFO_FILE).write_text('{"migrations": []}', encoding="utf-8")
+    (debris.root / "stale-marker").write_text("from the interrupted attempt", encoding="utf-8")
+    shutil.move(debris.root, installer.version_dir("acme_inv", "1.1.0"))
+
+    row = await stage_commit(new, session_factory)
+    assert (row.version, row.previous_version, row.status, row.name) == ("1.1.0", "1.0.0", "pending_restart", "Acme v1.1")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()           # the running version is untouched
+    installed = installer.version_dir("acme_inv", "1.1.0")
+    # the retry's package replaced the debris (not nested inside it, which a move into an existing folder would do)
+    assert not (installed / "stale-marker").exists() and (installed / "themis-plugin.toml").is_file()
+    assert [p.name for p in installed.iterdir() if p.is_dir()] == ["acme_inv"]
+
+
+async def test_the_running_version_folder_is_never_treated_as_debris(data_dir, session_factory):
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.0.0")), session_factory)
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.1.0")), session_factory)   # 1.0.0 is now previous_version
+    staged = await stage(pb.make_zip(pb.files("acme_inv", version="1.0.0", name="Changed")))
+    async with session_factory() as s:
+        with pytest.raises(InstallError, match="already installed"):
+            await installer.commit(s, staged.token, actor="a")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()
+
+
 async def test_commit_rejects_unknown_tokens_and_a_mismatched_expected_id(data_dir, session_factory):
     async with session_factory() as s:
         for bad in ("nope", "../../etc", "0" * 32):
