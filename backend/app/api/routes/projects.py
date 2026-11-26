@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -604,8 +604,9 @@ async def patch_project(
         proj.notes = body.notes
     if body.amount_paid is not None and not await has_payments(session, project_id):
         proj.amount_paid = body.amount_paid
+    price_changed = "price" in body.model_fields_set and body.price != proj.price
     if "price" in body.model_fields_set:
-        if body.price != proj.price:
+        if price_changed:
             proj.quote_accepted_at = None   # what the customer accepted no longer matches
         proj.price = body.price
     if body.price_visible is not None:
@@ -617,6 +618,12 @@ async def patch_project(
     if "price" in body.model_fields_set:
         await sync_project_totals(session, proj)  # paid/partial depends on the quoted price
     proj.updated_at = _now_iso()
+    if price_changed:
+        # The row was read before this write: a customer acceptance committed since then is not in the loaded state, so
+        # the ORM would skip the column. Clear it in SQL, inside this write transaction.
+        await session.flush()
+        await session.execute(update(Project).where(Project.id == proj.id).values(quote_accepted_at=None)
+                              .execution_options(synchronize_session=False))
     await session.commit()
     await session.refresh(proj)
     return await _project_dict(proj, session)

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_customer
@@ -109,20 +109,33 @@ async def get_my_project(project_id: int, customer_id: int = Depends(require_cus
     return await _project_dict(await _own_project(project_id, customer_id, session), session)
 
 
-@router.post("/projects/{project_id}/quote/accept", summary="Accept the quote")
+@router.post("/projects/{project_id}/quote/accept", summary="Accept the quote",
+             responses={409: {"description": "No visible quote, or the quote changed while it was being accepted"}})
 async def accept_quote(project_id: int, customer_id: int = Depends(require_customer),
                        session: AsyncSession = Depends(get_session)) -> dict:
     """Records that the customer agreed to the quote they can see, and moves a draft request on to planning.
-    Idempotent: accepting again changes nothing. 409 when there is no visible quote to accept."""
+    Idempotent: accepting again changes nothing. 409 when there is no visible quote to accept, or when the quote changed
+    (price, visibility) while the acceptance was being recorded: the customer accepts only the price they read."""
     p = await _own_project(project_id, customer_id, session)
     if not p.price_visible or p.price is None:
         raise HTTPException(409, "There is no quote to accept yet")
     if p.quote_accepted_at is None:
-        p.quote_accepted_at = _now()
-        if p.stage == "draft":
-            p.stage = "planning"
-        p.updated_at = _now()
+        # Accept only the price this request read: a staff edit committed since then clears acceptance and must
+        # not be accepted on the customer's behalf (compare-and-set, not a write of the loaded row).
+        now = _now()
+        seen_price = p.price
+        accepted = await session.execute(
+            update(Project)
+            .where(Project.id == p.id, Project.customer_id == customer_id, Project.price == seen_price,
+                   Project.price_visible.is_(True), Project.quote_accepted_at.is_(None))
+            .values(quote_accepted_at=now, updated_at=now,
+                    stage=case((Project.stage == "draft", "planning"), else_=Project.stage))
+            .execution_options(synchronize_session=False))
         await session.commit()
+        await session.refresh(p)
+        if accepted.rowcount != 1 and (p.quote_accepted_at is None or p.price != seen_price or not p.price_visible
+                                       or p.customer_id != customer_id):
+            raise HTTPException(409, "The quote changed while you were accepting it: review the current quote")
     return await _project_dict(p, session)
 
 
