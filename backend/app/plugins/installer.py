@@ -547,7 +547,16 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
                 raise InstallError(f"{t.id!r} is waiting to be uninstalled; restart Themis first")
             target = version_dir(t.id, t.version)
             if target.exists():
-                raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
+                # Compare folders, not strings: on a case-insensitive filesystem 1.0.0-RC1 is the recorded 1.0.0-rc1's folder.
+                kept = [v for v in ((row.version, row.previous_version) if row is not None else ()) if v]
+                if any(version_dir(t.id, v).exists() and target.samefile(version_dir(t.id, v)) for v in kept):
+                    raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
+                # No row records this version: a commit was interrupted between the move and the DB commit. The loader never
+                # loads it, so it is debris; clear it so the same release can be retried.
+                try:
+                    await asyncio.to_thread(shutil.rmtree, target)
+                except OSError as e:
+                    raise InstallError(f"could not clear the leftover folder of an interrupted install ({target}): {e}") from e
             info = await asyncio.to_thread(dry_run, staged.root, t)            # first time any of its code runs: after consent
             staged.migrations = tuple(info["migrations"])
             applied = {v for (v,) in (await session.execute(
