@@ -4,17 +4,16 @@ import { test, expect, type Page } from '@playwright/test';
 // jsdom cannot lay out SVG, so this checks what the unit tests stub: real hit-testing through getBoundingClientRect +
 // the viewBox letterboxing, and the phone-width layout.
 
-/** Click a bed-mm point on a fixture whose bed is 256×256 with origin front-left (view = [x, 256 - y]). */
+/** Click a bed-mm point on a fixture whose bed is 256×256 with origin front-left (view = [x, 256 - y]). The client point
+ *  comes from the browser's own getScreenCTM(), not from a copy of clientToView's letterbox maths. */
 async function clickBed(page: Page, fixture: string, [x, y]: [number, number]) {
   const svg = page.locator(`[data-fixture="${fixture}"] svg.plate-map-svg`);
   await svg.scrollIntoViewIfNeeded();
-  const { left, top, width, height, vb } = await svg.evaluate(el => {
-    const r = el.getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height, vb: el.getAttribute('viewBox')!.split(' ').map(Number) };
-  });
-  const s = Math.min(width / vb[2], height / vb[3]);
-  const offX = (width - vb[2] * s) / 2, offY = (height - vb[3] * s) / 2;
-  await page.mouse.click(left + offX + (x - vb[0]) * s, top + offY + (256 - y - vb[1]) * s);
+  const p = await svg.evaluate((el, v) => {
+    const pt = new DOMPoint(v[0], v[1]).matrixTransform((el as SVGSVGElement).getScreenCTM()!);
+    return { x: pt.x, y: pt.y };
+  }, [x, 256 - y]);
+  await page.mouse.click(p.x, p.y);
 }
 const lastClick = (page: Page, fixture: string) => page.getByRole('status', { name: `${fixture} last click` });
 

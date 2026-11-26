@@ -7,6 +7,7 @@ import ast
 import copy
 import json
 import math
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -22,7 +23,7 @@ SVG = "{http://www.w3.org/2000/svg}"
 
 REQUIRED = ["square-front-left", "centre-origin", "back-right-origin", "scale-wide-large", "scale-small-portrait",
             "tiny-object", "overlap", "concave-l", "rotated-rect", "off-bed", "labels", "six-states", "mixed-selectable",
-            "missing-footprint", "no-geometry"]
+            "missing-footprint", "no-geometry", "hostile-states"]
 
 
 def close(actual, expected):
@@ -174,7 +175,7 @@ def test_snapshot_never_emits_a_bad_colour():
 
 def test_snapshot_flags_off_bed_and_unselectable_and_unmapped_in_the_key():
     keys = _key_texts(snapshot(CASES["off-bed"]["plate"]))
-    assert "1. Half off (off bed)" in keys and "2. Beyond (off bed)" in keys and "3. On" in keys
+    assert "1. Half off (off bed)" in keys and "2. Beyond (off bed)" in keys and "3. On" in keys and "4. Behind (off bed)" in keys
     root = snapshot(CASES["mixed-selectable"]["plate"])
     assert "2. Locked (not selectable)" in _key_texts(root)
     locked = next(p for p in object_polygons(root) if p.get("data-label") == "Locked")
@@ -192,7 +193,7 @@ def test_snapshot_without_geometry_has_legend_and_key_only():
     root = snapshot(CASES["no-geometry"]["plate"])
     assert object_polygons(root) == []
     assert not [r for r in root.iter(f"{SVG}rect") if r.get("class") == "plate-map-bed"]
-    assert _key_texts(root) == ["1. One (not on map)", "2. Two (not on map)"]
+    assert _key_texts(root) == ["1. One", "2. Two"]  # list-only: no map to be missing from (matches the view)
 
 
 def test_snapshot_tiny_object_ring_and_markers():
@@ -211,6 +212,37 @@ def test_snapshot_rejects_markup_keys():
         render_snapshot_svg(plate)
 
 
+def test_snapshot_state_names_are_text_and_colours_match_exactly():
+    plate = CASES["hostile-states"]["plate"]
+    raw = render_snapshot_svg(copy.deepcopy(plate))
+    root = ET.fromstring(raw)
+    assert not {el.tag.removeprefix(SVG) for el in root.iter()} & {"b", "script"}
+    legend = next(g for g in root.iter(f"{SVG}g") if g.get("class") == "plate-map-legend")
+    assert ["".join(t.itertext()) for t in legend.iter(f"{SVG}text")] == [s["name"] for s in plate["states"]]
+    assert "onload" not in raw and "#abcdef0" not in raw
+
+
+def test_snapshot_text_always_parses_and_encodes():
+    """Validation keeps out what XML cannot carry, so every accepted plate gives a parseable, UTF-8-encodable file."""
+    for case in CORPUS["cases"]:
+        raw = render_snapshot_svg(copy.deepcopy(case["plate"]))
+        assert ET.fromstring(raw.encode("utf-8")).tag == f"{SVG}svg", case["name"]
+
+
+def test_snapshot_pattern_ids_take_a_prefix():
+    plate = CASES["six-states"]["plate"]
+    a = render_snapshot_svg(copy.deepcopy(plate), id_prefix="snapA")
+    assert 'id="snapA-diagonal"' in a and "url(#snapA-diagonal)" in a and "pm-" not in a
+    with pytest.raises(ValueError, match="id_prefix"):
+        render_snapshot_svg(copy.deepcopy(plate), id_prefix='x" onload="y')
+
+
+def test_huge_numbers_are_rejected_not_overflowing():
+    plate = copy.deepcopy(CASES["square-front-left"]["plate"])
+    plate["bed"]["width"] = 10 ** 400
+    assert validate_plate(plate) == "bed: width and depth must be positive numbers"
+
+
 def test_truncate_counts_code_points():
     assert truncate_label("\U0001F9E9" * 41) == "\U0001F9E9" * 40 + "…"
     assert truncate_label("x" * 40) == "x" * 40
@@ -221,3 +253,10 @@ def test_module_imports_only_stdlib():
     mods = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     mods |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     assert mods <= {"__future__", "math", "re", "typing", "xml"}, mods
+
+
+def test_module_names_no_domain_concept():
+    """Same vocabulary guard as frontend/src/components/plateMap/boundary.test.ts: the module knows plates, not Themis."""
+    text = Path(plate_map.__file__).read_text(encoding="utf-8")
+    domain = re.compile(r"\b(jobs?|parts?|printers?|slicers?|plugins?|spools?|filaments?|gcode|laminus|queue|projects?|customers?)\b", re.I)
+    assert domain.search(text) is None, domain.search(text)

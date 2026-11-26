@@ -24,6 +24,10 @@ export const MARGIN_RATIO = 0.04;
 export const MIN_HIT_RATIO = 0.06;
 export const LABEL_MAX = 40;
 const EPS = 1e-6;
+/** Every number (mm) must be within ±MAX_MM: keeps formatting out of exponent notation and Python out of OverflowError. */
+export const MAX_MM = 100000;
+/** XML 1.0 Char: a label or state name outside it would make the snapshot unparseable (or, for a lone surrogate, unencodable). */
+const XML_TEXT = /^[\t\n\r\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]*$/u;
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /** A caller colour if it is #rgb / #rrggbb, else null (render the neutral fill). Nothing else reaches an attribute. */
@@ -61,7 +65,7 @@ export interface PlateLayout {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
-const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_MM;
 const unknownKey = (o: Obj, allowed: string[]) => Object.keys(o).find(k => !allowed.includes(k));
 
 function polygonArea(pts: readonly Point[]): number {
@@ -118,6 +122,7 @@ export function validatePlate(raw: unknown): string | null {
     const sx = unknownKey(s, ['id', 'name', 'color']);
     if (sx) return `unknown key ${sx}`;
     if (typeof s.id !== 'string' || typeof s.name !== 'string' || typeof s.color !== 'string') return 'states: id, name and color must be strings';
+    if (!XML_TEXT.test(s.name)) return 'states: name has invalid characters';
     if (ids.has(s.id)) return 'states: duplicate id';
     ids.add(s.id);
   }
@@ -129,6 +134,7 @@ export function validatePlate(raw: unknown): string | null {
     const ox = unknownKey(o, ['label', 'state', 'selectable', 'footprint']);
     if (ox) return `unknown key ${ox}`;
     if (typeof o.label !== 'string' || o.label === '') return 'objects: label must be a non-empty string';
+    if (!XML_TEXT.test(o.label)) return 'objects: label has invalid characters';
     if (labels.has(o.label)) return 'objects: duplicate label';
     labels.add(o.label);
     if (typeof o.state !== 'string' || !ids.has(o.state)) return 'objects: unknown state';

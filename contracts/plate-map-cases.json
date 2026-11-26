@@ -426,7 +426,7 @@
   },
   {
    "name": "scale-wide-large",
-   "covers": "very large, non-square bed keeps its aspect ratio",
+   "covers": "very large, non-square bed keeps its aspect ratio; the min hit area scales from the larger side",
    "plate": {
     "bed": {
      "width": 1000,
@@ -455,6 +455,19 @@
         10,
         990,
         190
+       ]
+      }
+     },
+     {
+      "label": "Dot",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        500,
+        100,
+        503,
+        103
        ]
       }
      }
@@ -488,8 +501,57 @@
        ]
       ],
       "hit": null
+     },
+     "Dot": {
+      "points": [
+       [
+        500,
+        100
+       ],
+       [
+        503,
+        100
+       ],
+       [
+        503,
+        97
+       ],
+       [
+        500,
+        97
+       ]
+      ],
+      "hit": [
+       471.5,
+       68.5,
+       60,
+       60
+      ]
      }
-    }
+    },
+    "hits": [
+     {
+      "at": [
+       501.5,
+       101.5
+      ],
+      "label": "Dot"
+     },
+     {
+      "at": [
+       525,
+       101.5
+      ],
+      "label": "Dot"
+     },
+     {
+      "at": [
+       540,
+       101.5
+      ],
+      "label": "Bar"
+     }
+    ]
    }
   },
   {
@@ -997,7 +1059,7 @@
   },
   {
    "name": "off-bed",
-   "covers": "objects partly or wholly off the bed are drawn and flagged",
+   "covers": "objects partly or wholly off the bed (sideways and behind) are drawn and flagged",
    "plate": {
     "bed": {
      "width": 256,
@@ -1058,15 +1120,28 @@
         140
        ]
       }
+     },
+     {
+      "label": "Behind",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        250,
+        140,
+        280
+       ]
+      }
      }
     ]
    },
    "expect": {
     "view_box": [
      -30.24,
-     -10.24,
+     -34.24,
      340.48,
-     276.48
+     300.48
     ],
     "objects": {
      "Half off": {
@@ -1113,6 +1188,27 @@
      },
      "On": {
       "off_bed": false
+     },
+     "Behind": {
+      "points": [
+       [
+        100,
+        6
+       ],
+       [
+        140,
+        6
+       ],
+       [
+        140,
+        -24
+       ],
+       [
+        100,
+        -24
+       ]
+      ],
+      "off_bed": true
      }
     },
     "hits": [
@@ -1623,6 +1719,91 @@
    },
    "expect": {
     "list_only": true
+   }
+  },
+  {
+   "name": "hostile-states",
+   "covers": "state names are text; a colour must be exactly #rgb/#rrggbb (no prefix match)",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "a",
+      "name": "<b>&\"x</b>",
+      "color": "#abc\" onload=\"x"
+     },
+     {
+      "id": "b",
+      "name": "Seven digits",
+      "color": "#abcdef0"
+     },
+     {
+      "id": "c",
+      "name": "Upper",
+      "color": "#ABCDEF"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "a",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        10,
+        60,
+        60
+       ]
+      }
+     },
+     {
+      "label": "B",
+      "state": "b",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        70,
+        10,
+        120,
+        60
+       ]
+      }
+     },
+     {
+      "label": "C",
+      "state": "c",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        130,
+        10,
+        180,
+        60
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "objects": {
+     "A": {
+      "fill": null
+     },
+     "B": {
+      "fill": null
+     },
+     "C": {
+      "fill": "#ABCDEF"
+     }
+    }
    }
   },
   {
@@ -2873,6 +3054,405 @@
     ]
    },
    "message": "footprint: needs polygon or box"
+  },
+  {
+   "name": "plate not an object",
+   "plate": [
+    1,
+    2
+   ],
+   "message": "plate: must be an object"
+  },
+  {
+   "name": "unknown origin key",
+   "plate": {
+    "bed": {
+     "width": 10,
+     "depth": 10,
+     "origin": {
+      "x": 0,
+      "y": 0,
+      "z": "<svg/>"
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "unknown key z"
+  },
+  {
+   "name": "origin not an object",
+   "plate": {
+    "bed": {
+     "width": 10,
+     "depth": 10,
+     "origin": [
+      0,
+      0
+     ]
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: origin must be finite numbers"
+  },
+  {
+   "name": "state not an object",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     "ok"
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: id, name and color must be strings"
+  },
+  {
+   "name": "object not an object",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     "A"
+    ]
+   },
+   "message": "objects: must be a list"
+  },
+  {
+   "name": "footprint not an object",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ]
+     }
+    ]
+   },
+   "message": "footprint: needs polygon or box"
+  },
+  {
+   "name": "huge bed",
+   "plate": {
+    "bed": {
+     "width": 1000000,
+     "depth": 10
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: width and depth must be positive numbers"
+  },
+  {
+   "name": "huge coordinate",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1e+30,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: box must be"
+  },
+  {
+   "name": "huge polygon coordinate",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         1e+30,
+         0
+        ],
+        [
+         0,
+         1
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: coordinates must be finite numbers"
+  },
+  {
+   "name": "control character in label",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "x\u0001y",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: label has invalid characters"
+  },
+  {
+   "name": "lone surrogate in label",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     }
+    ],
+    "objects": [
+     {
+      "label": "s\ud800",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: label has invalid characters"
+  },
+  {
+   "name": "control character in state name",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "a\u0000b",
+      "color": "#fff"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: name has invalid characters"
   }
  ]
 }

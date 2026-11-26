@@ -14,7 +14,6 @@ corner. View coordinates are millimetres with the front at the bottom.
 """
 from __future__ import annotations
 
-import math
 import re
 from typing import Any
 from xml.sax.saxutils import escape
@@ -25,6 +24,10 @@ MIN_HIT_RATIO = 0.06
 LABEL_MAX = 40
 NEUTRAL_FILL = "#8a8f98"
 _EPS = 1e-6
+MAX_MM = 100000  # every number must be within ±MAX_MM (no float overflow, no exponent formatting)
+# XML 1.0 Char: text outside it makes the snapshot unparseable (control chars) or unencodable (lone surrogates).
+_XML_TEXT = re.compile("[\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]*")
+_ID_PREFIX = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 _HEX = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
 _NO_GEOMETRY_SCALE = 200.0  # legend sizing when there is no bed to scale from
 
@@ -40,7 +43,8 @@ _WARN = "#c27803"
 # ── validation (messages are shared with layout.ts; the corpus checks substrings) ─────────────────────────────────
 
 def _is_num(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    # abs() before any float conversion: a huge int would raise OverflowError in math.isfinite; NaN fails the <=.
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) <= MAX_MM
 
 
 def _unknown_key(o: dict, allowed: tuple[str, ...]) -> str | None:
@@ -117,6 +121,8 @@ def validate_plate(raw: Any) -> str | None:
             return f"unknown key {extra}"
         if not all(isinstance(s.get(k), str) for k in ("id", "name", "color")):
             return "states: id, name and color must be strings"
+        if not _XML_TEXT.fullmatch(s["name"]):
+            return "states: name has invalid characters"
         if s["id"] in ids:
             return "states: duplicate id"
         ids.add(s["id"])
@@ -133,6 +139,8 @@ def validate_plate(raw: Any) -> str | None:
         label = o.get("label")
         if not isinstance(label, str) or label == "":
             return "objects: label must be a non-empty string"
+        if not _XML_TEXT.fullmatch(label):
+            return "objects: label has invalid characters"
         if label in labels:
             return "objects: duplicate label"
         labels.add(label)
@@ -275,28 +283,31 @@ def _pattern_shapes(name: str, t: float) -> str:
     return ""
 
 
-def _pattern_defs(tile: float) -> str:
+def _pattern_defs(tile: float, prefix: str) -> str:
     return "<defs>" + "".join(
-        f'<pattern id="pm-{p}" patternUnits="userSpaceOnUse" width="{fmt(tile)}" height="{fmt(tile)}">'
+        f'<pattern id="{prefix}-{p}" patternUnits="userSpaceOnUse" width="{fmt(tile)}" height="{fmt(tile)}">'
         f"{_pattern_shapes(p, tile)}</pattern>" for p in PATTERNS if p != "solid") + "</defs>"
 
 
-def _key_line(o: dict) -> str:
+def _key_line(o: dict, has_map: bool) -> str:
     flags = []
     if o["off_bed"]:
         flags.append("off bed")
     if not o["selectable"]:
         flags.append("not selectable")
-    if o["points"] is None:
+    if o["points"] is None and has_map:  # list-only plate: nothing is on a map, as in the view
         flags.append("not on map")
     text = f'{o["index"] + 1}. {truncate_label(o["label"])}'
     return f"{text} ({', '.join(flags)})" if flags else text
 
 
-def render_snapshot_svg(plate: dict, width_px: int = 800) -> str:
+def render_snapshot_svg(plate: dict, width_px: int = 800, id_prefix: str = "pm") -> str:
     """A standalone SVG: bed, objects (state fill + pattern), number markers, a state legend and a numbered key.
 
-    Raises ValueError for anything validate_plate rejects (including any key outside the schema)."""
+    Raises ValueError for anything validate_plate rejects (including any key outside the schema). `id_prefix` names the
+    pattern ids; give each snapshot its own when several are inlined into one HTML page (pattern tiles are per bed)."""
+    if not _ID_PREFIX.fullmatch(id_prefix):
+        raise ValueError("plate map: id_prefix must be a letter then letters, digits, - or _")
     problem = validate_plate(plate)
     if problem:
         raise ValueError(f"plate map: {problem}")
@@ -316,7 +327,7 @@ def render_snapshot_svg(plate: dict, width_px: int = 800) -> str:
            f'width="{width_px}" height="{round(width_px * total_h / vw)}" preserveAspectRatio="xMidYMid meet" '
            f'font-family="IBM Plex Sans, Helvetica, Arial, sans-serif">',
            f'<rect class="plate-map-background" x="{fmt(vx)}" y="{fmt(vy)}" width="{fmt(vw)}" height="{fmt(total_h)}" fill="{_BG}"/>',
-           _pattern_defs(s * 0.025)]
+           _pattern_defs(s * 0.025, id_prefix)]
 
     if geo:
         bw, bd = geo["bed"][2], geo["bed"][3]
@@ -335,7 +346,7 @@ def render_snapshot_svg(plate: dict, width_px: int = 800) -> str:
                        f'data-label="{_attr(o["label"])}" data-pattern="{o["pattern"]}" '
                        f'data-off-bed="{str(o["off_bed"]).lower()}" data-selectable="{str(o["selectable"]).lower()}"/>')
             if o["pattern"] != "solid":
-                out.append(f'<polygon class="plate-map-pattern" points="{pts}" fill="url(#pm-{o["pattern"]})"/>')
+                out.append(f'<polygon class="plate-map-pattern" points="{pts}" fill="url(#{id_prefix}-{o["pattern"]})"/>')
             if o["hit"]:
                 hx, hy, hw, hh = o["hit"]
                 out.append(f'<rect class="plate-map-hit" x="{fmt(hx)}" y="{fmt(hy)}" width="{fmt(hw)}" height="{fmt(hh)}" '
@@ -359,7 +370,7 @@ def render_snapshot_svg(plate: dict, width_px: int = 800) -> str:
                    f'fill="{safe_color(st["color"]) or NEUTRAL_FILL}" stroke="{_INK}" stroke-width="{fmt(stroke)}" '
                    f'data-pattern="{pattern}"/>')
         if pattern != "solid":
-            out.append(f'<rect x="{fmt(left)}" y="{fmt(y)}" width="{fmt(sw)}" height="{fmt(sh)}" fill="url(#pm-{pattern})"/>')
+            out.append(f'<rect x="{fmt(left)}" y="{fmt(y)}" width="{fmt(sw)}" height="{fmt(sh)}" fill="url(#{id_prefix}-{pattern})"/>')
         out.append(f'<text x="{fmt(left + sw + row * 0.3)}" y="{fmt(y + sh / 2)}" font-size="{fmt(font)}" '
                    f'dominant-baseline="central" fill="{_INK}">{escape(st["name"])}</text>')
     out.append("</g>")
@@ -368,6 +379,6 @@ def render_snapshot_svg(plate: dict, width_px: int = 800) -> str:
     key_top = legend_top + len(plate["states"]) * row + row * 0.3
     for i, o in enumerate(layout["objects"]):
         out.append(f'<text x="{fmt(left)}" y="{fmt(key_top + i * row + sh / 2)}" font-size="{fmt(font)}" '
-                   f'dominant-baseline="central" fill="{_INK}">{escape(_key_line(o))}</text>')
+                   f'dominant-baseline="central" fill="{_INK}">{escape(_key_line(o, geo is not None))}</text>')
     out.append("</g></svg>")
     return "".join(out)

@@ -16,7 +16,7 @@ const closePoints = (actual: readonly Point[], expected: readonly Point[]) => {
 // Every tricky part named in BIZ-405 has a fixture; dropping one should fail here, not silently lose coverage.
 const REQUIRED = ['square-front-left', 'centre-origin', 'back-right-origin', 'scale-wide-large', 'scale-small-portrait',
   'tiny-object', 'overlap', 'concave-l', 'rotated-rect', 'off-bed', 'labels', 'six-states', 'mixed-selectable',
-  'missing-footprint', 'no-geometry'];
+  'missing-footprint', 'no-geometry', 'hostile-states'];
 
 describe('plate-map corpus (backend/tests/services/test_plate_map.py runs the same cases)', () => {
   it('covers every tricky part', () => {

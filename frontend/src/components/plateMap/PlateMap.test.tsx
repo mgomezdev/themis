@@ -81,6 +81,31 @@ describe('PlateMap interaction', () => {
     expect(rowFor('Small')).not.toHaveAttribute('aria-current');
   });
 
+  it('a map click scrolls the list box (never the page) to the highlighted row', () => {
+    const { container, clickBed } = renderPlate(caseNamed('overlap').plate);
+    const list = screen.getByRole('list', { name: 'Objects' });
+    const rect = (top: number, h: number) => ({ top, bottom: top + h, left: 0, right: 100, width: 100, height: h, x: 0, y: top, toJSON: () => ({}) });
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 400 });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 100 });
+    list.getBoundingClientRect = () => rect(0, 100);
+    rowFor('Twin B').getBoundingClientRect = () => rect(250, 40);   // below the visible part of the list
+    const page = vi.spyOn(window, 'scrollTo');
+    clickBed([200, 70]);
+    expect(list.scrollTop).toBe(190);
+    expect(page).not.toHaveBeenCalled();
+    expect(container.querySelector('.plate-map-highlight')?.getAttribute('data-label')).toBe('Twin B');
+  });
+
+  it('a list that is not its own scroll box is left alone', () => {
+    const { clickBed } = renderPlate(caseNamed('overlap').plate);
+    const list = screen.getByRole('list', { name: 'Objects' });
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 100 });
+    Object.defineProperty(list, 'clientHeight', { configurable: true, value: 100 });
+    rowFor('Twin B').getBoundingClientRect = () => { throw new Error('should not measure'); };
+    clickBed([200, 70]);
+    expect(list.scrollTop).toBe(0);
+  });
+
   it('every object is reachable through the list, tiny and overlapped ones included', () => {
     for (const name of ['overlap', 'tiny-object']) {
       const plate = caseNamed(name).plate;
@@ -97,7 +122,9 @@ describe('PlateMap interaction', () => {
     expect(polygonFor(container, 'Locked')).toHaveAttribute('data-selectable', 'false');
     expect(polygonFor(container, 'Locked')).toHaveClass('locked');
     expect(polygonFor(container, 'Pickable')).not.toHaveClass('locked');
-    expect(rowFor('Locked')).toBeDisabled();
+    expect(rowFor('Locked')).toHaveAttribute('aria-disabled', 'true');
+    expect(rowFor('Locked')).not.toBeDisabled();                     // still focusable: it shows its state and flags
+    expect(rowFor('Pickable')).not.toHaveAttribute('aria-disabled');
     fireEvent.click(rowFor('Locked'));
     clickBed([180, 70]);
     expect(onObjectClick).not.toHaveBeenCalled();
@@ -160,6 +187,15 @@ describe('PlateMap labels and states', () => {
     renderPlate(caseNamed('square-front-left').plate);
     expect(within(rowFor('Left')).getByText('Failed')).toBeInTheDocument();
     expect(within(rowFor('Front')).getByText('Printed')).toBeInTheDocument();
+  });
+
+  it('state names are text, and a colour must match #rgb/#rrggbb exactly', () => {
+    const plate = caseNamed('hostile-states').plate;
+    const { container } = renderPlate(plate);
+    expect(container.querySelector('b, script')).toBeNull();
+    expect(within(screen.getByRole('list', { name: 'States' })).getByText('<b>&"x</b>')).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain('onload');
+    expect(container.innerHTML).not.toContain('#abcdef0');
   });
 
   it('a non-hex colour never reaches the markup', () => {

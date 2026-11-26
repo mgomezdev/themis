@@ -38,13 +38,12 @@ function PatternDefs({ prefix, tile }: { prefix: string; tile: number }) {
   );
 }
 
+/** Legend/list swatch. Its patterns come from the one swatch <defs> the component renders (`${prefix}-sw-<pattern>`). */
 function Swatch({ prefix, color, pattern }: { prefix: string; color: string | null; pattern: PatternName }) {
-  const id = `${prefix}-sw-${pattern}`;
   return (
     <svg className="plate-map-swatch" viewBox="0 0 24 16" aria-hidden="true">
-      <PatternDefs prefix={id} tile={6} />
       <rect className={color ? 'plate-map-swatch-fill' : 'plate-map-swatch-fill neutral'} width={24} height={16} fill={color ?? undefined} data-pattern={pattern} />
-      {pattern !== 'solid' && <rect width={24} height={16} fill={`url(#${id}-${pattern})`} />}
+      {pattern !== 'solid' && <rect width={24} height={16} fill={`url(#${prefix}-sw-${pattern})`} />}
     </svg>
   );
 }
@@ -56,9 +55,16 @@ export function PlateMap({ plate, onObjectClick }: PlateMapProps) {
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const prefix = `pm${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const rows = useRef(new Map<string, HTMLButtonElement>());
+  const list = useRef<HTMLUListElement>(null);
 
+  // Bring the highlighted row into view by scrolling the list itself, only when the list is its own scroll box (wide
+  // layout). Never scroll the page: on a phone the list sits under the map and that would push the map away.
   useEffect(() => {
-    if (highlighted) rows.current.get(highlighted)?.scrollIntoView?.({ block: 'nearest' });
+    const row = highlighted ? rows.current.get(highlighted) : undefined, box = list.current;
+    if (!row || !box || box.scrollHeight <= box.clientHeight) return;
+    const r = row.getBoundingClientRect(), b = box.getBoundingClientRect();
+    if (r.top < b.top) box.scrollTop -= b.top - r.top;
+    else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
   }, [highlighted]);
 
   if (error || !layout) return <div className="notice warn" role="alert">Plate map unavailable: {error}</div>;
@@ -78,6 +84,7 @@ export function PlateMap({ plate, onObjectClick }: PlateMapProps) {
 
   return (
     <div className={geo ? 'plate-map' : 'plate-map list-only'}>
+      <svg className="plate-map-defs" aria-hidden="true" focusable="false"><PatternDefs prefix={`${prefix}-sw`} tile={6} /></svg>
       {geo && (
         <div className="plate-map-canvas">
           <svg
@@ -124,7 +131,7 @@ export function PlateMap({ plate, onObjectClick }: PlateMapProps) {
             </li>
           ))}
         </ul>
-        <ul className="plate-map-list" aria-label="Objects">
+        <ul className="plate-map-list" aria-label="Objects" ref={list}>
           {layout.objects.map(o => (
             <li key={o.label}>
               <button
@@ -134,11 +141,11 @@ export function PlateMap({ plate, onObjectClick }: PlateMapProps) {
                 data-label={o.label}
                 title={o.label}
                 aria-current={o.label === highlighted ? true : undefined}
-                disabled={!o.selectable}
-                onClick={() => select(o.label)}
+                aria-disabled={o.selectable ? undefined : true}
+                onClick={() => { if (o.selectable) select(o.label); }}
               >
                 <span className="plate-map-num num">{o.index + 1}</span>
-                <Swatch prefix={`${prefix}-r${o.index}`} color={o.fill} pattern={o.pattern} />
+                <Swatch prefix={prefix} color={o.fill} pattern={o.pattern} />
                 <span className="plate-map-label">{o.label}</span>
                 <span className="plate-map-state tiny muted">{o.state.name}</span>
                 {o.offBed && <span className="pill warn">Off bed</span>}

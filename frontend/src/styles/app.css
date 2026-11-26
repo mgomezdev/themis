@@ -946,6 +946,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .plate-map { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--pad-4); align-items: start; }
 .plate-map.list-only { grid-template-columns: minmax(0, 1fr); }
 .plate-map-canvas { min-width: 0; background: var(--bg-1); border: 1px solid var(--border-1); padding: var(--pad-2); }
+/* Holds the legend/list swatch patterns; must stay rendered (not display:none) for url(#…) to resolve. */
+.plate-map-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 .plate-map-svg { display: block; width: 100%; height: auto; max-height: 70vh; cursor: default; user-select: none; }
 .plate-map-bed { fill: var(--bg-0); stroke: var(--border-3); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 .plate-map-front { fill: var(--text-4); font-family: var(--font-mono); letter-spacing: 0.08em; pointer-events: none; }
@@ -970,9 +972,10 @@ input, textarea, select { font-family: inherit; color: inherit; }
   display: flex; align-items: center; gap: var(--pad-2); width: 100%; min-height: var(--row-h); padding: var(--pad-1) var(--pad-2);
   background: var(--bg-1); border: 1px solid var(--border-1); color: var(--text-1); font: inherit; text-align: left; cursor: pointer;
 }
-.plate-map-row:hover:not(:disabled) { background: var(--bg-2); }
+.plate-map-row:hover:not([aria-disabled="true"]) { background: var(--bg-2); }
 .plate-map-row.selected { border-color: var(--accent); background: var(--accent-tint); }
-.plate-map-row:disabled { cursor: default; color: var(--text-3); }
+/* Not selectable: still focusable (the row tells its state and flags) but inert and muted. */
+.plate-map-row[aria-disabled="true"] { cursor: default; color: var(--text-3); }
 .plate-map-num { min-width: 2ch; text-align: right; color: var(--text-3); }
 /* A long label is cut with an ellipsis; the row's title holds the whole label. */
 .plate-map-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
