@@ -202,6 +202,17 @@ describe('PrintGroupsCard pools (BIZ-362)', () => {
     expect(width.value).toBe('7');
   });
 
+  it("doesn't carry one group's unsaved edits to the next when the Builder switches groups", async () => {
+    open([group(1, 'Default Group'), group(2, 'A', { envelope_x: 200, envelope_y: 180 }),
+          group(3, 'B', { envelope_x: 200, envelope_y: 180 })]);
+    const { rerender } = render(<PrintGroupsCard projectId={7} items={[]} groupId={2} />);
+    await screen.findByDisplayValue('A');
+    fireEvent.change(screen.getByLabelText('Envelope X (mm)'), { target: { value: '99' } });
+    rerender(<PrintGroupsCard projectId={7} items={[]} groupId={3} />);
+    await screen.findByDisplayValue('B');
+    expect((screen.getByLabelText('Envelope X (mm)') as HTMLInputElement).value).toBe('200');
+  });
+
   // BIZ-408: CI once lost this edit. When the render that mounts a row overruns React's 5 ms slice (coverage, a loaded runner),
   // React commits the row but runs its effects in a later task; an edit made in between was overwritten by the row's
   // "copy the saved value into the input" effect, so the blur saw the old cap and saved nothing. Forced here: every scheduler

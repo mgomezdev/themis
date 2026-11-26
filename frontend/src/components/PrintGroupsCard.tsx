@@ -51,7 +51,7 @@ export function PrintGroupsCard({ projectId, items, onChanged, groupId, refreshK
     return (
       <div data-testid="print-groups">
         {error && <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 8 }}>{error}</div>}
-        <GroupRow group={g} index={i} count={groups.length} groups={groups} printers={printers} items={[]} scoped
+        <GroupRow key={g.id} group={g} index={i} count={groups.length} groups={groups} printers={printers} items={[]} scoped
                   onPatch={body => patch(g, body)} onMove={by => move(i, by)}
                   onDelete={() => run(() => deleteProjectGroup(projectId, g.id))}
                   onMoveItem={() => {}} />
