@@ -28,7 +28,7 @@ function MediaToggle({ value, onChange }: { value: Media; onChange: (v: Media) =
     { id: 'image',  label: 'Image',  icon: Icons.printer },
   ];
   return (
-    <div className="row" role="group" aria-label="Card media" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-1)', border: '1px solid var(--border-1)' }}>
+    <div className="row layout-toggle" role="group" aria-label="Card media" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-1)', border: '1px solid var(--border-1)' }}>
       {opts.map(o => {
         const on = value === o.id;
         return (
