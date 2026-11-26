@@ -1,0 +1,2878 @@
+{
+ "_comment": "Plate map layout corpus (BIZ-405). Shared by frontend/src/components/plateMap/*.test.ts(x) and backend/tests/services/test_plate_map.py: both implementations must reproduce every expectation. Expected values are hand-computed from the layout spec in docs/superpowers/plans/2026-11-26-biz-405-plate-map.md; `expect` is partial (only the keys present are checked); `hits` are bed-mm click points and the label a click reports.",
+ "cases": [
+  {
+   "name": "square-front-left",
+   "covers": "axis direction: bed front (small Y) at the bottom; X not mirrored",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Front",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        10,
+        156,
+        40
+       ]
+      }
+     },
+     {
+      "label": "Back",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        216,
+        156,
+        246
+       ]
+      }
+     },
+     {
+      "label": "Left",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        100,
+        40,
+        156
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -10.24,
+     -10.24,
+     276.48,
+     276.48
+    ],
+    "objects": {
+     "Front": {
+      "points": [
+       [
+        100,
+        246
+       ],
+       [
+        156,
+        246
+       ],
+       [
+        156,
+        216
+       ],
+       [
+        100,
+        216
+       ]
+      ],
+      "off_bed": false,
+      "anchor": [
+       128,
+       231
+      ]
+     },
+     "Back": {
+      "points": [
+       [
+        100,
+        40
+       ],
+       [
+        156,
+        40
+       ],
+       [
+        156,
+        10
+       ],
+       [
+        100,
+        10
+       ]
+      ],
+      "off_bed": false
+     },
+     "Left": {
+      "points": [
+       [
+        10,
+        156
+       ],
+       [
+        40,
+        156
+       ],
+       [
+        40,
+        100
+       ],
+       [
+        10,
+        100
+       ]
+      ]
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       128,
+       25
+      ],
+      "label": "Front"
+     },
+     {
+      "at": [
+       128,
+       230
+      ],
+      "label": "Back"
+     },
+     {
+      "at": [
+       25,
+       128
+      ],
+      "label": "Left"
+     },
+     {
+      "at": [
+       200,
+       128
+      ],
+      "label": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "centre-origin",
+   "covers": "origin at the bed centre, negative coordinates",
+   "plate": {
+    "bed": {
+     "width": 350,
+     "depth": 300,
+     "origin": {
+      "x": 175,
+      "y": 150
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Centre",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        -10,
+        -10,
+        10,
+        10
+       ]
+      }
+     },
+     {
+      "label": "Front-left corner",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        -175,
+        -150,
+        -165,
+        -140
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -14,
+     -14,
+     378,
+     328
+    ],
+    "objects": {
+     "Centre": {
+      "points": [
+       [
+        165,
+        160
+       ],
+       [
+        185,
+        160
+       ],
+       [
+        185,
+        140
+       ],
+       [
+        165,
+        140
+       ]
+      ],
+      "off_bed": false
+     },
+     "Front-left corner": {
+      "points": [
+       [
+        0,
+        300
+       ],
+       [
+        10,
+        300
+       ],
+       [
+        10,
+        290
+       ],
+       [
+        0,
+        290
+       ]
+      ],
+      "off_bed": false
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       0,
+       0
+      ],
+      "label": "Centre"
+     },
+     {
+      "at": [
+       -170,
+       -145
+      ],
+      "label": "Front-left corner"
+     },
+     {
+      "at": [
+       100,
+       100
+      ],
+      "label": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "back-right-origin",
+   "covers": "origin at the back-right corner: every coordinate negative",
+   "plate": {
+    "bed": {
+     "width": 220,
+     "depth": 220,
+     "origin": {
+      "x": 220,
+      "y": 220
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Back right",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        -30,
+        -30,
+        -10,
+        -10
+       ]
+      }
+     },
+     {
+      "label": "Front left",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        -220,
+        -220,
+        -200,
+        -200
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -8.8,
+     -8.8,
+     237.6,
+     237.6
+    ],
+    "objects": {
+     "Back right": {
+      "points": [
+       [
+        190,
+        30
+       ],
+       [
+        210,
+        30
+       ],
+       [
+        210,
+        10
+       ],
+       [
+        190,
+        10
+       ]
+      ]
+     },
+     "Front left": {
+      "points": [
+       [
+        0,
+        220
+       ],
+       [
+        20,
+        220
+       ],
+       [
+        20,
+        200
+       ],
+       [
+        0,
+        200
+       ]
+      ],
+      "off_bed": false
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       -20,
+       -20
+      ],
+      "label": "Back right"
+     },
+     {
+      "at": [
+       -210,
+       -210
+      ],
+      "label": "Front left"
+     }
+    ]
+   }
+  },
+  {
+   "name": "scale-wide-large",
+   "covers": "very large, non-square bed keeps its aspect ratio",
+   "plate": {
+    "bed": {
+     "width": 1000,
+     "depth": 200
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Bar",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        10,
+        990,
+        190
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -40,
+     -40,
+     1080,
+     280
+    ],
+    "objects": {
+     "Bar": {
+      "points": [
+       [
+        10,
+        190
+       ],
+       [
+        990,
+        190
+       ],
+       [
+        990,
+        10
+       ],
+       [
+        10,
+        10
+       ]
+      ],
+      "hit": null
+     }
+    }
+   }
+  },
+  {
+   "name": "scale-small-portrait",
+   "covers": "very small, portrait bed keeps its aspect ratio",
+   "plate": {
+    "bed": {
+     "width": 40,
+     "depth": 120,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Tall",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        5,
+        5,
+        35,
+        115
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -4.8,
+     -4.8,
+     49.6,
+     129.6
+    ],
+    "objects": {
+     "Tall": {
+      "points": [
+       [
+        5,
+        115
+       ],
+       [
+        35,
+        115
+       ],
+       [
+        35,
+        5
+       ],
+       [
+        5,
+        5
+       ]
+      ],
+      "hit": null
+     }
+    }
+   }
+  },
+  {
+   "name": "tiny-object",
+   "covers": "a 2 mm object gets a minimum hit area",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Pin",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        100,
+        102,
+        102
+       ]
+      }
+     },
+     {
+      "label": "Block",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        150,
+        150,
+        200,
+        200
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "objects": {
+     "Pin": {
+      "points": [
+       [
+        100,
+        156
+       ],
+       [
+        102,
+        156
+       ],
+       [
+        102,
+        154
+       ],
+       [
+        100,
+        154
+       ]
+      ],
+      "hit": [
+       93.32,
+       147.32,
+       15.36,
+       15.36
+      ]
+     },
+     "Block": {
+      "hit": null
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       101,
+       101
+      ],
+      "label": "Pin"
+     },
+     {
+      "at": [
+       107,
+       101
+      ],
+      "label": "Pin"
+     },
+     {
+      "at": [
+       110,
+       101
+      ],
+      "label": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "overlap",
+   "covers": "overlapping footprints: smaller on top, ties by input order (later on top)",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Small",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        90,
+        90,
+        110,
+        110
+       ]
+      }
+     },
+     {
+      "label": "Large",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        50,
+        50,
+        150,
+        150
+       ]
+      }
+     },
+     {
+      "label": "Twin A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        180,
+        50,
+        220,
+        90
+       ]
+      }
+     },
+     {
+      "label": "Twin B",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        180,
+        50,
+        220,
+        90
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "draw_order": [
+     "Large",
+     "Twin A",
+     "Twin B",
+     "Small"
+    ],
+    "hits": [
+     {
+      "at": [
+       100,
+       100
+      ],
+      "label": "Small"
+     },
+     {
+      "at": [
+       60,
+       60
+      ],
+      "label": "Large"
+     },
+     {
+      "at": [
+       200,
+       70
+      ],
+      "label": "Twin B"
+     }
+    ]
+   }
+  },
+  {
+   "name": "concave-l",
+   "covers": "concave polygon: hit-test and marker follow the real shape, not the bbox",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "L",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         20,
+         20
+        ],
+        [
+         80,
+         20
+        ],
+        [
+         80,
+         30
+        ],
+        [
+         30,
+         30
+        ],
+        [
+         30,
+         80
+        ],
+        [
+         20,
+         80
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "objects": {
+     "L": {
+      "points": [
+       [
+        20,
+        236
+       ],
+       [
+        80,
+        236
+       ],
+       [
+        80,
+        226
+       ],
+       [
+        30,
+        226
+       ],
+       [
+        30,
+        176
+       ],
+       [
+        20,
+        176
+       ]
+      ],
+      "anchor": [
+       25,
+       217.364
+      ]
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       50,
+       50
+      ],
+      "label": null
+     },
+     {
+      "at": [
+       50,
+       25
+      ],
+      "label": "L"
+     },
+     {
+      "at": [
+       25,
+       60
+      ],
+      "label": "L"
+     }
+    ]
+   }
+  },
+  {
+   "name": "rotated-rect",
+   "covers": "rotated rectangle: bbox corners are not the object",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Rotated",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         156.284,
+         142.142
+        ],
+        [
+         142.142,
+         156.284
+        ],
+        [
+         99.716,
+         113.858
+        ],
+        [
+         113.858,
+         99.716
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "objects": {
+     "Rotated": {
+      "off_bed": false
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       128,
+       128
+      ],
+      "label": "Rotated"
+     },
+     {
+      "at": [
+       140,
+       140
+      ],
+      "label": "Rotated"
+     },
+     {
+      "at": [
+       150,
+       105
+      ],
+      "label": null
+     },
+     {
+      "at": [
+       105,
+       150
+      ],
+      "label": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "off-bed",
+   "covers": "objects partly or wholly off the bed are drawn and flagged",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Half off",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        -20,
+        100,
+        20,
+        140
+       ]
+      }
+     },
+     {
+      "label": "Beyond",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        270,
+        10,
+        300,
+        40
+       ]
+      }
+     },
+     {
+      "label": "On",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        100,
+        140,
+        140
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "view_box": [
+     -30.24,
+     -10.24,
+     340.48,
+     276.48
+    ],
+    "objects": {
+     "Half off": {
+      "points": [
+       [
+        -20,
+        156
+       ],
+       [
+        20,
+        156
+       ],
+       [
+        20,
+        116
+       ],
+       [
+        -20,
+        116
+       ]
+      ],
+      "off_bed": true
+     },
+     "Beyond": {
+      "points": [
+       [
+        270,
+        246
+       ],
+       [
+        300,
+        246
+       ],
+       [
+        300,
+        216
+       ],
+       [
+        270,
+        216
+       ]
+      ],
+      "off_bed": true
+     },
+     "On": {
+      "off_bed": false
+     }
+    },
+    "hits": [
+     {
+      "at": [
+       285,
+       25
+      ],
+      "label": "Beyond"
+     },
+     {
+      "at": [
+       -10,
+       120
+      ],
+      "label": "Half off"
+     }
+    ]
+   }
+  },
+  {
+   "name": "labels",
+   "covers": "long and hostile labels are text, never markup; truncation counts code points",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Left bracket, mirrored, 0.2 mm layer, 15% gyroid infill, PETG, for the rear cable tray assembly revision C - reprint of the failed copy from the morning batch, keep separate from the main order bin pl",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        10,
+        50,
+        50
+       ]
+      }
+     },
+     {
+      "label": "<script>alert(\"x\")</script>",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        60,
+        10,
+        100,
+        50
+       ]
+      }
+     },
+     {
+      "label": "\"><img src=x onerror=alert(1)>",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        110,
+        10,
+        150,
+        50
+       ]
+      }
+     },
+     {
+      "label": "Tom & Jerry's \"part\"",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        160,
+        10,
+        200,
+        50
+       ]
+      }
+     },
+     {
+      "label": "Ünïcødé 🧩 部品",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        60,
+        50,
+        100
+       ]
+      }
+     },
+     {
+      "label": "جزء ١",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        60,
+        60,
+        100,
+        100
+       ]
+      }
+     },
+     {
+      "label": "🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        110,
+        60,
+        150,
+        100
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "truncated": {
+     "Left bracket, mirrored, 0.2 mm layer, 15% gyroid infill, PETG, for the rear cable tray assembly revision C - reprint of the failed copy from the morning batch, keep separate from the main order bin pl": "Left bracket, mirrored, 0.2 mm layer, 15…",
+     "🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩": "🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩…",
+     "<script>alert(\"x\")</script>": "<script>alert(\"x\")</script>",
+     "🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩": "🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩🧩"
+    }
+   }
+  },
+  {
+   "name": "six-states",
+   "covers": "states differ by pattern as well as colour; a non-hex colour renders neutral",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "s1",
+      "name": "Printing",
+      "color": "#3b82f6"
+     },
+     {
+      "id": "s2",
+      "name": "Selected",
+      "color": "#eab308"
+     },
+     {
+      "id": "s3",
+      "name": "Skipped",
+      "color": "#6b7280"
+     },
+     {
+      "id": "s4",
+      "name": "Done",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "s5",
+      "name": "Failed",
+      "color": "#abc"
+     },
+     {
+      "id": "s6",
+      "name": "Weird",
+      "color": "red\"/><script>alert(1)</script>"
+     }
+    ],
+    "objects": [
+     {
+      "label": "S1",
+      "state": "s1",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        10,
+        60,
+        60
+       ]
+      }
+     },
+     {
+      "label": "S2",
+      "state": "s2",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        70,
+        10,
+        120,
+        60
+       ]
+      }
+     },
+     {
+      "label": "S3",
+      "state": "s3",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        130,
+        10,
+        180,
+        60
+       ]
+      }
+     },
+     {
+      "label": "S4",
+      "state": "s4",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        70,
+        60,
+        120
+       ]
+      }
+     },
+     {
+      "label": "S5",
+      "state": "s5",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        70,
+        70,
+        120,
+        120
+       ]
+      }
+     },
+     {
+      "label": "S6",
+      "state": "s6",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        130,
+        70,
+        180,
+        120
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "objects": {
+     "S1": {
+      "pattern": "solid",
+      "fill": "#3b82f6"
+     },
+     "S2": {
+      "pattern": "diagonal",
+      "fill": "#eab308"
+     },
+     "S3": {
+      "pattern": "dots"
+     },
+     "S4": {
+      "pattern": "cross"
+     },
+     "S5": {
+      "pattern": "horizontal",
+      "fill": "#abc"
+     },
+     "S6": {
+      "pattern": "checker",
+      "fill": null
+     }
+    }
+   }
+  },
+  {
+   "name": "mixed-selectable",
+   "covers": "non-selectable objects ignore clicks and do not pass them through",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Pickable",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        40,
+        40,
+        100,
+        100
+       ]
+      }
+     },
+     {
+      "label": "Locked",
+      "state": "ok",
+      "selectable": false,
+      "footprint": {
+       "box": [
+        150,
+        40,
+        210,
+        100
+       ]
+      }
+     },
+     {
+      "label": "Under",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        40,
+        150,
+        140,
+        250
+       ]
+      }
+     },
+     {
+      "label": "Lid",
+      "state": "bad",
+      "selectable": false,
+      "footprint": {
+       "box": [
+        60,
+        170,
+        100,
+        210
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "hits": [
+     {
+      "at": [
+       70,
+       70
+      ],
+      "label": "Pickable"
+     },
+     {
+      "at": [
+       180,
+       70
+      ],
+      "label": null
+     },
+     {
+      "at": [
+       80,
+       190
+      ],
+      "label": null
+     },
+     {
+      "at": [
+       50,
+       240
+      ],
+      "label": "Under"
+     }
+    ]
+   }
+  },
+  {
+   "name": "missing-footprint",
+   "covers": "an object without a footprint is listed, not drawn",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Mapped",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        50,
+        50,
+        100,
+        100
+       ]
+      }
+     },
+     {
+      "label": "Unmapped",
+      "state": "ok",
+      "selectable": true,
+      "footprint": null
+     }
+    ]
+   },
+   "expect": {
+    "list_only": false,
+    "objects": {
+     "Mapped": {
+      "on_map": true
+     },
+     "Unmapped": {
+      "on_map": false
+     }
+    }
+   }
+  },
+  {
+   "name": "no-geometry",
+   "covers": "no bed: the list alone",
+   "plate": {
+    "bed": null,
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "One",
+      "state": "ok",
+      "selectable": true,
+      "footprint": null
+     },
+     {
+      "label": "Two",
+      "state": "bad",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        1,
+        1,
+        5,
+        5
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {
+    "list_only": true
+   }
+  },
+  {
+   "name": "closeout-example",
+   "covers": "eyeball: a three-state closeout-style plate",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "green",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "yellow",
+      "name": "Partial",
+      "color": "#e0b020"
+     },
+     {
+      "id": "red",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "Gear 1",
+      "state": "green",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        20,
+        30,
+        80,
+        110
+       ]
+      }
+     },
+     {
+      "label": "Gear 2",
+      "state": "green",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        30,
+        160,
+        110
+       ]
+      }
+     },
+     {
+      "label": "Gear 3",
+      "state": "yellow",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        180,
+        30,
+        240,
+        110
+       ]
+      }
+     },
+     {
+      "label": "Gear 4",
+      "state": "red",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        20,
+        140,
+        80,
+        220
+       ]
+      }
+     },
+     {
+      "label": "Gear 5",
+      "state": "green",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        100,
+        140,
+        160,
+        220
+       ]
+      }
+     },
+     {
+      "label": "Gear 6",
+      "state": "yellow",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        180,
+        140,
+        240,
+        220
+       ]
+      }
+     }
+    ]
+   },
+   "expect": {}
+  }
+ ],
+ "invalid": [
+  {
+   "name": "markup key at the top",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ],
+    "svg": "<svg/>"
+   },
+   "message": "unknown key svg"
+  },
+  {
+   "name": "markup key on an object",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      },
+      "markup": "<b/>"
+     }
+    ]
+   },
+   "message": "unknown key markup"
+  },
+  {
+   "name": "markup key in a footprint",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ],
+       "svg": "<path/>"
+      }
+     }
+    ]
+   },
+   "message": "unknown key svg"
+  },
+  {
+   "name": "unknown bed key",
+   "plate": {
+    "bed": {
+     "width": 1,
+     "depth": 1,
+     "html": "x"
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "unknown key html"
+  },
+  {
+   "name": "unknown state key",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "n",
+      "color": "#fff",
+      "icon": "<svg/>"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "unknown key icon"
+  },
+  {
+   "name": "zero width bed",
+   "plate": {
+    "bed": {
+     "width": 0,
+     "depth": 10
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: width and depth must be positive numbers"
+  },
+  {
+   "name": "boolean depth",
+   "plate": {
+    "bed": {
+     "width": 10,
+     "depth": true
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: width and depth must be positive numbers"
+  },
+  {
+   "name": "string origin",
+   "plate": {
+    "bed": {
+     "width": 10,
+     "depth": 10,
+     "origin": {
+      "x": "a",
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: origin must be finite numbers"
+  },
+  {
+   "name": "bed not an object",
+   "plate": {
+    "bed": [
+     256,
+     256
+    ],
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "bed: width and depth must be positive numbers"
+  },
+  {
+   "name": "no states",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: 1 to 6 states required"
+  },
+  {
+   "name": "seven states",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "s0",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s1",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s2",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s3",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s4",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s5",
+      "name": "n",
+      "color": "#fff"
+     },
+     {
+      "id": "s6",
+      "name": "n",
+      "color": "#fff"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: 1 to 6 states required"
+  },
+  {
+   "name": "duplicate state id",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "a",
+      "color": "#fff"
+     },
+     {
+      "id": "ok",
+      "name": "b",
+      "color": "#000"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: duplicate id"
+  },
+  {
+   "name": "numeric colour",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "a",
+      "color": 255
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "states: id, name and color must be strings"
+  },
+  {
+   "name": "objects not a list",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": {
+     "A": 1
+    }
+   },
+   "message": "objects: must be a list"
+  },
+  {
+   "name": "empty label",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: label must be a non-empty string"
+  },
+  {
+   "name": "numeric label",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": 7,
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: label must be a non-empty string"
+  },
+  {
+   "name": "duplicate label",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      }
+     },
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        2,
+        2,
+        3,
+        3
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: duplicate label"
+  },
+  {
+   "name": "unknown state",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "nope",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: unknown state"
+  },
+  {
+   "name": "string selectable",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": "yes",
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ]
+      }
+     }
+    ]
+   },
+   "message": "objects: selectable must be a boolean"
+  },
+  {
+   "name": "two-point polygon",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         1,
+         1
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: polygon needs at least 3 points"
+  },
+  {
+   "name": "string coordinate",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         "1",
+         0
+        ],
+        [
+         1,
+         1
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: coordinates must be finite numbers"
+  },
+  {
+   "name": "boolean coordinate",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         true,
+         0
+        ],
+        [
+         1,
+         1
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: coordinates must be finite numbers"
+  },
+  {
+   "name": "collinear polygon",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         1,
+         1
+        ],
+        [
+         2,
+         2
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: zero area"
+  },
+  {
+   "name": "inverted box",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        10,
+        0,
+        0,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: box must be [x0, y0, x1, y1] with x0 < x1 and y0 < y1"
+  },
+  {
+   "name": "short box",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        10
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: box must be [x0, y0, x1, y1] with x0 < x1 and y0 < y1"
+  },
+  {
+   "name": "empty footprint",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {}
+     }
+    ]
+   },
+   "message": "footprint: needs polygon or box"
+  },
+  {
+   "name": "both polygon and box",
+   "plate": {
+    "bed": {
+     "width": 256,
+     "depth": 256,
+     "origin": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "states": [
+     {
+      "id": "ok",
+      "name": "Printed",
+      "color": "#2e9e5b"
+     },
+     {
+      "id": "bad",
+      "name": "Failed",
+      "color": "#d64545"
+     }
+    ],
+    "objects": [
+     {
+      "label": "A",
+      "state": "ok",
+      "selectable": true,
+      "footprint": {
+       "box": [
+        0,
+        0,
+        1,
+        1
+       ],
+       "polygon": [
+        [
+         0,
+         0
+        ],
+        [
+         1,
+         0
+        ],
+        [
+         1,
+         1
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "message": "footprint: needs polygon or box"
+  }
+ ]
+}

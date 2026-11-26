@@ -940,3 +940,49 @@ input, textarea, select { font-family: inherit; color: inherit; }
   .builder-group-header { flex-wrap: wrap; }
   .builder-group-header > .input { flex: 1 1 100%; }
 }
+
+/* ---------- plate map (components/plateMap, BIZ-405) ---------- */
+/* Map + side panel (legend, object list). The SVG is in bed millimetres; strokes stay a fixed screen width. */
+.plate-map { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--pad-4); align-items: start; }
+.plate-map.list-only { grid-template-columns: minmax(0, 1fr); }
+.plate-map-canvas { min-width: 0; background: var(--bg-1); border: 1px solid var(--border-1); padding: var(--pad-2); }
+.plate-map-svg { display: block; width: 100%; height: auto; max-height: 70vh; cursor: default; user-select: none; }
+.plate-map-bed { fill: var(--bg-0); stroke: var(--border-3); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.plate-map-front { fill: var(--text-4); font-family: var(--font-mono); letter-spacing: 0.08em; pointer-events: none; }
+.plate-map-object { stroke: var(--text-1); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.plate-map-object.neutral { fill: var(--idle); }
+.plate-map-object.selectable { cursor: pointer; }
+.plate-map-object.locked { fill-opacity: 0.4; stroke: var(--text-3); stroke-dasharray: 4 3; }
+.plate-map-object.off-bed { stroke: var(--warn); stroke-width: 2.5px; }
+.plate-map-pattern { pointer-events: none; }
+.plate-map-ink { fill: var(--bg-0); fill-opacity: 0.55; }
+.plate-map-ink-line { stroke: var(--bg-0); stroke-opacity: 0.55; fill: none; }
+.plate-map-hit { fill: none; stroke: var(--text-3); stroke-width: 1px; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.plate-map-marker { fill: var(--text-1); stroke: var(--bg-0); paint-order: stroke; font-family: var(--font-mono); font-weight: 600; pointer-events: none; }
+.plate-map-highlight { fill: none; stroke: var(--accent); stroke-width: 3px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.plate-map-side { display: flex; flex-direction: column; gap: var(--pad-3); min-width: 0; }
+.plate-map-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--pad-2) var(--pad-4); }
+.plate-map-legend-item { display: inline-flex; align-items: center; gap: var(--pad-2); font-size: 12.5px; }
+.plate-map-swatch { width: 24px; height: 16px; flex-shrink: 0; border: 1px solid var(--border-2); }
+.plate-map-swatch-fill.neutral { fill: var(--idle); }
+.plate-map-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 70vh; overflow-y: auto; }
+.plate-map-row {
+  display: flex; align-items: center; gap: var(--pad-2); width: 100%; min-height: var(--row-h); padding: var(--pad-1) var(--pad-2);
+  background: var(--bg-1); border: 1px solid var(--border-1); color: var(--text-1); font: inherit; text-align: left; cursor: pointer;
+}
+.plate-map-row:hover:not(:disabled) { background: var(--bg-2); }
+.plate-map-row.selected { border-color: var(--accent); background: var(--accent-tint); }
+.plate-map-row:disabled { cursor: default; color: var(--text-3); }
+.plate-map-num { min-width: 2ch; text-align: right; color: var(--text-3); }
+/* A long label is cut with an ellipsis; the row's title holds the whole label. */
+.plate-map-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plate-map-state { flex-shrink: 0; }
+@media (max-width: 1024px) {
+  .plate-map { grid-template-columns: minmax(0, 1fr); }
+  .plate-map-row { min-height: 44px; }
+  .plate-map-list { max-height: none; }
+}
+/* dev gallery (plate-map.html) */
+.plate-gallery { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--pad-4); }
+.plate-gallery-case { display: flex; flex-direction: column; gap: var(--pad-2); padding: var(--card-pad); }
+.plate-gallery-title { margin: 0; font-size: 15px; }
