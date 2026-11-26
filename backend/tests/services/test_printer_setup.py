@@ -222,3 +222,76 @@ async def test_test_unsaved_failure_carries_hint(monkeypatch):
     monkeypatch.setattr(printer_setup, "create_client_from_config", lambda *a: _FakeClient(False, ("10.0.0.9", 8883)))
     out = await printer_setup.test_unsaved("bambu", {"ip_address": "10.0.0.9"})
     assert out.ok is False and out.reachable is False and "Couldn't reach" in out.error
+
+
+async def test_a_probe_of_since_edited_credentials_cannot_mark_the_printer_configured(client, session_factory, monkeypatch):
+    """GH #229: a test of the old access code succeeded after a PATCH changed it, and marked the new, untested code configured.
+    The late result is dropped; the replacement test of the new settings decides."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())             # the PATCH's own retest is driven by hand below
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    updated = {**_FULL, "access_code": "new-code"}
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": updated})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.connection_config, row.configured) == (updated, False)
+    assert printer_manager.is_configured(pid) is False
+
+    async def new_probe(_client, _timeout):
+        return True
+
+    monkeypatch.setattr(printer_setup, "wait_connected", new_probe)
+    assert (await printer_setup.evaluate(pid, session_factory)).ok is True      # the test of the new settings still counts
+    assert (await _row(session_factory, pid)).configured is True
+
+
+async def test_a_late_failure_of_since_edited_credentials_leaves_no_stale_error(client, session_factory, monkeypatch):
+    """GH #229, failure side: the old probe's hint about the old credentials must not land on the new, untested config."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False, ("10.0.0.9", 8883)))
+    monkeypatch.setattr(printer_setup, "_probe", lambda host, port: True)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        return False
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (False, None)

@@ -106,10 +106,18 @@ class PrinterManager:
     def is_configured(self, printer_id: int) -> bool:
         return printer_id not in self._unconfigured
 
-    async def mark_configured(self, printer_id: int, session_factory=None, *, broadcast: bool = True) -> None:
-        """A connection succeeded: persist `configured`, clear the last error, and tell the UI."""
-        self.set_configured(printer_id, True)
+    async def mark_configured(self, printer_id: int, session_factory=None, *, broadcast: bool = True,
+                              still_current: Callable[[object], bool] | None = None) -> bool:
+        """A connection succeeded: persist `configured`, clear the last error, and tell the UI. `still_current(printer)` is
+        checked against the committed row under the write lock; when it says the success is stale, nothing changes (False)."""
         factory = session_factory or self._session_factory
+        if still_current is not None and factory:
+            from . import printer_setup
+            if not await printer_setup.write_if_current(factory, printer_id, still_current, True, None):
+                return False
+            factory = None                                   # already persisted (and set in memory) under the lock
+        else:
+            self.set_configured(printer_id, True)
         if factory:
             async with factory() as session:
                 from ..models import Printer
@@ -117,6 +125,7 @@ class PrinterManager:
                 if printer is not None:
                     printer.configured, printer.config_error = True, None
                     await session.commit()
+        factory = session_factory or self._session_factory
         client = self._clients.get(printer_id)
         if isinstance(client, AbstractPrinterClient) and factory:
             await self.on_topology_change(printer_id)
@@ -128,6 +137,7 @@ class PrinterManager:
         if broadcast and self._on_state_broadcast:
             await self._on_state_broadcast("printer_configured",
                                            {"printer_id": printer_id, "configured": True, "config_error": None})
+        return True
 
     async def connect_all_enabled_printers(self, session_factory) -> None:
         if not session_factory:
