@@ -101,6 +101,7 @@ describe('FleetScreen', () => {
       const { container, unmount } = render(<FleetScreen />);
       await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
       expect(screen.queryByTestId('printer-image')).toBeNull();
+      expect(imgSrcs(container).some(src => src.includes('/snapshot'))).toBe(true);   // anchors the no-camera check below
 
       fireEvent.click(screen.getByRole('button', { name: 'Image' }));
       expect(await screen.findByTestId('printer-image')).toBeInTheDocument();

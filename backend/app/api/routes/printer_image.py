@@ -24,4 +24,4 @@ async def printer_image(printer_id: int, session: AsyncSession = Depends(get_ses
     path = printer_image_path(printer.plugin_id, printer.model_id)
     if path is None:
         raise HTTPException(404, "No picture for this printer model")
-    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})

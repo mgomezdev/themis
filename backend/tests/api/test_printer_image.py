@@ -1,9 +1,10 @@
 """A printer's picture comes from its plugin's package via the neutral /image route (no vendor named in core)."""
 import dataclasses
+import os
 
 import pytest
 
-from app.plugins import _REGISTRY, registered_plugins
+from app.plugins import _REGISTRY, plugin_root, registered_plugins
 from app.plugins.host import plugin_host
 from app.services.printer_images import printer_image_path
 from tests.printer_ips import ip_config
@@ -58,10 +59,29 @@ async def test_image_route_404_when_plugin_disabled(client, monkeypatch):
     assert (await client.get(f"/api/v1/printers/{pid}/image")).status_code == 404
 
 
-@pytest.mark.parametrize("bad", ["../../../../etc/passwd", "images/x.txt", "/etc/hosts", "images/missing.png"])
-def test_declared_path_must_be_an_existing_png_inside_the_plugin(monkeypatch, bad):
+def _with_image(monkeypatch, image):
     manifest = _REGISTRY["bambu"]
-    evil = dataclasses.replace(manifest, manufacturers=tuple(
-        dataclasses.replace(mf, models=tuple(dataclasses.replace(m, image=bad) for m in mf.models)) for mf in manifest.manufacturers))
-    monkeypatch.setitem(_REGISTRY, "bambu", evil)
+    changed = dataclasses.replace(manifest, manufacturers=tuple(
+        dataclasses.replace(mf, models=tuple(dataclasses.replace(m, image=image) for m in mf.models)) for mf in manifest.manufacturers))
+    monkeypatch.setitem(_REGISTRY, "bambu", changed)
+
+
+@pytest.mark.parametrize("bad", ["../../../../etc/passwd", "images/x.txt", "/etc/hosts", "images/missing.png"])
+def test_declared_path_must_be_an_existing_png(monkeypatch, bad):
+    _with_image(monkeypatch, bad)
     assert printer_image_path("bambu", "p1s") is None
+
+
+def test_png_outside_the_plugin_package_is_refused(monkeypatch, tmp_path):
+    """Only the containment check stops these: each is a real .png that exists."""
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(PNG)
+    root = plugin_root("bambu")
+    link = root / "images" / "_escape_test.png"
+    link.symlink_to(outside)
+    try:
+        for image in (str(outside), os.path.relpath(outside, root), "images/_escape_test.png"):
+            _with_image(monkeypatch, image)
+            assert printer_image_path("bambu", "p1s") is None, image
+    finally:
+        link.unlink()
