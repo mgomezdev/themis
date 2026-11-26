@@ -790,7 +790,7 @@
           "customer"
         ],
         "summary": "Accept the quote",
-        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept.",
+        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept, or when the quote changed\n(price, visibility) while the acceptance was being recorded: the customer accepts only the price they read.",
         "operationId": "accept_quote_api_v1_customer_projects__project_id__quote_accept_post",
         "parameters": [
           {
@@ -815,6 +815,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "No visible quote, or the quote changed while it was being accepted"
           },
           "422": {
             "description": "Validation Error",
