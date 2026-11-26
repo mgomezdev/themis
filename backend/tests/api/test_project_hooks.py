@@ -352,6 +352,52 @@ async def test_two_requests_cannot_both_take_over_one_stale_claim(session_factor
     assert all(r is None or getattr(r, "status_code", None) == 409 for r in results)
 
 
+async def test_a_stale_takeover_does_not_repeat_a_generation_whose_jobs_were_committed(client, tmp_path, session_factory, monkeypatch):
+    """GH #225: the first request committed its job and stalled before recording its response; once the claim went stale a retry
+    took the key over and generated the job again. The retry now finds the committed work and the key turns partial."""
+    from app.api.routes import project_generate
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    headers = {"Idempotency-Key": "same-generation"}
+    generate = project_generate._generate_project
+    committed, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_after_commit(*args, **kwargs):
+        result = await generate(*args, **kwargs)
+        if not committed.is_set():
+            committed.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(project_generate, "_generate_project", stall_after_commit)
+    first = asyncio.create_task(_generate(client, tmp_path, project_id, headers))
+    try:
+        await asyncio.wait_for(committed.wait(), 5)
+        assert await _count(session_factory, Job) == 1
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await _generate(client, tmp_path, project_id, headers)
+    finally:
+        resume.set()
+        original = await first
+    assert retry.status_code == 409 and "created 1 job(s)" in retry.json()["detail"], retry.text
+    assert original.status_code == 200, original.text
+    assert await _count(session_factory, Job) == 1
+    again = await _generate(client, tmp_path, project_id, headers)                       # the key stays partial: never re-run
+    assert again.status_code == 409 and await _count(session_factory, Job) == 1
+
+
+async def test_a_stale_claim_with_no_committed_work_is_still_taken_over(session_factory, monkeypatch):
+    seen = []
+
+    async def nothing_committed(baseline):
+        seen.append(baseline)
+        return None
+
+    assert await idempotency.claim(session_factory, "S", "k", "h", baseline={"jobs_before": 3}) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    assert await idempotency.claim(session_factory, "S", "k", "h", committed_since=nothing_committed) is None
+    assert seen == [{"jobs_before": 3}]
+
+
 async def test_a_completed_claim_is_not_overwritten_by_a_late_second_completion(session_factory):
     await idempotency.claim(session_factory, "S", "late", "h")
     await idempotency.complete(session_factory, "S", "late", 200, {"first": True})

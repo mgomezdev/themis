@@ -238,12 +238,19 @@ async def generate_project(
     (`Idempotent-Replay: true`) and creates no further files or jobs."""
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = f"POST /api/v1/projects/{project_id}/generate"
+    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
     if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()))
+        async def committed_since(baseline: dict) -> str | None:
+            # A stale claim whose first attempt already committed jobs must not generate them again (GH #225).
+            created = await _job_count(factory, project_id) - baseline.get("jobs_before", jobs_before)
+            return (f"An earlier request with this Idempotency-Key created {created} job(s) for project {project_id}: check the "
+                    "project's jobs, then retry with a new Idempotency-Key") if created > 0 else None
+
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()),
+                                         baseline={"jobs_before": jobs_before}, committed_since=committed_since)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
-    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
     try:
         result = await _generate_project(project_id, body, session)
     except BaseException:

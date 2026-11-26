@@ -6,13 +6,15 @@ before any work starts), runs, and stores its response; a repeat with the same k
 different request is 422. If the first request failed *before changing anything*, its claim is released so the retry runs for real; if it
 failed after committing part of its work (e.g. some of a project's jobs) the key is marked `partial` and a retry gets 409 with an
 explanation instead of repeating that work. A claim older than STALE_AFTER is treated as abandoned (the process died) and may be taken
-over (once). Finished keys are kept KEEP_FOR. Keys are scoped to the endpoint."""
+over (once) — unless the caller's `committed_since` check finds work the first attempt committed (then the key turns `partial`
+and the retry gets 409, as above). Finished keys are kept KEEP_FOR. Keys are scoped to the endpoint."""
 from __future__ import annotations
 
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Awaitable, Callable
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select, update
@@ -47,14 +49,18 @@ def check_key(key: str) -> str:
     return key
 
 
-async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str, req_hash: str) -> Replay | None:
-    """None: this request owns the key and must run, then `complete` (or `release` on failure). A `Replay`: answer with it."""
+async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str, req_hash: str, *, baseline: dict | None = None,
+                committed_since: Callable[[dict], Awaitable[str | None]] | None = None) -> Replay | None:
+    """None: this request owns the key and must run, then `complete` (or `release` on failure). A `Replay`: answer with it.
+    `baseline` is stored with a fresh claim; before a stale claim is taken over, `committed_since(baseline)` may return a detail
+    saying the first attempt already committed work — the key is then marked `partial` and this request gets 409."""
     key = check_key(key)
     now = datetime.now(timezone.utc)
     async with factory() as session:
         await session.execute(delete(IdempotencyKey).where(IdempotencyKey.state.in_(("done", "partial")), IdempotencyKey.created_at < _iso(now - KEEP_FOR)))
         inserted = (await session.execute(
-            sqlite_insert(IdempotencyKey).values(scope=scope, key=key, request_hash=req_hash, state="in_progress", created_at=_iso(now))
+            sqlite_insert(IdempotencyKey).values(scope=scope, key=key, request_hash=req_hash, state="in_progress", created_at=_iso(now),
+                                                 response=baseline)
             .on_conflict_do_nothing().returning(IdempotencyKey.id))).scalar_one_or_none()
         if inserted is not None:
             await session.commit()
@@ -70,8 +76,15 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
             await session.commit()
             raise HTTPException(409, (row.response or {}).get("detail") or "An earlier request with this Idempotency-Key partly completed")
         if row.created_at < _iso(now - STALE_AFTER):                     # the first attempt died: take the key over (once)
-            taken = await session.execute(update(IdempotencyKey).where(IdempotencyKey.id == row.id, IdempotencyKey.created_at == row.created_at)
-                                          .values(created_at=_iso(now)))
+            await session.commit()
+            done = await committed_since(row.response or {}) if committed_since is not None else None
+            same_claim = (IdempotencyKey.id == row.id, IdempotencyKey.created_at == row.created_at, IdempotencyKey.state == "in_progress")
+            if done:                                                     # it got far enough to commit work: never repeat it
+                await session.execute(update(IdempotencyKey).where(*same_claim)
+                                      .values(state="partial", status_code=None, response={"detail": done}))
+                await session.commit()
+                raise HTTPException(409, done)
+            taken = await session.execute(update(IdempotencyKey).where(*same_claim).values(created_at=_iso(now)))
             await session.commit()
             if taken.rowcount == 1:
                 return None
