@@ -10,7 +10,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -137,7 +137,8 @@ async def patch_mapping(model_uuid: str, mapping_id: int, body: MappingPatch,
 
 @router.delete("/{mapping_id}", status_code=204, summary="Remove a mapping",
                responses={404: {"description": "Unknown mapping"},
-                          409: {"description": "It is the default of a model with other variants, or a printer uses it"}},
+                          409: {"description": "It is the default of a model with other variants, a printer uses it, "
+                                                "or it changed concurrently"}},
                dependencies=[Depends(require_scope("printers:write"))])
 async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession = Depends(get_session)) -> None:
     row = await _row_or_404(session, model_uuid, mapping_id)
@@ -160,7 +161,15 @@ async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession
         if followers:
             raise HTTPException(409, f"{', '.join(followers)} follow this model's default profile: set a profile override or remove "
                                      "those printers before removing the last profile")
-    await session.delete(row)
+    # The checks above judged the pair from earlier reads; a concurrent promotion or create may have changed it since.
+    # The DELETE opens the write transaction, so re-check the invariant there: rows left in the pair keep one default.
+    await session.execute(delete(PrinterModelSlicerProfile).where(PrinterModelSlicerProfile.id == row.id))
+    left = (await session.execute(select(PrinterModelSlicerProfile.is_default).where(
+        PrinterModelSlicerProfile.model_uuid == row.model_uuid,
+        PrinterModelSlicerProfile.provider_plugin_id == row.provider_plugin_id))).scalars().all()
+    if left and not any(left):
+        await session.rollback()
+        raise HTTPException(409, "This mapping changed while it was being removed: reload and try again")
     await session.commit()
 
 
