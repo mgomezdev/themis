@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PrintGroupsCard } from './PrintGroupsCard';
@@ -177,5 +177,71 @@ describe('PrintGroupsCard pools (BIZ-362)', () => {
     fireEvent.change(cap, { target: { value: '0' } });
     fireEvent.blur(cap);
     expect(api.to('PATCH', '/api/v1/projects/7/groups/2')).toHaveLength(2);         // 0 is refused, not saved
+  });
+
+  it('replaces unsaved edits with the saved values when the server changes them', async () => {
+    const { resetOverrideSettingsCache } = await import('./overrideSettings');
+    resetOverrideSettingsCache();
+    const groups = [group(1, 'Default Group'), group(2, 'Pool', { strategy: 'pool', max_parts: 4 }),
+                    group(3, 'Big', { envelope_x: 200, envelope_y: 180, overrides: { brim_width: '5' } })];
+    open(groups);
+    const { rerender } = render(<PrintGroupsCard projectId={7} items={[]} refreshKey={0} />);
+    const cap = await screen.findByLabelText('Most parts per plate') as HTMLInputElement;
+    const big = within(screen.getByTestId('group-3'));
+    fireEvent.change(cap, { target: { value: '9' } });
+    fireEvent.change(screen.getByDisplayValue('Pool'), { target: { value: 'Typed' } });
+    fireEvent.change(big.getByLabelText('Envelope X (mm)'), { target: { value: '99' } });
+    const width = within(await screen.findByTestId('group-overrides-3')).getByLabelText('Brim width') as HTMLInputElement;
+    fireEvent.change(width, { target: { value: '1' } });
+    groups[1] = { ...groups[1], name: 'Pool B', max_parts: 8 };
+    groups[2] = { ...groups[2], envelope_x: 210, overrides: { brim_width: '7' } };
+    rerender(<PrintGroupsCard projectId={7} items={[]} refreshKey={1} />);
+    await waitFor(() => expect(cap.value).toBe('8'));
+    expect(screen.getByDisplayValue('Pool B')).toBeTruthy();
+    expect((big.getByLabelText('Envelope X (mm)') as HTMLInputElement).value).toBe('210');
+    expect(width.value).toBe('7');
+  });
+
+  it("doesn't carry one group's unsaved edits to the next when the Builder switches groups", async () => {
+    open([group(1, 'Default Group'), group(2, 'A', { envelope_x: 200, envelope_y: 180 }),
+          group(3, 'B', { envelope_x: 200, envelope_y: 180 })]);
+    const { rerender } = render(<PrintGroupsCard projectId={7} items={[]} groupId={2} />);
+    await screen.findByDisplayValue('A');
+    fireEvent.change(screen.getByLabelText('Envelope X (mm)'), { target: { value: '99' } });
+    rerender(<PrintGroupsCard projectId={7} items={[]} groupId={3} />);
+    await screen.findByDisplayValue('B');
+    expect((screen.getByLabelText('Envelope X (mm)') as HTMLInputElement).value).toBe('200');
+  });
+
+  // BIZ-408: CI once lost this edit. When the render that mounts a row overruns React's 5 ms slice (coverage, a loaded runner),
+  // React commits the row but runs its effects in a later task; an edit made in between was overwritten by the row's
+  // "copy the saved value into the input" effect, so the blur saw the old cap and saved nothing. Forced here: every scheduler
+  // tick reads as 10 ms, and the edit lands in the microtask right after the commit, before the effects' task.
+  it('keeps a cap typed before the new row has run its effects (BIZ-408)', async () => {
+    const api = open([group(1, 'Default Group'), group(2, 'Pool', { strategy: 'pool', max_parts: 4 })]);
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const wasAct = env.IS_REACT_ACT_ENVIRONMENT;
+    let t = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (t += 10));
+    const container = document.body.appendChild(document.createElement('div'));
+    const mounted = new Promise<HTMLInputElement>(resolve => {
+      const mo = new MutationObserver(() => {
+        const el = container.querySelector<HTMLInputElement>('[aria-label="Most parts per plate"]');
+        if (el) { mo.disconnect(); resolve(el); }
+      });
+      mo.observe(container, { childList: true, subtree: true });
+    });
+    env.IS_REACT_ACT_ENVIRONMENT = false;                     // let the groups load commit through React's scheduler, not act()
+    try {
+      render(<PrintGroupsCard projectId={7} items={[]} />, { container });
+      const cap = await mounted;
+      fireEvent.change(cap, { target: { value: '6' } });
+      expect(cap.value).toBe('6');
+      fireEvent.blur(cap);
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = wasAct;
+      now.mockRestore();
+    }
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/projects/7/groups/2').map(c => c.body)).toEqual([{ max_parts: 6 }]));
   });
 });

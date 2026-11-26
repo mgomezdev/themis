@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   createProjectGroup, deleteProjectGroup, listProjectGroups, orderProjectGroups, patchProjectGroup, updateProjectItem,
   type ProjectGroup, type ProjectGroupPatch, type ProjectItem,
@@ -51,7 +51,7 @@ export function PrintGroupsCard({ projectId, items, onChanged, groupId, refreshK
     return (
       <div data-testid="print-groups">
         {error && <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 8 }}>{error}</div>}
-        <GroupRow group={g} index={i} count={groups.length} groups={groups} printers={printers} items={[]} scoped
+        <GroupRow key={g.id} group={g} index={i} count={groups.length} groups={groups} printers={printers} items={[]} scoped
                   onPatch={body => patch(g, body)} onMove={by => move(i, by)}
                   onDelete={() => run(() => deleteProjectGroup(projectId, g.id))}
                   onMoveItem={() => {}} />
@@ -89,24 +89,34 @@ export function PrintGroupsCard({ projectId, items, onChanged, groupId, refreshK
   );
 }
 
+/**
+ * An input's edit state, reset to the saved value whenever `key` (the saved value's identity) changes: the server wins.
+ * Reset while rendering, not in an effect. A row's effects can run a task after it first appears, and a mount-time
+ * "copy the saved value in" effect then overwrote whatever was typed in between, so the blur saved nothing (BIZ-408).
+ */
+function useSaved<T>(saved: T, key: unknown): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState(saved);
+  const [seenKey, setSeenKey] = useState(key);
+  if (!Object.is(seenKey, key)) { setSeenKey(key); setValue(saved); }
+  return [value, setValue];
+}
+
 function GroupRow({ group, index, count, groups, printers, items, onPatch, onMove, onDelete, onMoveItem, scoped }: {
   group: ProjectGroup; index: number; count: number; groups: ProjectGroup[]; printers: ApiPrinter[]; items: ProjectItem[];
   scoped?: boolean;     // the Builder's Groups tab: the banner shows the items and sets the order
   onPatch: (body: ProjectGroupPatch) => void; onMove: (by: number) => void; onDelete: () => void;
   onMoveItem: (itemId: number, groupId: number) => void;
 }) {
-  const [name, setName] = useState(group.name);
-  const [env, setEnv] = useState({ x: group.envelope_x?.toString() ?? '', y: group.envelope_y?.toString() ?? '' });
-  useEffect(() => { setName(group.name); setEnv({ x: group.envelope_x?.toString() ?? '', y: group.envelope_y?.toString() ?? '' }); },
-            [group.name, group.envelope_x, group.envelope_y]);
+  const [name, setName] = useSaved(group.name, group.name);
+  const [env, setEnv] = useSaved({ x: group.envelope_x?.toString() ?? '', y: group.envelope_y?.toString() ?? '' },
+                                 `${group.envelope_x}x${group.envelope_y}`);
   // BIZ-362: a pool packs each claimed plate for the claiming printer's own bed, so it has no envelope.
   const pool = group.strategy === 'pool';
-  const [overrides, setOverrides] = useState<Record<string, string>>(group.overrides ?? {});
   const savedOverrides = JSON.stringify(group.overrides ?? {});
+  const [overrides, setOverrides] = useSaved<Record<string, string>>(group.overrides ?? {}, savedOverrides);
   const lastSent = useRef(savedOverrides);
-  useEffect(() => { setOverrides(JSON.parse(savedOverrides)); lastSent.current = savedOverrides; }, [savedOverrides]);   // the server wins
-  const [maxParts, setMaxParts] = useState(group.max_parts?.toString() ?? '');
-  useEffect(() => { setMaxParts(group.max_parts?.toString() ?? ''); }, [group.max_parts]);
+  useEffect(() => { lastSent.current = savedOverrides; }, [savedOverrides]);
+  const [maxParts, setMaxParts] = useSaved(group.max_parts?.toString() ?? '', group.max_parts);
   const saveMaxParts = () => {
     const n = maxParts.trim() === '' ? null : Math.floor(Number(maxParts));
     if (n !== null && !(n >= 1)) { setMaxParts(group.max_parts?.toString() ?? ''); return; }
