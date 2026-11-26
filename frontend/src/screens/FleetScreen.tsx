@@ -38,7 +38,7 @@ function MediaToggle({ value, onChange }: { value: Media; onChange: (v: Media) =
                     background: on ? 'var(--bg-2)' : 'transparent',
                     color: on ? 'var(--text-1)' : 'var(--text-3)',
                     fontSize: 12, fontWeight: 500, cursor: 'pointer', alignItems: 'center',
-                    boxShadow: on ? '0 1px 0 rgba(0,0,0,0.25), 0 0 0 1px var(--border-2)' : 'none',
+                    boxShadow: on ? '0 0 0 1px var(--border-2)' : 'none',
                   }}>
             {React.cloneElement(o.icon, { size: 13 } as React.SVGProps<SVGSVGElement>)}
             <span>{o.label}</span>
