@@ -162,7 +162,9 @@ def remap_3mf(
                 _patch_model_settings_filament_map(src_ms, mapping)
                 if src_ms
                 else _model_settings_with_extruder(
-                    _object_ids_from_model(model_xml) or ["1"], 1
+                    # Absent settings mean every object is on logical filament 1,
+                    # so route that default through the map like the paint.
+                    _object_ids_from_model(model_xml) or ["1"], mapping.get(1, 0) + 1
                 )
             )
         else:
