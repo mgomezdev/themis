@@ -256,4 +256,4 @@ nor connection. Hardware protocol checks remain opt-in and read-only by default.
 
 ## Printer pictures (BIZ-406)
 
-`PrinterModel.image` (plugin-relative `.png`) is the model's picture; `GET /api/v1/printers/{id}/image` serves it (`services/printer_images.py`, route in `api/routes/printer_image.py`). Fleet's Camera/Image toggle (`themis.fleet.media` in localStorage) picks `VideoTile` vs `PrinterImage` on cards. Bundled PNGs are placeholders; drop real ones over `plugins/<vendor>/images/<model_id>.png`.
+`PrinterModel.image` (plugin-relative `.png`) is the model's picture; `GET /api/v1/printers/{id}/image` serves it (`services/printer_images.py`, route in `api/routes/printer_image.py`). Fleet's Camera/Image toggle (`themis.fleet.media` in localStorage) picks `VideoTile` vs `PrinterImage` on cards. Bundled PNGs are OrcaSlicer's printer cover images (`resources/profiles/<vendor>/<model>_cover.png`, 240x240; U1 Extended reuses the U1 cover); replace by overwriting `plugins/<vendor>/images/<model_id>.png`.
