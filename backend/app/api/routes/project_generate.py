@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Literal, Optional
 from fastapi import Depends, Header, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ._filament_ask import row_tuple, tuple_columns
 from ...services.filament_tuple import FilamentTuple
@@ -395,6 +396,34 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
     return packs, out, [p for p, _ in resolved.printers]
 
 
+async def _move_pack_best_effort(session: AsyncSession, pack_store, new_file: UploadedFile, tmp_key: str, final_key: str,
+                                 folder: str, project_id: int) -> None:
+    """Move a committed pack from its staging key to its job-ID folder (GH #261). The jobs are already committed and the file
+    is valid where it is, so a failure is logged, never raised: the pack's remaining steps still run. The row is updated in
+    its own short session, so the caller's session is never rolled back (that would expire everything it still uses); if
+    that update fails after the move, the file is moved back so the row and the disk always agree."""
+    try:
+        moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+    except Exception:
+        logger.exception("project %s: moving pack %s to %s failed; it stays at %s", project_id, new_file.id, final_key, tmp_key)
+        return
+    try:
+        async with async_sessionmaker(session.bind, expire_on_commit=False)() as side:
+            await side.execute(update(UploadedFile).where(UploadedFile.id == new_file.id)
+                               .values(relative_path=moved.key, mtime=moved.mtime, folder=folder))
+            await side.commit()
+    except Exception:
+        logger.exception("project %s: recording the move of pack %s failed; moving it back to %s", project_id, new_file.id, tmp_key)
+        try:
+            await asyncio.to_thread(pack_store.move, moved.key, tmp_key)
+        except Exception:
+            logger.exception("project %s: pack %s is at %s but recorded at %s; a library scan re-links it", project_id,
+                             new_file.id, moved.key, tmp_key)
+        return
+    for attr, value in (("relative_path", moved.key), ("mtime", moved.mtime), ("folder", folder)):
+        set_committed_value(new_file, attr, value)
+
+
 async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
                       save_slice: bool, artifact_cleanup: list[str] | None = None,
                       on_pack_jobs=None) -> tuple[list[dict], list[dict]]:
@@ -553,13 +582,17 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             # Rename temp dir to the job-ID subfolder now that IDs are known.
             job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
             final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
-            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
-            if artifact_cleanup is not None:
-                artifact_cleanup[-1] = moved.key
-            new_file.relative_path = moved.key
-            new_file.mtime = moved.mtime
-            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
-            await session.commit()
+            if session.info.get("slicer_transaction"):
+                # One atomic send: a failure here must fail the whole send (its handler rolls back and cleans up).
+                moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+                if artifact_cleanup is not None:
+                    artifact_cleanup[-1] = moved.key
+                new_file.relative_path, new_file.mtime = moved.key, moved.mtime
+                new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
+                await session.commit()
+            else:
+                await _move_pack_best_effort(session, pack_store, new_file, tmp_key, final_key, f"/{PACK_FOLDER}/{job_id_label}",
+                                             proj.id)
 
         if fixed is None:
             cached_plates = (await session.execute(
