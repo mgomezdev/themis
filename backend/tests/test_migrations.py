@@ -703,3 +703,19 @@ async def test_v082_preserves_legacy_cache_rows_with_unknown_nozzle_sizes():
         await v082_printer_topology.up(conn)
         assert (await conn.execute(text('SELECT id, cache_key, nozzle_sizes_mm FROM sliced_versions'))).one() == (7, 'legacy-key', None)
     await engine.dispose()
+
+
+async def test_v083_requeue_pending_defaults_existing_failure_rows_to_nothing_pending():
+    """Rows recorded before GH #227 were requeued at once: none of them may be repacked again by the startup sweep."""
+    from app.migrations import v083_requeue_pending
+    engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE job_item_failures (id INTEGER PRIMARY KEY, resolution TEXT)"))
+        await conn.execute(text("INSERT INTO job_item_failures VALUES (1, 'requeued')"))
+        await v083_requeue_pending.up(conn)
+        await v083_requeue_pending.up(conn)
+        assert (await conn.execute(text("SELECT id, resolution, requeue_pending FROM job_item_failures"))).one() == (1, "requeued", 0)
+        await v083_requeue_pending.down(conn)
+        await v083_requeue_pending.down(conn)
+        assert "requeue_pending" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(job_item_failures)"))).fetchall()}
+    await engine.dispose()

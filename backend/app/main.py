@@ -128,6 +128,21 @@ async def lifespan(app: FastAPI):
     printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
     await queue_engine.start()
 
+    async def _resume_requeues() -> None:      # GH #227: failed parts whose repack an interruption cut short
+        from .services import print_results
+        try:
+            for _ in range(20):                # the project builder may still be starting: retry for ~10 minutes
+                resumed = await print_results.resume_pending(SessionLocal)
+                if not resumed:
+                    return
+                logging.getLogger("app").info("Resuming interrupted requeues of failed parts for job(s) %s", resumed)
+                queue_engine.wake()
+                await asyncio.sleep(30)
+        except Exception:
+            logging.getLogger("app").exception("Resuming interrupted requeues failed")
+
+    resume_requeues_task = asyncio.create_task(_resume_requeues(), name="resume-requeues")
+
     try:
         from .services.printer_model_registry import sync_registry
         async with SessionLocal() as session:
@@ -164,6 +179,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if not resume_requeues_task.done():
+        resume_requeues_task.cancel()
+        try:
+            await resume_requeues_task
+        except (asyncio.CancelledError, Exception):  # cancelled or failed: either way the stops below must still run
+            pass
     if warm_task is not None and not warm_task.done():
         warm_task.cancel()
         try:
