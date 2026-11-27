@@ -189,6 +189,12 @@ async def plate_cleared(
                     a[key] = again[key]
     if assumed:
         outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
+    leftover = await print_results.resume_pending_for_printer(session, printer_id)   # GH #249: earlier interrupted clears
+    if leftover["requeued_job_ids"] or leftover["held"]:
+        outcome["requeued_job_ids"] = outcome.get("requeued_job_ids", []) + leftover["requeued_job_ids"]
+        outcome["held"] = outcome.get("held", []) + leftover["held"]
+    if leftover.get("requeue_errors"):
+        outcome["requeue_errors"] = outcome.get("requeue_errors", []) + leftover["requeue_errors"]
     _printers.queue_engine.wake()
     return {"ok": True, **outcome}
 
@@ -202,6 +208,11 @@ async def _resume_interrupted_requeue(printer_id: int, job_id: int, key, session
     if job is None or job.assigned_printer_id != printer_id:
         raise HTTPException(422, f"Job {job_id} did not print on this printer")
     requeued = await print_results.requeue_reported(session, job)
+    leftover = await print_results.resume_pending_for_printer(session, printer_id)   # other plates of that clear, too
+    requeued["requeued_job_ids"] += leftover["requeued_job_ids"]
+    requeued["held"] += leftover["held"]
+    if leftover.get("requeue_errors"):
+        requeued["requeue_errors"] = requeued.get("requeue_errors", []) + leftover["requeue_errors"]
     _printers.queue_engine.wake()
     return {"ok": True, **requeued}
 
