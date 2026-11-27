@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
+from sqlalchemy import String, cast, delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -85,7 +85,12 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
         if row.created_at < _iso(now - STALE_AFTER):                     # the first attempt died: take the key over (once)
             await session.commit()
             done = await committed_since(row.response or {}) if committed_since is not None else None
-            same_claim = (IdempotencyKey.id == row.id, IdempotencyKey.created_at == row.created_at, IdempotencyKey.state == "in_progress")
+            # GH #258: the decision above used the progress read with the row; if the first attempt recorded more since (its
+            # note_progress committed between that read and here), the claim no longer matches and nothing is taken over.
+            # (JSON compared normalised; SQLAlchemy stores a missing baseline as the JSON text null, SQL NULL is folded in too)
+            seen = func.coalesce(func.json(cast(IdempotencyKey.response, String)), "null") == func.json(json.dumps(row.response))
+            same_claim = (IdempotencyKey.id == row.id, IdempotencyKey.created_at == row.created_at, IdempotencyKey.state == "in_progress",
+                          seen)
             if done:                                                     # it got far enough to commit work: never repeat it
                 await session.execute(update(IdempotencyKey).where(*same_claim)
                                       .values(state="partial", status_code=None, response={"detail": done}))
