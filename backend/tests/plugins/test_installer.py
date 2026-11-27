@@ -248,9 +248,7 @@ async def _install(session_factory, version="1.0.0", **kw):
 
 async def test_upgrade_keeps_the_running_version_and_prunes_the_rest(data_dir, session_factory):
     await _install(session_factory, "1.0.0")
-    async with session_factory() as s:                                     # the restart happened: 1.0.0 is running
-        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
-        await s.commit()
+    await _started(session_factory)                                        # the restart happened: 1.0.0 is running
     row = await _install(session_factory, "1.1.0")
     assert (row.version, row.previous_version, row.status) == ("1.1.0", "1.0.0", "pending_restart")
     # a second upgrade BEFORE the restart: 1.1.0 never ran, so the running 1.0.0 must stay (code it imported, rollback target)
@@ -259,8 +257,7 @@ async def test_upgrade_keeps_the_running_version_and_prunes_the_rest(data_dir, s
     assert sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir()) == ["1.0.0", "1.2.0"]
     async with session_factory() as s:
         assert [r.action for r in (await s.execute(select(AuditLog))).scalars()] == ["plugin.install", "plugin.upgrade", "plugin.upgrade"]
-        (await s.get(InstalledPlugin, "acme_inv")).status = "active"       # restarted again
-        await s.commit()
+    await _started(session_factory)                                        # restarted again: 1.2.0 runs
     row = await _install(session_factory, "1.3.0")
     assert (row.previous_version, sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir())) == ("1.2.0", ["1.2.0", "1.3.0"])
 
@@ -386,9 +383,13 @@ async def test_commit_rejects_unknown_tokens_and_a_mismatched_expected_id(data_d
 
 
 async def _started(session_factory, plugin_id="acme_inv"):
-    """The restart happened: the installed version is running (so an upgrade keeps it as the rollback target)."""
+    """The restart happened: the installed version is running (so an upgrade keeps it as the rollback target) and the loader
+    reports it as what this process loaded."""
+    from app.plugins import loader
     async with session_factory() as s:
-        (await s.get(InstalledPlugin, plugin_id)).status = "active"
+        row = await s.get(InstalledPlugin, plugin_id)
+        row.status = "active"
+        loader.last_report.loaded[plugin_id] = row.version
         await s.commit()
 
 
@@ -529,3 +530,19 @@ async def test_only_github_plugins_check_for_updates(data_dir, session_factory):
     row = await _install(session_factory)
     with pytest.raises(InstallError, match="only plugins installed from GitHub"):
         await installer.check_update(row)
+
+
+async def test_an_upgrade_after_rolling_back_a_pending_upgrade_keeps_the_running_version(data_dir, session_factory, monkeypatch):
+    """GH #247: 1.0 runs; upgrade to 1.1 (pending), roll back (still pending), upgrade to 1.2. The row then said previous=1.1,
+    and the prune deleted the running 1.0 folder."""
+    await _install(session_factory, "1.0.0")
+    await _started(session_factory)
+    await _install(session_factory, "1.1.0")
+    async with session_factory() as s:
+        await installer.rollback(s, "acme_inv", actor="a")
+    row = await _install(session_factory, "1.2.0")
+    assert (row.version, row.previous_version, row.status) == ("1.2.0", "1.0.0", "pending_restart")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()                 # still on disk: it is what is running
+    assert not installer.version_dir("acme_inv", "1.1.0").exists()             # never ran: pruned
+    async with session_factory() as s:
+        assert (await installer.rollback(s, "acme_inv", actor="a")).version == "1.0.0"

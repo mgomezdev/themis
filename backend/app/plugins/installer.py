@@ -572,10 +572,16 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
             (staged.root / INFO_FILE).write_text(json.dumps({"migrations": list(staged.migrations)}), encoding="utf-8")
             await asyncio.to_thread(shutil.move, str(staged.root), str(target))
             action = "plugin.install" if row is None else "plugin.upgrade"
-            # The version that is actually RUNNING is what a rollback must return to and what must not be deleted. A row
-            # still `pending_restart` has not run yet: the running one is whatever it recorded as `previous_version`.
+            # The version that is actually RUNNING is what a rollback must return to and what must not be deleted. This
+            # process knows it exactly: the loader recorded what it loaded at startup. Upgrades and rollbacks since then only
+            # changed the row (GH #247: an upgrade, its rollback, then another upgrade lost the running version), so trust the
+            # loader; without a load report, a row still `pending_restart` has not run yet: it is what it recorded as previous.
+            from . import loader               # the module, read at call time: load_installed rebinds `last_report`
+            running = loader.last_report.loaded.get(t.id)
             if row is None:
                 previous = None
+            elif running is not None:
+                previous = running
             elif row.status == "pending_restart":
                 previous = row.previous_version
             else:
