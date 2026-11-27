@@ -478,3 +478,76 @@ async def test_the_holder_can_still_release_or_mark_partial(session_factory, mon
     _, retry = await _taken_over(session_factory, monkeypatch, key="b")
     await idempotency.release(session_factory, "S", "b", owner=retry)
     assert await idempotency.claim(session_factory, "S", "b", "h", owner=idempotency.new_owner()) is None
+
+
+async def test_a_stale_takeover_does_not_create_the_project_a_second_time(client, session_factory, monkeypatch):
+    """GH #245: the first create committed its project and stalled before recording its response; once the claim went stale
+    a retry took the key over and created the project again (the external_ref dedupe only helps callers that send one)."""
+    from app.api.routes import projects as project_routes
+    create = project_routes._create_project
+    committed, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_after_commit(*args, **kwargs):
+        result = await create(*args, **kwargs)
+        if not committed.is_set():
+            committed.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(project_routes, "_create_project", stall_after_commit)
+    headers = {"Idempotency-Key": "same-create"}
+    first = asyncio.create_task(client.post("/api/v1/projects", json={"name": "Once"}, headers=headers))
+    try:
+        await asyncio.wait_for(committed.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+    finally:
+        resume.set()
+        original = await first
+    assert original.status_code == 201, original.text
+    assert retry.status_code == 409 and f"Project {original.json()['id']} was already created" in retry.json()["detail"]
+    assert await _count(session_factory, Project) == 1
+    again = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)          # the key stays partial
+    assert again.status_code == 409 and await _count(session_factory, Project) == 1
+
+
+async def test_an_original_that_commits_after_its_claim_was_taken_over_creates_nothing(client, session_factory, monkeypatch):
+    """The mirror order: the original stalls BEFORE its commit, the retry takes over and creates the project, then the
+    original resumes. Its commit must not add a second project under the same key."""
+    from app.api.routes import projects as project_routes
+    validate = project_routes._valid_customer_id
+    stalled, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_first(*args, **kwargs):
+        if not stalled.is_set():
+            stalled.set()
+            await resume.wait()
+        return await validate(*args, **kwargs)
+
+    monkeypatch.setattr(project_routes, "_valid_customer_id", stall_first)
+    headers = {"Idempotency-Key": "zombie-create"}
+    first = asyncio.create_task(client.post("/api/v1/projects", json={"name": "Once"}, headers=headers))
+    try:
+        await asyncio.wait_for(stalled.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+        assert retry.status_code == 201, retry.text
+    finally:
+        resume.set()
+        original = await first
+    assert original.status_code == 409 and "taken over" in original.json()["detail"], original.text
+    assert await _count(session_factory, Project) == 1
+    replay = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+    assert replay.status_code == 201 and replay.json()["id"] == retry.json()["id"]
+
+
+async def test_a_stale_create_that_committed_nothing_is_still_taken_over(client, session_factory, monkeypatch):
+    first_owner = idempotency.new_owner()
+    scope = "POST /api/v1/projects"
+    from app.api.routes.projects import ProjectCreate
+    req = idempotency.request_hash(ProjectCreate(name="Later").model_dump())
+    assert await idempotency.claim(session_factory, scope, "dead", req, owner=first_owner) is None   # died before creating
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    retry = await client.post("/api/v1/projects", json={"name": "Later"}, headers={"Idempotency-Key": "dead"})
+    assert retry.status_code == 201, retry.text
+    assert await _count(session_factory, Project) == 1

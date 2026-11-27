@@ -295,3 +295,47 @@ async def test_a_late_failure_of_since_edited_credentials_leaves_no_stale_error(
     assert late.ok is False and "changed during the test" in late.error
     row = await _row(session_factory, pid)
     assert (row.configured, row.config_error) == (False, None)
+
+
+async def test_an_exception_in_a_test_of_since_edited_credentials_leaves_no_stale_error(client, session_factory, monkeypatch):
+    """GH #250: the exception path wrote its error onto whatever config was current, i.e. onto an edit made during the test."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        raise RuntimeError("socket blew up")
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (False, None)
+
+
+async def test_an_exception_in_a_test_of_unchanged_settings_is_still_recorded(session_factory, monkeypatch):
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+
+    async def boom(_client, _timeout):
+        raise RuntimeError("socket blew up")
+
+    monkeypatch.setattr(printer_setup, "wait_connected", boom)
+    out = await printer_setup.evaluate(pid, session_factory)
+    assert out == printer_setup.TestOutcome(False, "socket blew up", None)
+    assert (await _row(session_factory, pid)).config_error == "socket blew up"
