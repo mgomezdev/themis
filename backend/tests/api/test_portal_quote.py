@@ -251,3 +251,55 @@ async def test_the_public_share_page_never_exposes_money_even_when_the_quote_is_
     forbidden = {"price", "amount_paid", "payment_status", "price_visible", "quote", "quote_accepted_at",
                  "filament_cost_total", "customer_id"}
     assert not forbidden & set(public)
+
+
+async def _staff_edit_racing(client, monkeypatch, pid: int, mine: dict, during):
+    """Pause staff edit `mine` after it read the project, run `during` (other writes committing), then let it finish."""
+    from app.api.routes import projects
+    read, resume = asyncio.Event(), asyncio.Event()
+    load = projects._get_project_or_404
+
+    async def pause_first_read(*args, **kwargs):
+        row = await load(*args, **kwargs)
+        if not read.is_set():
+            read.set()
+            await resume.wait()
+        return row
+
+    monkeypatch.setattr(projects, "_get_project_or_404", pause_first_read)
+    editing = asyncio.create_task(client.patch(f"/api/v1/projects/{pid}", json=mine))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        await during()
+    finally:
+        resume.set()
+        edited = await editing
+    monkeypatch.undo()
+    return edited
+
+
+async def test_a_price_set_explicitly_is_stored_even_when_a_concurrent_edit_changed_it(client, monkeypatch):
+    """GH #251: staff A loaded $100, staff B committed $150, then A saved $100 — the ORM saw no change and B's $150 stood."""
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True)
+
+    async def other_staff():
+        assert (await client.patch(f"/api/v1/projects/{p['id']}", json={"price": 150.0})).status_code == 200
+
+    edited = await _staff_edit_racing(client, monkeypatch, p["id"], {"price": 100.0}, other_staff)
+    assert edited.status_code == 200 and edited.json()["price"] == 100.0, edited.text
+    assert (await client.get(f"/api/v1/projects/{p['id']}")).json()["price"] == 100.0
+
+
+async def test_an_acceptance_of_a_concurrently_changed_price_is_cleared_when_staff_set_another(client, monkeypatch):
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True)
+    h = await _login(client)
+
+    async def change_and_accept():
+        assert (await client.patch(f"/api/v1/projects/{p['id']}", json={"price": 150.0})).status_code == 200
+        assert (await client.post(f"/api/v1/customer/projects/{p['id']}/quote/accept", headers=h)).status_code == 200
+
+    await _staff_edit_racing(client, monkeypatch, p["id"], {"price": 100.0}, change_and_accept)
+    q = (await _mine(client, h, p["id"]))["quote"]
+    assert (q["price"], q["accepted_at"]) == (100.0, None)        # the customer accepted $150, not this $100
