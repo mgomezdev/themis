@@ -127,16 +127,23 @@ class PrinterManager:
                     await session.commit()
         factory = session_factory or self._session_factory
         client = self._clients.get(printer_id)
+        # The success is recorded: a follow-up step failing must not be mistaken for a failed connection test (GH #260).
         if isinstance(client, AbstractPrinterClient) and factory:
-            await self.on_topology_change(printer_id)
+            try:
+                await self.on_topology_change(printer_id)
+            except Exception:
+                logger.exception("Topology refresh after configuring printer %s failed", printer_id)
         if self._on_connectivity is not None:
             try:
                 await self._on_connectivity(printer_id, "configured", False)   # it may claim now: don't wait for the next tick
             except Exception:
                 logger.exception("Connectivity handler failed for printer %s", printer_id)
         if broadcast and self._on_state_broadcast:
-            await self._on_state_broadcast("printer_configured",
-                                           {"printer_id": printer_id, "configured": True, "config_error": None})
+            try:
+                await self._on_state_broadcast("printer_configured",
+                                               {"printer_id": printer_id, "configured": True, "config_error": None})
+            except Exception:
+                logger.exception("Broadcasting that printer %s is configured failed", printer_id)
         return True
 
     async def connect_all_enabled_printers(self, session_factory) -> None:

@@ -339,3 +339,67 @@ async def test_an_exception_in_a_test_of_unchanged_settings_is_still_recorded(se
     out = await printer_setup.evaluate(pid, session_factory)
     assert out == printer_setup.TestOutcome(False, "socket blew up", None)
     assert (await _row(session_factory, pid)).config_error == "socket blew up"
+
+
+async def test_a_disabled_printers_test_of_since_edited_credentials_is_dropped(client, session_factory, monkeypatch):
+    """GH #260: the disabled-printer path wrote its throwaway test's result with no check, so a result for the old
+    credentials landed on an edit made during the test."""
+    import asyncio
+    from unittest.mock import Mock
+    pid = await _saved(session_factory, _FULL, enabled=False)
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_credentials_test(_plugin, _cfg):
+        entered.set()
+        await release.wait()
+        return printer_setup.TestOutcome(True, None, True)
+
+    monkeypatch.setattr(printer_setup, "test_unsaved", old_credentials_test)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    assert (await _row(session_factory, pid)).configured is False
+
+
+async def test_a_disabled_printers_test_of_unchanged_settings_is_recorded(session_factory, monkeypatch):
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL, enabled=False)
+
+    async def ok(_plugin, _cfg):
+        return printer_setup.TestOutcome(True, None, True)
+
+    monkeypatch.setattr(printer_setup, "test_unsaved", ok)
+    assert (await printer_setup.evaluate(pid, session_factory)).ok is True
+    assert (await _row(session_factory, pid)).configured is True and printer_manager.is_configured(pid)
+
+
+async def test_a_failure_after_success_was_recorded_does_not_undo_it(session_factory, monkeypatch):
+    """GH #260: the topology refresh that follows a recorded success raised, and the test's exception path then marked the
+    printer that had just connected fine as unconfigured with that unrelated error."""
+    from app.services.abstract_printer_client import AbstractPrinterClient
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+
+    class _Connects(_FakeClient):                 # a real printer client as far as the manager can tell
+        pass
+
+    AbstractPrinterClient.register(_Connects)
+    fake = _Connects(True)
+    fake.connected = True
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: fake)
+
+    async def topology_boom(_pid):
+        raise RuntimeError("topology refresh failed")
+
+    monkeypatch.setattr(printer_manager, "on_topology_change", topology_boom)
+    out = await printer_setup.evaluate(pid, session_factory)
+    assert out.ok is True
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (True, None)
