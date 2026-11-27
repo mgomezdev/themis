@@ -128,7 +128,7 @@ export function NewOrderScreen() {
 
   return (
     <div className="col gap-4">
-      <div className="row gap-2 mobile-redundant">
+      <div className="row gap-2">
         <button className="btn ghost sm" onClick={() => navigate('/orders')}>{Icons.chevL} Orders</button>
         <span className="muted small">/</span>
         <span className="small">{editingId == null ? 'New order' : 'Edit order'}</span>

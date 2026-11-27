@@ -751,8 +751,6 @@ input, textarea, select { font-family: inherit; color: inherit; }
   align-items: start;
 }
 .toggle-hit {
-  width: 44px;
-  height: 44px;
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -798,9 +796,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .project-meta-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .project-meta-secondary, .project-meta-payment { display: flex; gap: 12px; align-items: end; }
 .builder-tabs { border-bottom: 1px solid var(--border-1); overflow-x: auto; }
-.builder-tab { padding: 8px 14px; min-height: 44px; white-space: nowrap; }
+.builder-tab { padding: 8px 14px; white-space: nowrap; }
 .tag-editor-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
-.tag-color-button { min-width: 44px; min-height: 44px; background-clip: content-box !important; padding: 10px !important; }
 .files-layout { display: grid; }
 .wall-columns-control { display: inline-flex; align-items: center; gap: 8px; }
 .wall-tile-name-mobile { display: none; }
@@ -987,6 +984,10 @@ input, textarea, select { font-family: inherit; color: inherit; }
   .topbar .btn, .layout-toggle button { min-height: 44px; }
   .more-sheet { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
   .bottom-nav-item { font-size: 11.5px; }
+  /* Touch targets only where touch is expected: desktop keeps its dense toggles, tabs and swatches. */
+  .toggle-hit { width: 44px; height: 44px; }
+  .builder-tab { min-height: 44px; }
+  .tag-color-button { min-width: 44px; min-height: 44px; background-clip: content-box !important; padding: 10px !important; }
   .folder-tree-button { min-height: 44px; }
   .model-picker-folder-button { min-height: 44px; }
   .plugin-tabs-scroll { overflow-x: auto; flex-wrap: nowrap; }

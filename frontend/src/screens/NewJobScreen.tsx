@@ -368,7 +368,7 @@ export function NewJobScreen() {
 
   return (
     <div className="col gap-4">
-      <div className="row gap-2 mobile-redundant">
+      <div className="row gap-2">
         <button className="btn ghost sm" onClick={() => navigate('/queue')}>{Icons.chevL} Queue</button>
         <span className="muted small">/</span>
         <span className="small">New job</span>

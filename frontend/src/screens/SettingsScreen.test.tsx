@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,6 +6,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { SettingsScreen } from './SettingsScreen';
 
 const wrapper = ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>;
+
+afterEach(() => { vi.unstubAllGlobals(); });
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -38,7 +40,6 @@ describe('SettingsScreen', () => {
     expect(screen.getByRole('option', { name: 'Spool Sync' })).toHaveValue('/plugins/spool-sync');
     expect(container.querySelector('.settings-tabs')).toBeNull();
     expect(picker).toHaveValue('/settings/tags');
-    vi.unstubAllGlobals();
   });
 
   it('shows only the wired nav items (no General / Data & backup)', () => {

@@ -83,5 +83,39 @@ for (const phone of phones) {
       const switches = page.getByRole('switch');
       for (let i = 0; i < await switches.count(); i++) await expect(switches.nth(i)).not.toHaveAccessibleName('');
     });
+
+    test('New Job and New Order keep their in-page way back', async ({ page }) => {
+      await setup(page);
+      await page.goto('/queue/new');
+      await expect(page.locator('.content').getByRole('button', { name: /Queue$/ })).toBeVisible();
+      await page.goto('/orders/new');
+      await expect(page.locator('.content').getByRole('button', { name: /Orders$/ })).toBeVisible();
+    });
+
+    test('settings switches have 44px touch targets', async ({ page }) => {
+      await setup(page);
+      await page.goto('/settings/print');
+      const sw = page.getByRole('switch').first();
+      await expect(sw).toBeVisible();
+      expect((await sw.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    });
   });
 }
+
+test.describe('desktop 1440', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('keeps dense controls and the in-page back rows', async ({ page }) => {
+    await setup(page);
+    await page.goto('/settings/print');
+    const sw = page.getByRole('switch').first();
+    await expect(sw).toBeVisible();
+    // Touch sizing is scoped to <=1024px; on desktop the switch is just its 22px track.
+    expect((await sw.boundingBox())!.height).toBeLessThan(30);
+
+    await page.goto('/queue/new');
+    await expect(page.locator('.content').getByRole('button', { name: /Queue$/ })).toBeVisible();
+    await page.goto('/orders/new');
+    await expect(page.locator('.content').getByRole('button', { name: /Orders$/ })).toBeVisible();
+  });
+});
