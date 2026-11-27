@@ -30,10 +30,10 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
   item: ApiKeyOut; allScopesLength: number; onRevoke: () => void; onDelete: () => void;
 }) {
   return (
-    <tr style={{ opacity: item.enabled ? 1 : 0.55 }}>
-      <td className="fw-500">{item.name}</td>
-      <td><span className="mono small">{item.key_prefix}…</span></td>
-      <td>
+    <tr className="api-key-row" style={{ opacity: item.enabled ? 1 : 0.55 }}>
+      <td className="fw-500" data-label="Name">{item.name}</td>
+      <td data-label="Prefix"><span className="mono small">{item.key_prefix}…</span></td>
+      <td data-label="Scopes">
         <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
           {item.scopes.length === 0 ? (
             <span className="tiny muted">none</span>
@@ -53,16 +53,16 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
           )}
         </div>
       </td>
-      <td className="tiny muted nowrap">{new Date(item.created_at).toLocaleString()}</td>
-      <td className="tiny muted nowrap">
+      <td className="tiny muted nowrap" data-label="Created">{new Date(item.created_at).toLocaleString()}</td>
+      <td className="tiny muted nowrap" data-label="Last used">
         {item.last_used_at ? new Date(item.last_used_at).toLocaleString() : 'Never'}
       </td>
-      <td>
+      <td data-label="Status">
         {item.enabled
           ? <StatusPill status={'idle' as StatusKey} label="Active" />
           : <StatusPill status={'offline' as StatusKey} label="Revoked" />}
       </td>
-      <td className="text-right">
+      <td className="text-right api-key-actions" data-label="Actions">
         <div className="row gap-1" style={{ justifyContent: 'flex-end' }}>
           {item.enabled && (
             <button className="btn ghost sm" onClick={onRevoke}>Revoke</button>
@@ -267,7 +267,7 @@ export function ApiKeysPage() {
 
   return (
     <div className="col gap-3">
-      <div className="card" style={{ padding: 28 }}>
+      <div className="card api-keys-card" style={{ padding: 28 }}>
         <PageHeader
           title="API Keys"
           sub="Every request to Themis's API needs a key. This browser holds its own device key — mint additional scoped keys for external apps and integrations."
@@ -285,8 +285,8 @@ export function ApiKeysPage() {
         )}
 
         {(loading || keys.length > 0) && (
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-0)' }}>
-            <table className="tbl" style={{ minWidth: 760 }}>
+          <div className="api-keys-table-wrap" style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-0)' }}>
+            <table className="tbl api-keys-table" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
                   <th>Name</th>

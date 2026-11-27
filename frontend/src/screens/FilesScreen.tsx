@@ -297,7 +297,7 @@ export function FilesScreen() {
   return (
     <div>
       <FilesTabBar tab={activeTab} setTab={selectTab} />
-      <div style={{
+      <div className="files-layout" style={{
         display: 'grid',
         gridTemplateColumns: folderExpanded ? '240px 1fr' : 'auto 1fr',
         gap: 18,
@@ -321,20 +321,20 @@ export function FilesScreen() {
         {/* RIGHT: header + toolbar + filters + grid */}
         <div className="col gap-4 min-0">
           {/* Header + toolbar */}
-          <div className="row between" style={{ gap: 12, flexWrap: 'wrap' }}>
+          <div className="row between files-toolbar" style={{ gap: 12, flexWrap: 'wrap' }}>
             <div className="col" style={{ minWidth: 0, flex: 1 }}>
               <span className="tag-key">{currentFolder === '' ? 'Workshop' : 'Folder'}</span>
               <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em', marginTop: 2 }}>
                 {breadcrumb}
               </div>
-              <div className="tiny muted" style={{ marginTop: 2, whiteSpace: 'nowrap' }}>
+              <div className="tiny muted files-count" style={{ marginTop: 2, whiteSpace: 'nowrap' }}>
                 {sorted.length} {sorted.length === 1 ? 'file' : 'files'}
                 {activeTags.length > 0 && (
                   <span> matching {activeTags.length} tag{activeTags.length > 1 ? 's' : ''}</span>
                 )}
               </div>
             </div>
-            <div className="row gap-2" style={{ flexShrink: 0, flexWrap: 'wrap' }}>
+            <div className="row gap-2 files-toolbar-actions" style={{ flexShrink: 0, flexWrap: 'wrap' }}>
               <label className="btn ghost sm" style={{ cursor: 'pointer' }}>
                 <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.upload}</span>
                 Upload

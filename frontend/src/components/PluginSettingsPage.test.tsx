@@ -93,7 +93,7 @@ describe('PluginSettingsPage', () => {
     expect((screen.getByLabelText('Sync interval') as HTMLInputElement).min).toBe('1');
     expect((screen.getByLabelText('Sync interval') as HTMLInputElement).max).toBe('60');
     expect((screen.getByLabelText('Alert after (min)') as HTMLInputElement).value).toBe('');   // nullable integer, unset
-    expect(screen.getByRole('switch', { name: '' , checked: false })).toBeTruthy();       // the boolean (and the enable switch is checked)
+    expect(screen.getByRole('switch', { name: 'Verbose', checked: false })).toBeTruthy(); // the boolean (and the enable switch is checked)
   });
 
   it('renders an array setting with fixed choices as switches and a free list as comma-separated text, and saves both as arrays', async () => {
@@ -219,7 +219,7 @@ describe('PluginSettingsPage', () => {
   it('enables and disables the plugin from the header switch', async () => {
     const api = stubFetch(routes(detail(), { 'PUT /api/v1/plugins/demo_inv': (c: { body: { enabled: boolean } }) => detail({ enabled: c.body.enabled, active: false }) }));
     render(<PluginSettingsPage pluginId="demo_inv" />);
-    const enable = await screen.findByRole('switch', { name: '', checked: true });
+    const enable = await screen.findByRole('switch', { name: 'Enable Demo inventory', checked: true });
 
     await userEvent.click(enable);
 
@@ -392,7 +392,7 @@ describe('PluginSettingsPage', () => {
       }));
       render(<PluginSettingsPage pluginId="demo_inv" />);
       await waitFor(() => expect(slow.resolve).toBeTruthy());
-      await userEvent.click(await screen.findByRole('switch', { name: '', checked: true }));
+      await userEvent.click(await screen.findByRole('switch', { name: 'Enable Demo inventory', checked: true }));
       await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Disabled'));
 
       await act(async () => { slow.resolve!({ ok: true, state: 'healthy' }); });
@@ -442,6 +442,6 @@ describe('PluginSettingsPage', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('schema version 2');
     expect(screen.queryByLabelText('Url')).toBeNull();
     expect(screen.queryByLabelText('Api Key')).toBeNull();
-    expect(screen.getByRole('switch', { name: '' , checked: true })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Enable Demo inventory', checked: true })).toBeTruthy();
   });
 });

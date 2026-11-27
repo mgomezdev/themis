@@ -18,6 +18,7 @@ export function StlFolderTree({
   return (
     <div>
       <button
+        className="model-picker-folder-button"
         onClick={() => { onSelect(node.path); if (childKeys.length) setOpen(o => !o); }}
         style={{
           width: '100%',

@@ -80,7 +80,7 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
                        intervalMs={SNAPSHOT_MS + (Number(p.id) % 10) * 130} />}   /* staggered so 40 tiles don't all tick at once */
         <div style={{ position: 'absolute', top: 6, left: 6, right: 6, display: 'flex', justifyContent: 'space-between',
                       gap: 6, zIndex: 4, pointerEvents: 'none' }}>
-          <span className="tiny" style={{ background: 'var(--scrim)', color: 'var(--text-1)', borderRadius: 4, padding: '1px 6px',
+          <span className="tiny wall-tile-name-overlay" style={{ background: 'var(--scrim)', color: 'var(--text-1)', borderRadius: 4, padding: '1px 6px',
                                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {!!p.alarmCount && p.alarmSeverity && (
@@ -95,12 +95,13 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
               style={{ position: 'absolute', bottom: 6, left: 6, zIndex: 4, background: 'rgba(0,0,0,0.6)', color: asLive ? 'var(--err)' : 'var(--text-1)',
                        borderRadius: 4, padding: '0 5px' }}>{asLive ? '● LIVE' : 'snapshot'}</span>
       </div>
+      <span className="wall-tile-name-mobile">{p.name}</span>
     </>
   );
   const style = { display: 'block', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-1)', textDecoration: 'none', color: 'inherit' };
   return inRouter
-    ? <Link to={to} aria-label={`Open ${p.name} console`} style={style} data-testid="wall-tile">{body}</Link>
-    : <a href={to} aria-label={`Open ${p.name} console`} style={style} data-testid="wall-tile">{body}</a>;
+    ? <Link to={to} aria-label={`Open ${p.name} console`} className="wall-tile" style={style} data-testid="wall-tile">{body}</Link>
+    : <a href={to} aria-label={`Open ${p.name} console`} className="wall-tile" style={style} data-testid="wall-tile">{body}</a>;
 }
 
 export function CameraWallScreen() {
@@ -124,11 +125,13 @@ export function CameraWallScreen() {
                   onClick={() => set({ filter: f })}>{f[0].toUpperCase() + f.slice(1)} · {count(f)}</button>
         ))}
         <span className="grow" />
-        <label className="small muted" htmlFor="wall-cols">Columns</label>
-        <select id="wall-cols" className="input" style={{ width: 'auto' }} value={prefs.columns}
-                onChange={e => set({ columns: Number(e.target.value) })}>
-          {COLUMNS.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+        <span className="wall-columns-control">
+          <label className="small muted" htmlFor="wall-cols">Columns</label>
+          <select id="wall-cols" className="input" style={{ width: 'auto' }} value={prefs.columns}
+                  onChange={e => set({ columns: Number(e.target.value) })}>
+            {COLUMNS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </span>
         <label className="small muted" htmlFor="wall-live">Live streams</label>
         <select id="wall-live" className="input" style={{ width: 'auto' }} value={prefs.live}
                 onChange={e => set({ live: Number(e.target.value) })}>
@@ -138,7 +141,7 @@ export function CameraWallScreen() {
       {shown.length === 0 ? (
         <div className="muted" role="status">{withCamera.length === 0 ? 'No printers with a camera.' : 'No printers match this filter.'}</div>
       ) : (
-        <div data-testid="wall-grid" style={{ display: 'grid', gap: 8, gridTemplateColumns: `repeat(${prefs.columns}, minmax(0, 1fr))` }}>
+        <div className="wall-grid" data-testid="wall-grid" style={{ display: 'grid', gap: 8, gridTemplateColumns: `repeat(${prefs.columns}, minmax(0, 1fr))` }}>
           {shown.map(p => <WallTile key={p.id} printer={p} live={liveIds.has(p.id)} />)}
         </div>
       )}

@@ -102,7 +102,7 @@ export function PluginsPage() {
       <div className="col gap-2">
         {plugins.map(p => (
           <div key={p.id} className="card" style={{ padding: 16 }} data-testid={`plugin-${p.id}`}>
-            <div className="row between">
+            <div className="row between plugin-card-header">
               <div className="col">
                 <div className="fw-600">{p.name} <span className="muted small">v{p.version}</span></div>
                 {p.description && <div className="muted small">{p.description}</div>}
@@ -125,7 +125,7 @@ export function PluginsPage() {
                 {p.install?.error && <div role="alert" className="small text-err">{p.install.error}</div>}
                 {notice[p.id] && <div className="tiny muted" data-testid={`plugin-notice-${p.id}`}>{notice[p.id]}</div>}
               </div>
-              <div className="row gap-2">
+              <div className="row gap-2 plugin-card-actions">
                 <span className={`pill ${p.error ? 'err' : p.active ? 'ok' : p.enabled ? 'info' : 'idle'}`}>
                   <span className="dot" />{p.install?.status === 'pending_removal' ? 'Uninstalls on restart'
                     : p.loaded === false && p.install?.status === 'pending_restart' ? 'Starts after restart'

@@ -58,7 +58,8 @@ export function BuilderTabs({ tab, onTab, counts }: {
     <div className="row gap-1 builder-tabs" role="tablist" aria-label="Project sections" style={{ borderBottom: '1px solid var(--border-1)' }}>
       {tabs.map(([key, label, n]) => (
         <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => onTab(key)}
-                style={{ padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14,
+                className="builder-tab"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14,
                          color: tab === key ? 'var(--text-1)' : 'var(--text-3)', fontWeight: tab === key ? 600 : 400,
                          borderBottom: tab === key ? '2px solid var(--accent)' : '2px solid transparent' }}>
           {label}

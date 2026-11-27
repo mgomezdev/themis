@@ -202,7 +202,7 @@ export function FleetScreen() {
         <div className="row gap-2 wrap">
           {(layout === 'cards' || narrow) && <MediaToggle value={media} onChange={setMedia} />}
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
-          <button className="btn sm nowrap">{Icons.refresh} Sync now</button>
+          <button className="btn sm nowrap mobile-redundant">{Icons.refresh} Sync now</button>
           {canScan && (
             <button className="btn sm nowrap" onClick={() => setScanning(true)}>
               {Icons.spool} Scan spool

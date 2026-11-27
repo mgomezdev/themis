@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,6 +6,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { SettingsScreen } from './SettingsScreen';
 
 const wrapper = ({ children }: { children: ReactNode }) => <MemoryRouter>{children}</MemoryRouter>;
+
+afterEach(() => { vi.unstubAllGlobals(); });
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -18,6 +20,28 @@ beforeEach(() => {
 });
 
 describe('SettingsScreen', () => {
+  it('uses a compact phone selector that includes plugin settings pages', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query === '(max-width: 600px)', media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [{
+        id: 'spool-sync', name: 'Spool Sync', version: '1', description: '', docs_url: null, source: 'bundled',
+        provides: [], requires: [], optional: [], defines: [], enabled: true, active: true, error: null,
+        ui: { mode: 'page', nav_label: 'Spool Sync', nav_placement: 'settings', nav_icon: null, tabs: [] },
+      }], selections: {} }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    const { container } = render(<SettingsScreen />, { wrapper });
+    const picker = await screen.findByRole('combobox', { name: /settings section/i });
+    expect(screen.getByRole('option', { name: 'Spool Sync' })).toHaveValue('/plugins/spool-sync');
+    expect(container.querySelector('.settings-tabs')).toBeNull();
+    expect(picker).toHaveValue('/settings/tags');
+  });
+
   it('shows only the wired nav items (no General / Data & backup)', () => {
     render(<SettingsScreen />, { wrapper });
     expect(screen.getAllByText('Tags').length).toBeGreaterThan(0);
