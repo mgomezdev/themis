@@ -162,7 +162,7 @@ async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession
     if refusal:
         await session.rollback()
         raise HTTPException(409, refusal if "changed while" in refusal else
-                            f"This mapping changed while it was being removed: {refusal[0].lower()}{refusal[1:]}")
+                            f"This mapping changed while it was being removed. {refusal}")
     await session.commit()
 
 

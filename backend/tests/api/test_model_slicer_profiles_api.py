@@ -152,32 +152,43 @@ async def test_the_default_cannot_be_deleted_while_other_variants_exist(client, 
     assert (await client.get(url(model))).json() == []
 
 
+async def _delete_racing(client, monkeypatch, model, mapping_id, during):
+    """Pause the DELETE after its guards passed on what it read (before it deletes), run `during` (another request
+    committing), then let the DELETE finish."""
+    read, resume = asyncio.Event(), asyncio.Event()
+    judge = mapping_routes._delete_refusal
+
+    async def pause_after_first_judgement(*args, **kwargs):
+        verdict = await judge(*args, **kwargs)
+        if not read.is_set():
+            read.set()
+            await resume.wait()
+        return verdict
+
+    monkeypatch.setattr(mapping_routes, "_delete_refusal", pause_after_first_judgement)
+    deleting = asyncio.create_task(client.delete(url(model, mapping_id)))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        await during()
+    finally:
+        resume.set()
+        deleted = await deleting
+    monkeypatch.undo()
+    return deleted
+
+
 async def test_a_variant_promoted_while_its_delete_is_in_flight_is_kept_as_the_default(client, p1s, monkeypatch):
     """GH #232: DELETE judged the mapping non-default, a PATCH promoted it (demoting the old default), then DELETE removed it,
     leaving the pair with no default. The stale delete is refused instead."""
     _, model = p1s
     first = (await add(client, model)).json()
     second = (await add(client, model, P1S_06, d=0.6)).json()
-    read, resume = asyncio.Event(), asyncio.Event()
-    lookup = mapping_routes._row_or_404
 
-    async def pause_after_first_read(*args, **kwargs):
-        row = await lookup(*args, **kwargs)
-        if not read.is_set():
-            read.set()
-            await resume.wait()
-        return row
-
-    monkeypatch.setattr(mapping_routes, "_row_or_404", pause_after_first_read)
-    deleting = asyncio.create_task(client.delete(url(model, second["id"])))
-    try:
-        await asyncio.wait_for(read.wait(), 5)
+    async def promote():
         assert (await client.patch(url(model, second["id"]), json={"is_default": True})).status_code == 200
-    finally:
-        resume.set()
-        deleted = await deleting
-    assert deleted.status_code == 409, deleted.text
-    assert "changed while" in deleted.json()["detail"]
+
+    deleted = await _delete_racing(client, monkeypatch, model, second["id"], promote)
+    assert deleted.status_code == 409 and "changed while" in deleted.json()["detail"], deleted.text
     rows = {r["id"]: r["is_default"] for r in (await client.get(url(model))).json()}
     assert rows == {first["id"]: False, second["id"]: True}
 
@@ -191,29 +202,32 @@ async def test_a_variant_created_while_the_last_default_is_being_deleted_keeps_a
     only = (await add(client, model)).json()
     overridden = await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": "Custom"})
     assert overridden.status_code == 200, overridden.text  # nobody follows the default, so only the race can refuse the delete
-    read, resume = asyncio.Event(), asyncio.Event()
-    lookup = mapping_routes._row_or_404
+    created = {}
 
-    async def pause_after_first_read(*args, **kwargs):
-        row = await lookup(*args, **kwargs)
-        if not read.is_set():
-            read.set()
-            await resume.wait()
-        return row
+    async def create_sibling():
+        r = await add(client, model, P1S_06, d=0.6)
+        assert r.status_code == 201 and not r.json()["is_default"], r.text
+        created.update(r.json())
 
-    monkeypatch.setattr(mapping_routes, "_row_or_404", pause_after_first_read)
-    deleting = asyncio.create_task(client.delete(url(model, only["id"])))
-    try:
-        await asyncio.wait_for(read.wait(), 5)
-        created = await add(client, model, P1S_06, d=0.6)
-        assert created.status_code == 201 and not created.json()["is_default"], created.text
-    finally:
-        resume.set()
-        deleted = await deleting
-    assert deleted.status_code == 409, deleted.text
-    assert "follow this model's default" not in deleted.json()["detail"]      # refused for the new sibling, not the setup
+    deleted = await _delete_racing(client, monkeypatch, model, only["id"], create_sibling)
+    assert deleted.status_code == 409 and "changed while" in deleted.json()["detail"], deleted.text
     rows = {r["id"]: r["is_default"] for r in (await client.get(url(model))).json()}
-    assert rows == {only["id"]: True, created.json()["id"]: False}
+    assert rows == {only["id"]: True, created["id"]: False}
+
+
+async def test_a_printer_following_the_default_created_while_the_last_mapping_is_deleted_keeps_it(
+        client, create_printer, model_uuid_of, monkeypatch):
+    pid = await create_printer(machine_profile_override=None)
+    model = await model_uuid_of(pid)
+    only = (await add(client, model)).json()
+    assert (await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": "Custom"})).status_code == 200
+
+    async def add_follower():
+        assert (await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": None})).status_code == 200
+
+    deleted = await _delete_racing(client, monkeypatch, model, only["id"], add_follower)
+    assert deleted.status_code == 409 and "follow this model's default" in deleted.json()["detail"], deleted.text
+    assert [r["id"] for r in (await client.get(url(model))).json()] == [only["id"]]
 
 
 async def test_a_variant_a_printer_uses_cannot_be_deleted(client, p1s):
@@ -504,31 +518,6 @@ async def test_a_backup_row_missing_its_provider_is_skipped_with_a_warning_and_a
 
 
 
-async def _delete_racing(client, monkeypatch, model, mapping_id, during):
-    """Pause the DELETE after its guards passed on what it read (before it deletes), run `during` (another request
-    committing), then let the DELETE finish."""
-    read, resume = asyncio.Event(), asyncio.Event()
-    judge = mapping_routes._delete_refusal
-
-    async def pause_after_first_judgement(*args, **kwargs):
-        verdict = await judge(*args, **kwargs)
-        if not read.is_set():
-            read.set()
-            await resume.wait()
-        return verdict
-
-    monkeypatch.setattr(mapping_routes, "_delete_refusal", pause_after_first_judgement)
-    deleting = asyncio.create_task(client.delete(url(model, mapping_id)))
-    try:
-        await asyncio.wait_for(read.wait(), 5)
-        await during()
-    finally:
-        resume.set()
-        deleted = await deleting
-    monkeypatch.undo()
-    return deleted
-
-
 async def test_a_printer_switched_to_the_nozzle_while_its_mapping_is_deleted_keeps_the_mapping(client, p1s, monkeypatch):
     """GH #248: the in-use check ran on an earlier read; a printer PATCHed onto that nozzle in between was left on an unmapped
     variant. The check is re-done inside the delete's write transaction."""
@@ -570,3 +559,32 @@ async def test_patching_a_mapping_deleted_meanwhile_is_404_not_500(client, p1s, 
         patched = await patching
     assert patched.status_code == 404, patched.text
     assert [r["is_default"] for r in (await client.get(url(model))).json()] == [True]      # the demote was rolled back too
+
+
+async def test_a_printer_saved_onto_a_nozzle_whose_mapping_was_deleted_meanwhile_is_refused(client, p1s, monkeypatch):
+    """GH #248, reverse order: the printer PATCH validated the 0.6 mapping, the mapping's DELETE committed, then the PATCH
+    committed the printer onto an unmapped variant. The variant is checked again under the PATCH's write lock."""
+    from app.api.routes import printers as printer_routes
+    pid, model = p1s
+    await add(client, model)
+    second = (await add(client, model, P1S_06, d=0.6)).json()
+    checked, resume = asyncio.Event(), asyncio.Event()
+    check = printer_routes._check_variant
+
+    async def pause_after_check(*args, **kwargs):
+        out = await check(*args, **kwargs)
+        checked.set()
+        await resume.wait()
+        return out
+
+    monkeypatch.setattr(printer_routes, "_check_variant", pause_after_check)
+    patching = asyncio.create_task(client.patch(f"/api/v1/printers/{pid}",
+                                                json={"nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}}))
+    try:
+        await asyncio.wait_for(checked.wait(), 5)
+        assert (await client.delete(url(model, second["id"]))).status_code == 204
+    finally:
+        resume.set()
+        patched = await patching
+    assert patched.status_code == 409 and "was removed while" in patched.json()["detail"], patched.text
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["nozzle_variant"] is None
