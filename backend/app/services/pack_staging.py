@@ -36,7 +36,8 @@ def _referenced(file_id):
 
 async def discard_if_unreferenced(factory: async_sessionmaker, store: ArtifactStore, key: str,
                                   file_id: int | None) -> bool:
-    """Delete a staged pack's row (if `file_id`) and file unless something references the row. True if discarded.
+    """Delete a staged pack's row (looked up by `key` when `file_id` is None) and file unless something references the row.
+    True if discarded.
     The row is deleted in its own short transaction, guarded by the reference check in the same statement, so a pack whose
     jobs did commit is never removed."""
     if not is_staged_key(key):
@@ -44,8 +45,7 @@ async def discard_if_unreferenced(factory: async_sessionmaker, store: ArtifactSt
     async with factory() as side:
         if file_id is None:     # its row may have committed although the caller never learnt its id
             file_id = (await side.execute(select(UploadedFile.id).where(UploadedFile.relative_path == key))).scalar()
-    if file_id is not None:
-        async with factory() as side:
+        if file_id is not None:
             gone = await side.execute(delete(UploadedFile).where(UploadedFile.id == file_id, ~_referenced(UploadedFile.id)))
             if gone.rowcount == 0 and await side.get(UploadedFile, file_id) is not None:
                 return False             # referenced: live, keep it
