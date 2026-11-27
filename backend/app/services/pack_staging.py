@@ -13,7 +13,7 @@ import logging
 from sqlalchemy import delete, exists, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ..models import Job, Project, ProjectItem, UploadedFile
+from ..models import Job, Project, ProjectItem, SlicedVersion, UploadedFile
 from .artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,9 @@ def is_staged_key(key: str) -> bool:
 def _referenced(file_id):
     return (exists().where(Job.uploaded_file_id == file_id)
             | exists().where(ProjectItem.file_id == file_id)
-            | exists().where(Project.result_file_id == file_id))
+            | exists().where(Project.result_file_id == file_id)
+            # a pack sliced and cached (it stayed staged after a failed GH #261 move): its gcode is kept, so is it
+            | exists().where(SlicedVersion.source_file_id == file_id))
 
 
 async def discard_if_unreferenced(factory: async_sessionmaker, store: ArtifactStore, key: str,
@@ -39,6 +41,9 @@ async def discard_if_unreferenced(factory: async_sessionmaker, store: ArtifactSt
     jobs did commit is never removed."""
     if not is_staged_key(key):
         return False
+    async with factory() as side:
+        if file_id is None:     # its row may have committed although the caller never learnt its id
+            file_id = (await side.execute(select(UploadedFile.id).where(UploadedFile.relative_path == key))).scalar()
     if file_id is not None:
         async with factory() as side:
             gone = await side.execute(delete(UploadedFile).where(UploadedFile.id == file_id, ~_referenced(UploadedFile.id)))
@@ -55,12 +60,10 @@ async def sweep(factory: async_sessionmaker, store: ArtifactStore) -> int:
     keys = [info.key for info in await asyncio.to_thread(lambda: list(store.list(PACK_FOLDER))) if is_staged_key(info.key)]
     removed = 0
     for key in keys:
-        async with factory() as s:
-            file_id = (await s.execute(select(UploadedFile.id).where(UploadedFile.relative_path == key))).scalar()
         try:
-            if await discard_if_unreferenced(factory, store, key, file_id):
+            if await discard_if_unreferenced(factory, store, key, None):
                 removed += 1
-                logger.info("Removed stray staged pack %s (file %s)", key, file_id)
+                logger.info("Removed stray staged pack %s", key)
         except Exception:
             logger.exception("Could not remove stray staged pack %s", key)
     return removed

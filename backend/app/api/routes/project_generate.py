@@ -451,6 +451,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                                             save_slice=save_slice, artifact_cleanup=artifact_cleanup,
                                             on_pack_jobs=on_pack_jobs, staged=staged)
     except BaseException:
+        # Not shielded: a cancellation that lands in this cleanup skips it, and the startup sweep removes the pack instead.
         # The slicer-send path is one atomic transaction: its row rolls back and `artifact_cleanup` removes the file.
         if staged and not session.info.get("slicer_transaction"):
             try:
@@ -530,7 +531,9 @@ async def _queue_packs_unguarded(session: AsyncSession, proj: Project, packs: li
                     content_hash=pack_hash,
                     mtime=published.mtime,
                     missing=False,
-                    pack_recipe_hash=recipe_hash,
+                    # Set with its jobs' commit, not here: a staged pack is not offered for reuse (GH #269), so discarding
+                    # it when its own pack fails can never pull it from under a concurrent generation.
+                    pack_recipe_hash=None,
                 )
                 session.add(new_file)
                 await session.commit()
@@ -614,6 +617,8 @@ async def _queue_packs_unguarded(session: AsyncSession, proj: Project, packs: li
                 for item_id, qty in qtys.items():
                     packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
             await on_pack_jobs(session, packed)
+        if reused is None and fixed is None:
+            new_file.pack_recipe_hash = recipe_hash
         await session.commit()
         staged.clear()                 # its jobs reference it now: never discarded
 
