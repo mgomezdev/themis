@@ -1071,6 +1071,8 @@ class IdempotencyKey(Base):
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
+    # GH #246: the request that holds an in-progress claim (a takeover replaces it); only that request may finish it.
+    claim_token: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
 

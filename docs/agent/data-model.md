@@ -594,7 +594,7 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 ### projects.external_ref, idempotency_keys, webhook_destinations  (v047 — BIZ-172)
 
 `projects.external_ref VARCHAR(255)` + partial unique index `ux_projects_source_external_ref (source_app, external_ref) WHERE external_ref IS NOT NULL`.
-`idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
+`idempotency_keys{id, scope, key, request_hash, state in_progress|done|partial, status_code, response JSON, created_at, claim_token (v084, GH #246)}` unique `(scope, key)`. `claim_token` names the request holding an in-progress claim (a stale takeover replaces it); `release` only frees the caller's own claim (`idempotency.new_owner()`); `complete` / `partial` apply while the key is in progress, whoever finishes first (committed work outranks a running claim).
 `webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
 
