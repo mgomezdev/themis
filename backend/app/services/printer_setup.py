@@ -252,10 +252,15 @@ async def _evaluate(printer_id: int, session_factory, tested: dict | None = None
             printer_manager.disconnect_printer(printer_id)
             return TestOutcome(False, reason, None)
         if not printer.enabled:                       # a disabled printer stays unconnected: test it with a throwaway client
-            outcome = await test_unsaved(printer.plugin_id or printer.printer_type, printer.connection_config or {})
-            printer.configured, printer.config_error = outcome.ok, outcome.error
-            await session.commit()
-            printer_manager.set_configured(printer_id, outcome.ok)
+            current = _tested_with(dict(printer.connection_config or {}), fields_for(printer))
+            if tested is not None:
+                tested["current"] = current
+            plugin, cfg = printer.plugin_id or printer.printer_type, dict(printer.connection_config or {})
+            await session.rollback()                  # nothing pending; no transaction held across the test
+            outcome = await test_unsaved(plugin, cfg)
+            # GH #260: recorded only for the settings it tested (an edit during the test retests on its own)
+            if not await write_if_current(session_factory, printer_id, current, outcome.ok, outcome.error):
+                return _superseded()
             return outcome
         printer_manager.disconnect_printer(printer_id)
         printer_manager.set_printer_plugin(printer_id, printer.plugin_id)
