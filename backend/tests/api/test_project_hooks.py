@@ -621,3 +621,60 @@ async def test_a_generation_whose_claim_was_taken_over_before_its_pack_committed
     assert await _count(session_factory, Job) == len(retry.json()["jobs"])
     replay = await _generate(client, tmp_path, project_id, headers)
     assert replay.status_code == 200 and replay.headers.get("Idempotent-Replay") == "true"
+
+
+async def test_a_refused_original_does_not_mark_a_still_running_retrys_key_partial(client, tmp_path, session_factory, monkeypatch):
+    """GH #270: a generation refused after a takeover must judge 'partial' by the packs IT committed, not by the project's job
+    count, which includes the jobs the retry (still running) has committed."""
+    from app.api.routes import project_generate
+    from app.models import IdempotencyKey
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    # Patched once for the whole test: two overlapping `with patch(...)` blocks would exit out of order and leak mocks.
+    monkeypatch.setattr("app.config.get_library_dir", lambda: tmp_path / "library")
+    monkeypatch.setattr("app.config.get_filecache_dir", lambda: tmp_path / "filecache")
+    monkeypatch.setattr("app.api.routes.projects.get_project_constructor", lambda: fake_packer(_make_3mf_bytes(plate_count=1)))
+    headers = {"Idempotency-Key": "running-retry"}
+
+    def post():
+        return client.post(f"/api/v1/projects/{project_id}/generate", json={}, headers=headers)
+
+    load, remember = project_generate._get_project_or_404, project_generate._remember
+    original_stalled, original_go = asyncio.Event(), asyncio.Event()
+    retry_committed, retry_go = asyncio.Event(), asyncio.Event()
+
+    async def stall_original(*args, **kwargs):
+        if not original_stalled.is_set():
+            original_stalled.set()
+            await original_go.wait()
+        return await load(*args, **kwargs)
+
+    async def stall_retry_before_recording(*args, **kwargs):     # its jobs are committed, its response not yet stored
+        retry_committed.set()
+        await retry_go.wait()
+        return await remember(*args, **kwargs)
+
+    monkeypatch.setattr(project_generate, "_get_project_or_404", stall_original)
+    monkeypatch.setattr(project_generate, "_remember", stall_retry_before_recording)
+    original = asyncio.create_task(post())
+    retry = None
+    try:
+        await asyncio.wait_for(original_stalled.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = asyncio.create_task(post())
+        await asyncio.wait_for(retry_committed.wait(), 5)
+        assert await _count(session_factory, Job) > 0                 # the premise: the retry's jobs are committed
+        original_go.set()
+        refused = await original                                     # resumes while the retry is still in progress
+        assert refused.status_code == 409 and "taken over" in refused.json()["detail"], refused.text
+    finally:
+        original_go.set()
+        retry_go.set()
+        await asyncio.gather(original, *([retry] if retry is not None else []), return_exceptions=True)
+    done = retry.result()
+    assert done.status_code == 200, done.text
+    async with session_factory() as s:
+        key = (await s.execute(select(IdempotencyKey).where(IdempotencyKey.key == "running-retry"))).scalar_one()
+    assert key.state == "done"                                       # not turned partial by the refused original
+    assert await _count(session_factory, Job) == len(done.json()["jobs"])    # the original's refused pack rolled back
+    replay = await post()
+    assert replay.status_code == 200 and replay.json() == done.json(), replay.text

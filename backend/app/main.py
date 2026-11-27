@@ -133,20 +133,9 @@ async def lifespan(app: FastAPI):
         logging.getLogger("app").exception("Sweeping stray staged pack files failed; continuing")
     await queue_engine.start()
 
-    async def _resume_requeues() -> None:      # GH #227: failed parts whose repack an interruption cut short
-        from .services import print_results
-        try:
-            for _ in range(20):                # the project builder may still be starting: retry for ~10 minutes
-                resumed = await print_results.resume_pending(SessionLocal)
-                if not resumed:
-                    return
-                logging.getLogger("app").info("Resuming interrupted requeues of failed parts for job(s) %s", resumed)
-                queue_engine.wake()
-                await asyncio.sleep(30)
-        except Exception:
-            logging.getLogger("app").exception("Resuming interrupted requeues failed")
-
-    resume_requeues_task = asyncio.create_task(_resume_requeues(), name="resume-requeues")
+    from .services import print_results as _print_results
+    resume_requeues_task = asyncio.create_task(
+        _print_results.resume_pending_with_retries(SessionLocal, on_resumed=queue_engine.wake), name="resume-requeues")
 
     try:
         from .services.printer_model_registry import sync_registry
