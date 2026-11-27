@@ -4,6 +4,7 @@ printers for a person to Reprint or Drop. Every failure lands in the project's f
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -118,7 +119,23 @@ class _AlreadyRepacked(Exception):
     """Another repack of the same failure row committed first (a concurrent retry or the startup sweep): drop this pack."""
 
 
-_requeue_locks: dict[int, asyncio.Lock] = {}
+_requeue_locks: dict[int, tuple[asyncio.Lock, int]] = {}     # job id -> (lock, how many repacks hold or await it)
+
+
+@contextlib.asynccontextmanager
+async def _job_requeue_lock(job_id: int):
+    """One repack per job at a time; the entry is dropped once nobody holds or awaits it (GH #249: it never shrank)."""
+    lock, users = _requeue_locks.get(job_id, (asyncio.Lock(), 0))
+    _requeue_locks[job_id] = (lock, users + 1)
+    try:
+        async with lock:
+            yield
+    finally:
+        lock, users = _requeue_locks[job_id]
+        if users <= 1:
+            del _requeue_locks[job_id]
+        else:
+            _requeue_locks[job_id] = (lock, users - 1)
 
 
 async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, int] | None = None, *,
@@ -135,7 +152,7 @@ async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, i
     held: list[dict] = []
     errors: list[str] = []
     job_id = job.id                        # a rollback below expires the ORM objects: re-read them by id
-    async with _requeue_locks.setdefault(job_id, asyncio.Lock()):
+    async with _job_requeue_lock(job_id):
         pending = (await session.execute(select(JobItemFailure.project_item_id).where(
             JobItemFailure.job_id == job_id, JobItemFailure.requeue_pending > 0).order_by(JobItemFailure.id))).scalars().all()
         for item_id in pending:
@@ -170,14 +187,16 @@ async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, i
                 await session.rollback()
                 if not hold_when_unready and getattr(exc, "status_code", None) == 503:
                     continue                        # the builder is still starting: leave the parts pending for a later try
-                errors.append(str(getattr(exc, "detail", exc)))
                 pi = await session.get(ProjectItem, item_id)
                 row = await _failure_row(session, job_id, item_id)
                 if pi is not None and row is not None and row.requeue_pending > 0:
+                    errors.append(str(getattr(exc, "detail", exc)))
                     qty = row.requeue_pending          # what no committed pack covered: the rest is already queued
                     pi.quantity_held += qty
                     row.resolution, row.requeue_pending = "held", 0
                     held.append({"project_item_id": item_id, "quantity": qty})
+                else:                               # every part was queued before the error (e.g. moving the pack's folder)
+                    logger.warning("Repack of job %s item %s failed after its parts were queued: %s", job_id, item_id, exc)
                 await session.commit()
     return {"requeued_job_ids": job_ids, "held": held, **({"requeue_errors": errors} if errors else {})}
 
@@ -192,6 +211,25 @@ async def has_pending(session: AsyncSession, job_id: int) -> bool:
     """Results were committed for this job but some failed parts were never repacked (an interrupted clear, GH #227)."""
     return (await session.execute(select(JobItemFailure.id).where(
         JobItemFailure.job_id == job_id, JobItemFailure.requeue_pending > 0).limit(1))).first() is not None
+
+
+async def resume_pending_for_printer(session: AsyncSession, printer_id: int) -> dict:
+    """GH #249: any clear of a printer finishes the interrupted repacks of plates that printer ran (assumed-failed plates of
+    an interrupted clear included), not only the job a retried report names. While the project builder is still starting the
+    parts stay pending (never held behind the operator's back): the next clear or the startup sweep tries again."""
+    job_ids = sorted(set((await session.execute(select(JobItemFailure.job_id).where(
+        JobItemFailure.requeue_pending > 0, JobItemFailure.printer_id == printer_id))).scalars()))
+    out: dict = {"requeued_job_ids": [], "held": []}
+    for job_id in job_ids:
+        job = await session.get(Job, job_id)
+        if job is None:
+            continue
+        again = await requeue_reported(session, job, hold_when_unready=False)
+        out["requeued_job_ids"] += again["requeued_job_ids"]
+        out["held"] += again["held"]
+        if again.get("requeue_errors"):
+            out.setdefault("requeue_errors", []).extend(again["requeue_errors"])
+    return out
 
 
 async def resume_pending(session_factory) -> list[int]:
@@ -332,3 +370,20 @@ async def apply_clear_defaults(session: AsyncSession, printer: Printer) -> list[
             recorded = await record_and_restore(session, job, printer.id, on_plate, assumed=ASSUMED_FAILED)
             applied.append({"job_id": job.id, "result": ASSUMED_FAILED, "requeue": recorded["requeue"]})
     return applied
+
+
+async def resume_pending_with_retries(session_factory, *, attempts: int = 20, delay_s: float = 30.0, on_resumed=None) -> None:
+    """The startup sweep (GH #227/#249): `resume_pending` until nothing is left, at most `attempts` passes `delay_s` apart
+    (the project builder may still be starting). A pass that fails (e.g. a database error) is logged and retried, never
+    the end of the sweep."""
+    for _ in range(attempts):
+        try:
+            resumed = await resume_pending(session_factory)
+            if not resumed:
+                return
+            logger.info("Resuming interrupted requeues of failed parts for job(s) %s", resumed)
+            if on_resumed is not None:
+                on_resumed()
+        except Exception:
+            logger.exception("Resuming interrupted requeues failed; retrying")
+        await asyncio.sleep(delay_s)
