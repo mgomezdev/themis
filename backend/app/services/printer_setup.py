@@ -206,12 +206,17 @@ async def evaluate(printer_id: int, session_factory) -> TestOutcome:
 async def _evaluate_locked(printer_id: int, session_factory) -> TestOutcome:
     lock = _locks.setdefault(printer_id, asyncio.Lock())
     async with lock:
+        tested: dict = {}
         try:
-            outcome = await _evaluate(printer_id, session_factory)
+            outcome = await _evaluate(printer_id, session_factory, tested)
         except Exception as exc:
             outcome = TestOutcome(False, str(exc) or type(exc).__name__, None)
             try:
-                await _persist(session_factory, printer_id, False, outcome.error)
+                if "current" in tested:            # GH #250: only for the settings it tested, never an edit made meanwhile
+                    if not await write_if_current(session_factory, printer_id, tested["current"], False, outcome.error):
+                        outcome = _superseded()
+                else:                              # it failed before reading the settings: nothing was tested yet
+                    await _persist(session_factory, printer_id, False, outcome.error)
             except Exception:
                 logger.exception("Recording the connection test of printer %s failed", printer_id)
         try:
@@ -221,7 +226,7 @@ async def _evaluate_locked(printer_id: int, session_factory) -> TestOutcome:
         return outcome
 
 
-async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
+async def _evaluate(printer_id: int, session_factory, tested: dict | None = None) -> TestOutcome:
     from ..models import Printer
     from .printer_client_factory import create_client
     from .printer_manager import printer_manager
@@ -256,6 +261,8 @@ async def _evaluate(printer_id: int, session_factory) -> TestOutcome:
         printer_manager.set_printer_plugin(printer_id, printer.plugin_id)
         client = create_client(printer)
         current = _tested_with(dict(printer.connection_config or {}), fields_for(printer))
+        if tested is not None:
+            tested["current"] = current
     printer_manager.connect_printer(printer_id, client)
     connected = await wait_connected(client, TEST_CONNECT_POLL_S)
     if not connected:
