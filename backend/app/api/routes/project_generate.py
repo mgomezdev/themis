@@ -239,6 +239,7 @@ async def generate_project(
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = f"POST /api/v1/projects/{project_id}/generate"
     jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
+    owner = idempotency.new_owner()
     if idempotency_key:
         async def committed_since(baseline: dict) -> str | None:
             # A stale claim whose first attempt already committed jobs must not generate them again (GH #225).
@@ -247,7 +248,8 @@ async def generate_project(
                     "project's jobs, then retry with a new Idempotency-Key") if created > 0 else None
 
         replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()),
-                                         baseline={"jobs_before": jobs_before}, committed_since=committed_since)
+                                         baseline={"jobs_before": jobs_before}, committed_since=committed_since,
+                                         owner=owner)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
@@ -260,7 +262,7 @@ async def generate_project(
                 await idempotency.partial(factory, scope, idempotency_key, f"This request created {created} job(s) for project {project_id} "
                                           "before it failed: check the project's jobs, then retry with a new Idempotency-Key")
             else:
-                await idempotency.release(factory, scope, idempotency_key)
+                await idempotency.release(factory, scope, idempotency_key, owner=owner)
         raise
     if idempotency_key:
         await _remember(factory, scope, idempotency_key, 200, result)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
@@ -42,6 +43,12 @@ def request_hash(*parts) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def new_owner() -> str:
+    """A token naming the request that claims a key: pass it to `claim` and to `release`, so a request whose claim was taken
+    over (it ran past STALE_AFTER) cannot free the new holder's claim."""
+    return uuid.uuid4().hex
+
+
 def check_key(key: str) -> str:
     key = key.strip()
     if not key or len(key) > MAX_KEY_LEN:
@@ -50,7 +57,7 @@ def check_key(key: str) -> str:
 
 
 async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str, req_hash: str, *, baseline: dict | None = None,
-                committed_since: Callable[[dict], Awaitable[str | None]] | None = None) -> Replay | None:
+                committed_since: Callable[[dict], Awaitable[str | None]] | None = None, owner: str | None = None) -> Replay | None:
     """None: this request owns the key and must run, then `complete` (or `release` on failure). A `Replay`: answer with it.
     `baseline` is stored with a fresh claim; before a stale claim is taken over, `committed_since(baseline)` may return a detail
     saying the first attempt already committed work — the key is then marked `partial` and this request gets 409."""
@@ -60,7 +67,7 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
         await session.execute(delete(IdempotencyKey).where(IdempotencyKey.state.in_(("done", "partial")), IdempotencyKey.created_at < _iso(now - KEEP_FOR)))
         inserted = (await session.execute(
             sqlite_insert(IdempotencyKey).values(scope=scope, key=key, request_hash=req_hash, state="in_progress", created_at=_iso(now),
-                                                 response=baseline)
+                                                 response=baseline, claim_token=owner)
             .on_conflict_do_nothing().returning(IdempotencyKey.id))).scalar_one_or_none()
         if inserted is not None:
             await session.commit()
@@ -84,7 +91,7 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
                                       .values(state="partial", status_code=None, response={"detail": done}))
                 await session.commit()
                 raise HTTPException(409, done)
-            taken = await session.execute(update(IdempotencyKey).where(*same_claim).values(created_at=_iso(now)))
+            taken = await session.execute(update(IdempotencyKey).where(*same_claim).values(created_at=_iso(now), claim_token=owner))
             await session.commit()
             if taken.rowcount == 1:
                 return None
@@ -94,6 +101,8 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
 
 
 async def complete(factory: async_sessionmaker[AsyncSession], scope: str, key: str, status_code: int, response: dict) -> None:
+    """Store the response of a request that did its work. Whoever finishes first wins while the key is in progress, even a
+    request whose claim was taken over: committed work outranks a claim still running (the retry then replays it)."""
     async with factory() as session:
         await session.execute(update(IdempotencyKey).where(IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key),
                                                            IdempotencyKey.state == "in_progress")
@@ -102,15 +111,22 @@ async def complete(factory: async_sessionmaker[AsyncSession], scope: str, key: s
 
 
 async def partial(factory: async_sessionmaker[AsyncSession], scope: str, key: str, detail: str) -> None:
-    """The request failed after committing part of its work: keep the key so a retry cannot repeat that work."""
+    """The request failed after committing part of its work: keep the key so a retry cannot repeat that work. Like
+    `complete`, any request with committed work may set it while the key is in progress; a stored response is never
+    overwritten."""
     async with factory() as session:
-        await session.execute(update(IdempotencyKey).where(IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key))
+        await session.execute(update(IdempotencyKey).where(IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key),
+                                                           IdempotencyKey.state == "in_progress")
                               .values(state="partial", status_code=None, response={"detail": detail}))
         await session.commit()
 
 
-async def release(factory: async_sessionmaker[AsyncSession], scope: str, key: str) -> None:
+async def release(factory: async_sessionmaker[AsyncSession], scope: str, key: str, *, owner: str | None) -> None:
+    """A request that changed nothing gives its claim back. Only the claim it still holds (GH #246): a request whose claim
+    was taken over must not free the new holder's, or a third request would run the work while the retry still is. `owner`
+    is required (pass the token given to `claim`; None only for a claim made without one)."""
     async with factory() as session:
-        await session.execute(delete(IdempotencyKey).where(IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key),
-                                                           IdempotencyKey.state == "in_progress"))
+        await session.execute(delete(IdempotencyKey).where(
+            IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key), IdempotencyKey.state == "in_progress",
+            IdempotencyKey.claim_token.is_(None) if owner is None else IdempotencyKey.claim_token == owner))
         await session.commit()

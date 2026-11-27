@@ -437,3 +437,44 @@ async def test_a_reused_project_id_does_not_swallow_the_new_projects_event(clien
 
     assert second["id"] == first["id"]
     assert [p["name"] for p in wire.payloads("project.created")] == ["One", "Two"]
+
+
+async def _taken_over(session_factory, monkeypatch, key="k"):
+    """The first request claims `key`, stalls past STALE_AFTER and a retry takes the claim over. Returns (zombie, retry) owners."""
+    zombie, retry = idempotency.new_owner(), idempotency.new_owner()
+    assert await idempotency.claim(session_factory, "S", key, "h", owner=zombie) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    assert await idempotency.claim(session_factory, "S", key, "h", owner=retry) is None
+    monkeypatch.undo()
+    return zombie, retry
+
+
+async def test_a_zombie_release_does_not_free_the_retrys_claim(session_factory, monkeypatch):
+    """GH #246: the original failing with nothing committed must not delete the claim the retry holds (a third request would
+    then run the work a second time while the retry is still doing it)."""
+    zombie, _ = await _taken_over(session_factory, monkeypatch)
+    await idempotency.release(session_factory, "S", "k", owner=zombie)
+    with pytest.raises(Exception, match="still being processed"):
+        await idempotency.claim(session_factory, "S", "k", "h", owner=idempotency.new_owner())
+
+
+async def test_a_zombie_that_committed_its_work_wins_and_a_late_failure_cannot_overwrite_a_response(session_factory, monkeypatch):
+    """Committed work outranks a claim still running: the zombie's response stands (the retry's later completion and the
+    zombie's own late partial change nothing), and the retry's release can no longer delete the finished key."""
+    zombie, retry = await _taken_over(session_factory, monkeypatch)
+    await idempotency.complete(session_factory, "S", "k", 201, {"from": "zombie"})
+    await idempotency.complete(session_factory, "S", "k", 200, {"from": "retry"})
+    await idempotency.partial(session_factory, "S", "k", "late failure")
+    await idempotency.release(session_factory, "S", "k", owner=retry)
+    replay = await idempotency.claim(session_factory, "S", "k", "h", owner=idempotency.new_owner())
+    assert (replay.status_code, replay.response) == (201, {"from": "zombie"})
+
+
+async def test_the_holder_can_still_release_or_mark_partial(session_factory, monkeypatch):
+    await _taken_over(session_factory, monkeypatch, key="a")
+    await idempotency.partial(session_factory, "S", "a", "retry failed after committing")
+    with pytest.raises(Exception, match="retry failed after committing"):
+        await idempotency.claim(session_factory, "S", "a", "h", owner=idempotency.new_owner())
+    _, retry = await _taken_over(session_factory, monkeypatch, key="b")
+    await idempotency.release(session_factory, "S", "b", owner=retry)
+    assert await idempotency.claim(session_factory, "S", "b", "h", owner=idempotency.new_owner()) is None
