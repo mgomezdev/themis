@@ -3,18 +3,21 @@ group (on the printers, profiles and asks the failed job had), and hold a part t
 printers for a person to Reprint or Drop. Every failure lands in the project's failure log (`job_item_failures`)."""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, QueueConfig, UploadedFile
 from . import project_groups
 
 DEFAULT_RETRY_LIMIT = 2
+logger = logging.getLogger(__name__)
 
 # jobs.outcome: who said what came off the plate. A person ("reviewed") always wins; a plate cleared without results gets the
 # Settings default — and says so. `None` = awaiting results.
@@ -111,47 +114,71 @@ async def record_and_restore(session: AsyncSession, job: Job, printer_id: int | 
     return {"held": held, "requeue": requeue}
 
 
-async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, int] | None = None) -> dict:
+class _AlreadyRepacked(Exception):
+    """Another repack of the same failure row committed first (a concurrent retry or the startup sweep): drop this pack."""
+
+
+_requeue_locks: dict[int, asyncio.Lock] = {}
+
+
+async def requeue_reported(session: AsyncSession, job: Job, requeue: dict[int, int] | None = None, *,
+                           hold_when_unready: bool = True) -> dict:
     """After the results are committed: pack each failed part set anew, one pack at a time. A pack that can't be built (no
     builder, a missing model, a provider error) holds its parts for a person instead of losing them; the error is returned.
 
     What is repacked is what the job's failure rows still have `requeue_pending` (committed with the results), not `requeue`
-    (kept for the callers' signature): each pack's jobs and the decrement of its parts commit together (GH #227), so an
-    interruption anywhere in here leaves exactly the unpacked remainder pending for `resume_pending` to pick up."""
+    (kept for the callers' signature): each pack's jobs, their configs and the decrement of its parts commit together
+    (GH #227), the decrement being a conditional claim, so an interruption or a concurrent repack never queues the same parts
+    twice and leaves exactly the unpacked remainder pending. `hold_when_unready=False` (the startup sweep) leaves the parts
+    pending, rather than holding them, while the project builder is not ready yet."""
     job_ids: list[int] = []
     held: list[dict] = []
     errors: list[str] = []
     job_id = job.id                        # a rollback below expires the ORM objects: re-read them by id
-    pending = (await session.execute(select(JobItemFailure.project_item_id).where(
-        JobItemFailure.job_id == job_id, JobItemFailure.requeue_pending > 0).order_by(JobItemFailure.id))).scalars().all()
-    for item_id in pending:
-        row = await _failure_row(session, job_id, item_id)
-        if row is None or row.requeue_pending <= 0:
-            continue
-
-        async def packed(sess: AsyncSession, quantities: dict[int, int], row_id: int = row.id, item: int = item_id) -> None:
-            target = await sess.get(JobItemFailure, row_id)
-            if target is not None and quantities.get(item):
-                target.requeue_pending = max(0, target.requeue_pending - quantities[item])
-
-        try:
-            job_ids += await requeue_parts(session, await session.get(Job, job_id), {item_id: row.requeue_pending},
-                                           on_pack_jobs=packed)
+    async with _requeue_locks.setdefault(job_id, asyncio.Lock()):
+        pending = (await session.execute(select(JobItemFailure.project_item_id).where(
+            JobItemFailure.job_id == job_id, JobItemFailure.requeue_pending > 0).order_by(JobItemFailure.id))).scalars().all()
+        for item_id in pending:
             row = await _failure_row(session, job_id, item_id)
-            if row is not None and row.requeue_pending:     # a pool job (its parts go back into the pool) or a short pack
-                row.requeue_pending = 0
+            if row is None or row.requeue_pending <= 0:
+                continue
+
+            async def packed(sess: AsyncSession, quantities: dict[int, int], row_id: int = row.id, item: int = item_id) -> None:
+                qty = quantities.get(item, 0)
+                if qty <= 0:
+                    return
+                claimed = await sess.execute(update(JobItemFailure).where(
+                    JobItemFailure.id == row_id, JobItemFailure.requeue_pending >= qty)
+                    .values(requeue_pending=JobItemFailure.requeue_pending - qty).execution_options(synchronize_session=False))
+                if claimed.rowcount != 1:
+                    raise _AlreadyRepacked
+
+            try:
+                job_ids += await requeue_parts(session, await session.get(Job, job_id), {item_id: row.requeue_pending},
+                                               on_pack_jobs=packed)
+                row = await _failure_row(session, job_id, item_id)
+                if row is not None and row.requeue_pending:     # a pool job (its parts go back into the pool) or a short pack
+                    source = await session.get(Job, job_id)
+                    if source is not None and source.pool_group_id is None:
+                        logger.warning("Repack of job %s item %s packed %s fewer part(s) than failed", job_id, item_id,
+                                       row.requeue_pending)
+                    row.requeue_pending = 0
+                    await session.commit()
+            except _AlreadyRepacked:
+                await session.rollback()            # another repack queued these parts: nothing to hold, nothing to report
+            except Exception as exc:          # noqa: BLE001 - any failure here must turn into a hold, never a lost part
+                await session.rollback()
+                if not hold_when_unready and getattr(exc, "status_code", None) == 503:
+                    continue                        # the builder is still starting: leave the parts pending for a later try
+                errors.append(str(getattr(exc, "detail", exc)))
+                pi = await session.get(ProjectItem, item_id)
+                row = await _failure_row(session, job_id, item_id)
+                if pi is not None and row is not None and row.requeue_pending > 0:
+                    qty = row.requeue_pending          # what no committed pack covered: the rest is already queued
+                    pi.quantity_held += qty
+                    row.resolution, row.requeue_pending = "held", 0
+                    held.append({"project_item_id": item_id, "quantity": qty})
                 await session.commit()
-        except Exception as exc:          # noqa: BLE001 - any failure here must turn into a hold, never a lost part
-            await session.rollback()
-            errors.append(str(getattr(exc, "detail", exc)))
-            pi = await session.get(ProjectItem, item_id)
-            row = await _failure_row(session, job_id, item_id)
-            if pi is not None and row is not None and row.requeue_pending > 0:
-                qty = row.requeue_pending          # what no committed pack covered: the rest is already queued
-                pi.quantity_held += qty
-                row.resolution, row.requeue_pending = "held", 0
-                held.append({"project_item_id": item_id, "quantity": qty})
-            await session.commit()
     return {"requeued_job_ids": job_ids, "held": held, **({"requeue_errors": errors} if errors else {})}
 
 
@@ -168,7 +195,8 @@ async def has_pending(session: AsyncSession, job_id: int) -> bool:
 
 
 async def resume_pending(session_factory) -> list[int]:
-    """Startup recovery (GH #227): repack every failed part left pending by an interruption. Returns the job ids resumed."""
+    """Startup recovery (GH #227): repack every failed part left pending by an interruption. Returns the job ids it tried;
+    parts it could not repack yet (the project builder still starting) stay pending, so calling it again retries them."""
     async with session_factory() as session:
         job_ids = sorted(set((await session.execute(select(JobItemFailure.job_id).where(
             JobItemFailure.requeue_pending > 0))).scalars()))
@@ -176,7 +204,7 @@ async def resume_pending(session_factory) -> list[int]:
         async with session_factory() as session:
             job = await session.get(Job, job_id)
             if job is not None:
-                await requeue_reported(session, job)
+                await requeue_reported(session, job, hold_when_unready=False)
     return job_ids
 
 

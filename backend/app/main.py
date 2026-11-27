@@ -131,10 +131,13 @@ async def lifespan(app: FastAPI):
     async def _resume_requeues() -> None:      # GH #227: failed parts whose repack an interruption cut short
         from .services import print_results
         try:
-            resumed = await print_results.resume_pending(SessionLocal)
-            if resumed:
-                logging.getLogger("app").info("Resumed interrupted requeues of failed parts for job(s) %s", resumed)
+            for _ in range(20):                # the project builder may still be starting: retry for ~10 minutes
+                resumed = await print_results.resume_pending(SessionLocal)
+                if not resumed:
+                    return
+                logging.getLogger("app").info("Resuming interrupted requeues of failed parts for job(s) %s", resumed)
                 queue_engine.wake()
+                await asyncio.sleep(30)
         except Exception:
             logging.getLogger("app").exception("Resuming interrupted requeues failed")
 

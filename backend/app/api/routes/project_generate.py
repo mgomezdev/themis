@@ -503,45 +503,9 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             session.add(job)
             new_jobs.append(job)
             next_pos += 1.0
-        if on_pack_jobs is not None:
-            packed: dict[int, int] = {}
-            for qtys in plate_item_qtys[:len(effective_plates)]:
-                for item_id, qty in qtys.items():
-                    packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
-            await on_pack_jobs(session, packed)
-        # Commit jobs so the DB assigns their autoincrement IDs.
-        await session.commit()
-        # Refresh each job so j.id is populated.
-        for j in new_jobs:
-            await session.refresh(j)
-
-        if reused is None:
-            # Rename temp dir to the job-ID subfolder now that IDs are known.
-            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
-            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
-            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
-            if artifact_cleanup is not None:
-                artifact_cleanup[-1] = moved.key
-            new_file.relative_path = moved.key
-            new_file.mtime = moved.mtime
-            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
-            await session.commit()
-
-        if fixed is None:
-            cached_plates = (await session.execute(
-                select(func.count(func.distinct(SlicedVersion.plate_number)))
-                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
-                .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
-            )).scalar() or 0
-            files_out.append({
-                "id": new_file.id,
-                "original_filename": new_file.original_filename,
-                "folder": new_file.folder,
-                "plate_count": len(plate_nums),
-                # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
-                "pack_reused": reused is not None,
-                "cached_plates": cached_plates,
-            })
+        # Flush, not commit: the jobs get their IDs, and they commit together with their configs/targets below, so a crash
+        # can never leave a job with no printer configs (which nothing would ever dispatch).
+        await session.flush()
 
         # Create printer configs for each of the group's eligible printers × job, each with its target's process profile
         # ("" = the printer's own default, BIZ-358). The machine preset is deliberately NOT set here — queue_engine reads it
@@ -575,7 +539,42 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 ))
             await session.flush()
             await model_targets.materialize_job(session, j.id)
+        if on_pack_jobs is not None:
+            packed: dict[int, int] = {}
+            for qtys in plate_item_qtys[:len(effective_plates)]:
+                for item_id, qty in qtys.items():
+                    packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
+            await on_pack_jobs(session, packed)
         await session.commit()
+
+        if reused is None:
+            # Rename temp dir to the job-ID subfolder now that IDs are known.
+            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
+            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
+            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+            if artifact_cleanup is not None:
+                artifact_cleanup[-1] = moved.key
+            new_file.relative_path = moved.key
+            new_file.mtime = moved.mtime
+            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
+            await session.commit()
+
+        if fixed is None:
+            cached_plates = (await session.execute(
+                select(func.count(func.distinct(SlicedVersion.plate_number)))
+                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+                .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
+            )).scalar() or 0
+            files_out.append({
+                "id": new_file.id,
+                "original_filename": new_file.original_filename,
+                "folder": new_file.folder,
+                "plate_count": len(plate_nums),
+                # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
+                "pack_reused": reused is not None,
+                "cached_plates": cached_plates,
+            })
+
 
         # Trigger estimates for each new job if enabled.
         queue_cfg = await session.get(QueueConfig, 1)

@@ -339,3 +339,72 @@ async def test_a_resumed_requeue_that_cannot_be_packed_holds_the_parts(
         assert (await s.get(ProjectItem, item)).quantity_held == 2
     assert [e["resolution"] for e in (await client.get(f"/api/v1/projects/{pid}/failures")).json()] == ["held"]
     assert await _pending(session_factory, job_id) == 0 and len(await _project_jobs(session_factory, pid)) == 1
+
+
+async def test_concurrent_resumes_queue_the_failed_parts_once(client, upload_3mf, create_printer, session_factory, tmp_path):
+    """A retry while the startup sweep (or another retry) is still packing must not queue the same parts twice."""
+    import asyncio
+    from app.services import print_results
+    pid, item, job_id, _, _ = await _interrupted_clear(client, upload_3mf, create_printer, session_factory, tmp_path)
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        await asyncio.gather(print_results.resume_pending(session_factory), print_results.resume_pending(session_factory))
+    jobs = await _project_jobs(session_factory, pid)
+    assert len(jobs) == 2 and json.loads(jobs[1].project_item_quantities) == {str(item): 2}
+    assert await _pending(session_factory, job_id) == 0
+
+
+async def test_a_concurrent_repack_that_lost_the_claim_queues_nothing(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    """The claim itself, not only the in-process lock: a repack whose parts another one committed first rolls its pack back."""
+    from app.models import JobItemFailure
+    from app.services import print_results
+    pid, item, job_id, _, real = await _interrupted_clear(client, upload_3mf, create_printer, session_factory, tmp_path)
+
+    async def other_repack_won(session, source, parts, **kwargs):
+        async with session_factory() as other:                 # another process committed the repack meanwhile
+            row = (await other.execute(select(JobItemFailure).where(JobItemFailure.job_id == job_id))).scalar_one()
+            row.requeue_pending = 0
+            await other.commit()
+        return await real(session, source, parts, **kwargs)
+
+    with patch.object(print_results, "requeue_parts", side_effect=other_repack_won), \
+         patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        out = await print_results.resume_pending(session_factory)
+    assert out == [job_id] and len(await _project_jobs(session_factory, pid)) == 1
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_held == 0       # the winner owns the parts: nothing held twice
+
+
+async def test_a_pack_whose_configs_cannot_be_written_holds_the_parts_and_leaves_no_undispatchable_job(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    from app.services import model_targets, print_results
+    pid, item, job_id, _, _ = await _interrupted_clear(client, upload_3mf, create_printer, session_factory, tmp_path)
+    with patch.object(model_targets, "materialize_job", side_effect=RuntimeError("disk I/O error")), \
+         patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        await print_results.resume_pending(session_factory)
+    assert len(await _project_jobs(session_factory, pid)) == 1                  # the half-built pack's jobs rolled back
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_held == 2
+    assert await _pending(session_factory, job_id) == 0
+
+
+async def test_the_startup_sweep_leaves_parts_pending_while_the_builder_is_not_ready(
+        client, upload_3mf, create_printer, session_factory, tmp_path):
+    from fastapi import HTTPException
+    from app.api.routes import project_generate
+    from app.services import print_results
+    pid, item, job_id, _, _ = await _interrupted_clear(client, upload_3mf, create_printer, session_factory, tmp_path)
+    with patch.object(project_generate, "_require_ready", side_effect=HTTPException(503, "builder starting")), \
+         patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        assert await print_results.resume_pending(session_factory) == [job_id]
+    assert await _pending(session_factory, job_id) == 2
+    async with session_factory() as s:
+        assert (await s.get(ProjectItem, item)).quantity_held == 0
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.api.routes.projects.get_project_constructor", return_value=FakeProjectConstructor()):
+        assert await print_results.resume_pending(session_factory) == [job_id]  # builder up: the next try repacks
+    assert len(await _project_jobs(session_factory, pid)) == 2 and await _pending(session_factory, job_id) == 0
