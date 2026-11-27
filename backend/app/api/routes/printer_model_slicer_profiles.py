@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from ...auth import require_scope
 from ...database import get_session
@@ -127,11 +128,15 @@ async def patch_mapping(model_uuid: str, mapping_id: int, body: MappingPatch,
     row = await _row_or_404(session, model_uuid, mapping_id)
     if body.is_default is False and row.is_default:
         raise HTTPException(422, "A model always has a default variant: make another variant the default instead")
-    if body.machine_profile is not None:
-        row.machine_profile = body.machine_profile
-    if body.is_default:
-        await _make_default(session, row)
-    await session.commit()
+    try:
+        if body.machine_profile is not None:
+            row.machine_profile = body.machine_profile
+        if body.is_default:
+            await _make_default(session, row)
+        await session.commit()
+    except StaleDataError:                  # GH #248: deleted by a concurrent request after it was read above
+        await session.rollback()
+        raise HTTPException(404, "Unknown slicer profile mapping") from None
     return _view(row)
 
 
@@ -142,35 +147,56 @@ async def patch_mapping(model_uuid: str, mapping_id: int, body: MappingPatch,
                dependencies=[Depends(require_scope("printers:write"))])
 async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession = Depends(get_session)) -> None:
     row = await _row_or_404(session, model_uuid, mapping_id)
-    model = await _model_or_404(session, model_uuid)
-    siblings = [r for r in await slicer_profiles.mapping_rows(session, model_uuid)
-                if r.provider_plugin_id == row.provider_plugin_id and r.id != row.id]
-    if row.is_default and siblings:
-        raise HTTPException(409, "This is the default variant: make another variant the default before removing it")
-    if row.is_default and row.provider_plugin_id == model.default_slicer_plugin_id:
-        raise HTTPException(409, "Change the model's default slicer before removing its only mapping")
+    refusal = await _delete_refusal(session, model_uuid, row, row.is_default)
+    if refusal:
+        raise HTTPException(409, refusal)
+    # The checks above judged earlier reads; a concurrent promotion, create, or a printer switching to this nozzle may have
+    # committed since. The DELETE opens the write transaction (no other writer can commit until it ends), so judge it again
+    # on the state as it now is, and refuse what only the newer state forbids (GH #232, #248).
+    gone = (await session.execute(delete(PrinterModelSlicerProfile).where(PrinterModelSlicerProfile.id == row.id)
+                                  .returning(PrinterModelSlicerProfile.is_default))).first()
+    if gone is None:
+        await session.rollback()
+        raise HTTPException(404, "Unknown slicer profile mapping")
+    refusal = await _delete_refusal(session, model_uuid, row, bool(gone.is_default), fresh=True)
+    if refusal:
+        await session.rollback()
+        raise HTTPException(409, refusal if "changed while" in refusal else
+                            f"This mapping changed while it was being removed. {refusal}")
+    await session.commit()
+
+
+async def _delete_refusal(session: AsyncSession, model_uuid: str, row: PrinterModelSlicerProfile, is_default: bool, *,
+                          fresh: bool = False) -> str | None:
+    """Why `row` may not be removed, or None. `fresh`: called after its DELETE, inside the write transaction, so every read
+    is re-done against the committed state (the row itself is already gone from the sibling query)."""
+    opts = {"populate_existing": True} if fresh else {}
+    model = await session.get(PrinterModelRecord, model_uuid, populate_existing=fresh)
+    if model is None:
+        return "Unknown printer model"
+    pair = (await session.execute(select(PrinterModelSlicerProfile).where(
+        PrinterModelSlicerProfile.model_uuid == model_uuid, PrinterModelSlicerProfile.provider_plugin_id == row.provider_plugin_id,
+        PrinterModelSlicerProfile.id != row.id).execution_options(**opts))).scalars().all()
+    if is_default and pair:
+        return "This is the default variant: make another variant the default before removing it"
+    if pair and not any(r.is_default for r in pair):
+        return "The mapping changed while it was being removed: the model would be left without a default variant"
+    if is_default and row.provider_plugin_id == model.default_slicer_plugin_id:
+        return "Change the model's default slicer before removing its only mapping"
     variant = slicer_profiles.variant_of(row)
     model_slicer = model.default_slicer_plugin_id or default_provider_id()
-    printers = [p for p in (await session.execute(select(Printer).where(Printer.model_uuid == model_uuid))).scalars()
+    printers = [p for p in (await session.execute(select(Printer).where(Printer.model_uuid == model_uuid)
+                                                  .execution_options(**opts))).scalars()
                 if (p.preferred_slicer_plugin_id or model_slicer) == row.provider_plugin_id]
     users = [p.name for p in printers if slicer_profiles.NozzleVariant.parse(p.nozzle_variant) == variant]
     if users:
-        raise HTTPException(409, f"{', '.join(users)} use the {variant.label} nozzle: change them first")
-    if row.is_default and not siblings:
+        return f"{', '.join(users)} use the {variant.label} nozzle: change them first"
+    if is_default and not pair:
         followers = [p.name for p in printers if not p.nozzle_variant and not p.machine_profile_override]
         if followers:
-            raise HTTPException(409, f"{', '.join(followers)} follow this model's default profile: set a profile override or remove "
-                                     "those printers before removing the last profile")
-    # The checks above judged the pair from earlier reads; a concurrent promotion or create may have changed it since.
-    # The DELETE opens the write transaction, so re-check the invariant there: rows left in the pair keep one default.
-    await session.execute(delete(PrinterModelSlicerProfile).where(PrinterModelSlicerProfile.id == row.id))
-    left = (await session.execute(select(PrinterModelSlicerProfile.is_default).where(
-        PrinterModelSlicerProfile.model_uuid == row.model_uuid,
-        PrinterModelSlicerProfile.provider_plugin_id == row.provider_plugin_id))).scalars().all()
-    if left and not any(left):
-        await session.rollback()
-        raise HTTPException(409, "This mapping changed while it was being removed: reload and try again")
-    await session.commit()
+            return (f"{', '.join(followers)} follow this model's default profile: set a profile override or remove "
+                    "those printers before removing the last profile")
+    return None
 
 
 @router.get("/suggestions", summary="Ask a slicing provider which profile and nozzle variants fit this model",

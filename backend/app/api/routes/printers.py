@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelSlicerProfile, UploadedFile
 from ...plugins import providers_of
 from ...services import catalog_service
 from ...services.print_artifacts import required_output
@@ -301,17 +301,32 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-async def _save_printer(session: AsyncSession, *, flush_only: bool = False) -> None:
+async def _save_printer(session: AsyncSession, *, flush_only: bool = False, printer: Printer | None = None) -> None:
+    """Flush or commit a printer write. With `printer`, its nozzle variant is checked again under the write lock first
+    (GH #248): the variant was validated on an earlier read, and a concurrent delete of that mapping may have committed since."""
     try:
         if flush_only:
             await session.flush()
         else:
+            if printer is not None and printer.nozzle_variant:
+                await session.flush()               # the write transaction is open: no mapping delete can commit now
+                await _recheck_variant(session, printer)
             await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         if printer_ownership.ERROR in str(exc.orig):
             raise HTTPException(409, "This printer is already owned by another binding") from exc
         raise
+
+
+async def _recheck_variant(session: AsyncSession, printer: Printer) -> None:
+    variant = slicer_profiles.NozzleVariant.parse(printer.nozzle_variant)
+    rows = (await session.execute(select(PrinterModelSlicerProfile).where(PrinterModelSlicerProfile.model_uuid == printer.model_uuid)
+                                  .execution_options(populate_existing=True))).scalars().all() if printer.model_uuid else []
+    if variant is not None and not any(slicer_profiles.variant_of(r) == variant for r in rows):
+        await session.rollback()
+        raise HTTPException(409, f"The slicer profile mapping for the {variant.label} nozzle was removed while this printer was "
+                                 "being saved: choose another nozzle variant")
 
 
 def _factory_of(session: AsyncSession) -> async_sessionmaker:
@@ -492,7 +507,7 @@ async def create_printer(
     )
     printer.default_process_profile = await _check_default_process(session, printer, body.default_process_profile)
     session.add(printer)
-    await _save_printer(session)
+    await _save_printer(session, printer=printer)
     await session.refresh(printer)
     printer_manager.set_printer_plugin(printer.id, plugin_id)
     printer_manager.set_configured(printer.id, False)
@@ -754,6 +769,7 @@ async def update_printer(
 
 async def _save_printer_edit(printer_id: int, body: PrinterUpdate, session: AsyncSession) -> tuple[Printer, bool, bool]:
     printer = await _get_or_404(printer_id, session)
+    old_model_uuid = printer.model_uuid
     topology_contents_changed = False
     if "plugin_id" in body.model_fields_set and body.plugin_id != printer.plugin_id:
         raise HTTPException(409, "A printer belongs to one plugin; delete its binding before choosing another plugin")
@@ -853,7 +869,8 @@ async def _save_printer_edit(printer_id: int, body: PrinterUpdate, session: Asyn
     if topology_contents_changed:
         printer.topology_error = 'Filament contents changed; topology refresh required'
         printer_manager._topology_invalid.add(printer.id)
-    await _save_printer(session)
+    variant_touched = "nozzle_variant" in body.model_fields_set or old_model_uuid != printer.model_uuid
+    await _save_printer(session, printer=printer if variant_touched else None)
     return printer, retest, topology_contents_changed
 
 
