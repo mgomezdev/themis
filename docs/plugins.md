@@ -249,7 +249,7 @@ Pipeline (`app/plugins/installer.py`), the same for both sources:
 5. **Commit** (one at a time): move to `<data>/plugins/<id>/<version>/`, write the `installed_plugins` row (`pending_restart`),
    audit-log it. A failure at any step removes the staging directory and anything moved, and leaves no row.
 
-Installing a **different version of an installed id** is an upgrade: the version that is *running* stays on disk as
+Installing a **different version of an installed id** is an upgrade: the version that is *running* (or, for a plugin that failed to load, the version installed at boot) stays on disk as
 `previous_version` (older ones are pruned). Upgrading again before a restart keeps that running version, not the staged one that
 never ran. Re-installing the *same* version is refused — bump `version`.
 

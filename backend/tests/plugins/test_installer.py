@@ -546,3 +546,21 @@ async def test_an_upgrade_after_rolling_back_a_pending_upgrade_keeps_the_running
     assert not installer.version_dir("acme_inv", "1.1.0").exists()             # never ran: pruned
     async with session_factory() as s:
         assert (await installer.rollback(s, "acme_inv", actor="a")).version == "1.0.0"
+
+
+async def test_a_plugin_that_failed_to_load_keeps_its_boot_version_through_an_upgrade_rollback_upgrade(data_dir, session_factory):
+    """GH #262: a plugin that failed to load at boot is not in the loader's `loaded`, so the row rule applied and the same
+    upgrade → rollback → upgrade chain made a never-run version the rollback target and pruned the installed one."""
+    from app.plugins import loader
+    await _install(session_factory, "1.0.0")
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "error"            # booted, but its code failed to load
+        await s.commit()
+    loader.last_report.at_boot["acme_inv"] = "1.0.0"
+    loader.last_report.errors["acme_inv"] = "ImportError: x"
+    await _install(session_factory, "1.1.0")
+    async with session_factory() as s:
+        await installer.rollback(s, "acme_inv", actor="a")
+    row = await _install(session_factory, "1.2.0")
+    assert (row.version, row.previous_version) == ("1.2.0", "1.0.0")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir() and not installer.version_dir("acme_inv", "1.1.0").exists()
