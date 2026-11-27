@@ -100,6 +100,20 @@ async def claim(factory: async_sessionmaker[AsyncSession], scope: str, key: str,
     raise HTTPException(409, "A request with this Idempotency-Key is still being processed")
 
 
+async def note_progress(session: AsyncSession, scope: str, key: str, owner: str | None, progress: dict) -> None:
+    """Record, in the caller's own transaction, what this request has done so far (GH #245): it commits with the work, so
+    a stale takeover's `committed_since(baseline)` sees it even if the request then dies before `complete`. It replaces the
+    row's stored baseline. Raises 409 when this request no longer holds the claim (it was taken over while this request
+    stalled): the caller's transaction must then be rolled back so the work is not done a second time."""
+    noted = await session.execute(update(IdempotencyKey).where(
+        IdempotencyKey.scope == scope, IdempotencyKey.key == check_key(key), IdempotencyKey.state == "in_progress",
+        IdempotencyKey.claim_token.is_(None) if owner is None else IdempotencyKey.claim_token == owner)
+        .values(response=progress).execution_options(synchronize_session=False))
+    if noted.rowcount != 1:
+        raise HTTPException(409, "This request's Idempotency-Key claim was taken over by a retry while it was running; "
+                                 "the retry's result stands")
+
+
 async def complete(factory: async_sessionmaker[AsyncSession], scope: str, key: str, status_code: int, response: dict) -> None:
     """Store the response of a request that did its work. Whoever finishes first wins while the key is in progress, even a
     request whose claim was taken over: committed work outranks a claim still running (the retry then replays it)."""

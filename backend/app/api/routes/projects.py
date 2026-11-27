@@ -505,6 +505,13 @@ async def _create_project(body: ProjectCreate, session: AsyncSession, progress: 
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
         await sync_project_totals(session, proj)
+    if progress.get("idempotency"):        # GH #245: the key learns of the project in the same commit that creates it
+        await session.flush()
+        try:
+            await idempotency.note_progress(session, *progress["idempotency"], {"created_id": proj.id})
+        except HTTPException:
+            await session.rollback()           # taken over while this request stalled: the retry's project is the one
+            raise
     await session.commit()
     progress["created_id"] = proj.id                       # from here on a failure must not be retried under the same Idempotency-Key
     await session.refresh(proj)
@@ -531,12 +538,19 @@ async def create_project(
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = "POST /api/v1/projects"
     owner = idempotency.new_owner()
+    progress: dict = {}
     if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()), owner=owner)
+        async def committed_since(baseline: dict) -> str | None:
+            created = baseline.get("created_id")
+            return (f"Project {created} was already created by an earlier request with this Idempotency-Key: fetch it instead "
+                    "of retrying with this key") if created is not None else None
+
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()), owner=owner,
+                                         committed_since=committed_since)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
-    progress: dict = {}
+        progress["idempotency"] = (scope, idempotency_key, owner)
     try:
         result, created = await _create_project(body, session, progress)
     except BaseException:
