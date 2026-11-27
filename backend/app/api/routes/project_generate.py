@@ -25,7 +25,7 @@ from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, model_targets, print_results, project_events, project_groups, slice_cache, bed_requirement
+from ...services import idempotency, model_targets, pack_staging, print_results, project_events, project_groups, slice_cache, bed_requirement
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_scanner import (
@@ -71,7 +71,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
-PACK_FOLDER = "Job Pack 3MFs"
+PACK_FOLDER = pack_staging.PACK_FOLDER
 
 
 async def _stored(store: ArtifactStore, key: str) -> bool:
@@ -443,7 +443,30 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                       on_pack_jobs=None) -> tuple[list[dict], list[dict]]:
     """Build (or reuse) each planned pack, store it, and queue one job per plate with the pack's printer configs and model
     targets, in `packs` order. Returns (jobs, files) for the response. `on_pack_jobs(session, {project_item_id: quantity})`,
-    if given, runs inside the transaction that commits each pack's jobs (GH #227: a repack records its progress atomically)."""
+    if given, runs inside the transaction that commits each pack's jobs (GH #227: a repack records its progress atomically).
+    A pack staged but whose jobs never commit is discarded (GH #269) unless something references it."""
+    staged: list = []          # [tmp_key, file_id or None] of the pack staged but whose jobs are not committed yet
+    try:
+        return await _queue_packs_unguarded(session, proj, packs, constructor, allow_cached=allow_cached,
+                                            save_slice=save_slice, artifact_cleanup=artifact_cleanup,
+                                            on_pack_jobs=on_pack_jobs, staged=staged)
+    except BaseException:
+        # Not shielded: a cancellation that lands in this cleanup skips it, and the startup sweep removes the pack instead.
+        # The slicer-send path is one atomic transaction: its row rolls back and `artifact_cleanup` removes the file.
+        if staged and not session.info.get("slicer_transaction"):
+            try:
+                await session.rollback()        # release this session's write lock before the side session deletes
+                await pack_staging.discard_if_unreferenced(async_sessionmaker(session.bind, expire_on_commit=False),
+                                                           _projects.get_library_store(prune_empty=True), *staged)
+            except Exception:
+                logger.exception("project %s: could not discard staged pack %s; a startup sweep removes it", proj.id,
+                                 staged[0])
+        raise
+
+
+async def _queue_packs_unguarded(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
+                                 save_slice: bool, artifact_cleanup: list[str] | None, on_pack_jobs,
+                                 staged: list) -> tuple[list[dict], list[dict]]:
     library = _projects.get_library_store()
     checked_ready = False
     # Pack output is staged under a throwaway folder and moved to its job-ID folder once the IDs are known; this store
@@ -487,8 +510,9 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 label = _filament_label(ask)
                 out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
                 # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-                tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
+                tmp_key = f"{pack_staging.STAGING_PREFIX}{_uuid.uuid4().hex[:10]}/{out_filename}"
                 published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
+                staged[:] = [tmp_key, None]
                 if artifact_cleanup is not None:
                     artifact_cleanup.append(tmp_key)
                 # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
@@ -507,11 +531,14 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                     content_hash=pack_hash,
                     mtime=published.mtime,
                     missing=False,
-                    pack_recipe_hash=recipe_hash,
+                    # Set with its jobs' commit, not here: a staged pack is not offered for reuse (GH #269), so discarding
+                    # it when its own pack fails can never pull it from under a concurrent generation.
+                    pack_recipe_hash=None,
                 )
                 session.add(new_file)
                 await session.commit()
                 await session.refresh(new_file)
+                staged[1] = new_file.id
                 slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
                                       pack_content_hash=pack_hash)
 
@@ -590,7 +617,10 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 for item_id, qty in qtys.items():
                     packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
             await on_pack_jobs(session, packed)
+        if reused is None and fixed is None:
+            new_file.pack_recipe_hash = recipe_hash
         await session.commit()
+        staged.clear()                 # its jobs reference it now: never discarded
 
         if reused is None:
             # Rename temp dir to the job-ID subfolder now that IDs are known.
