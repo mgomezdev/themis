@@ -253,11 +253,25 @@ async def generate_project(
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
+    record_pack = None
+    if idempotency_key:
+        packs_done = {"n": 0}
+
+        async def record_pack(sess: AsyncSession, _packed: dict) -> None:
+            # GH #258: each pack's jobs commit with a note on the key, so a stale takeover re-checks progress made after
+            # it read the claim, and a request whose claim was taken over (409 here) rolls this pack back.
+            await idempotency.note_progress(sess, scope, idempotency_key, owner,
+                                            {"jobs_before": jobs_before, "packs_committed": packs_done["n"] + 1})
+            packs_done["n"] += 1
+
     try:
-        result = await _generate_project(project_id, body, session)
+        result = await _generate_project(project_id, body, session, on_pack_jobs=record_pack)
     except BaseException:
         if idempotency_key:
-            created = await _job_count(factory, project_id) - jobs_before
+            await session.rollback()   # release the request's own write transaction (a refused pack) before the key's own
+            # This request's own committed packs, not the project's job count: after a takeover that count includes the
+            # retry's jobs, and a request that committed nothing must not mark the retry's key partial.
+            created = await _job_count(factory, project_id) - jobs_before if packs_done["n"] else 0
             if created > 0:       # some groups were committed: a retry under this key would generate them again
                 await idempotency.partial(factory, scope, idempotency_key, f"This request created {created} job(s) for project {project_id} "
                                           "before it failed: check the project's jobs, then retry with a new Idempotency-Key")
@@ -601,7 +615,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
     return jobs_out, files_out
 
 
-async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession) -> dict:
+async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession, *, on_pack_jobs=None) -> dict:
     proj = await _get_project_or_404(project_id, session)
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
@@ -694,7 +708,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         proj.result_file_id = None
         await session.commit()
 
-    jobs_out, files_out = await _queue_packs(session, proj, packs, constructor,
+    jobs_out, files_out = await _queue_packs(session, proj, packs, constructor, on_pack_jobs=on_pack_jobs,
                                              allow_cached=body.allow_cached, save_slice=body.save_slice)
     packed_groups = [g for g in groups_out if not g.get("pool")]
 
