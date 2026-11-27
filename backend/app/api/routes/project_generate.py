@@ -394,9 +394,11 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
 
 
 async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
-                      save_slice: bool, artifact_cleanup: list[str] | None = None) -> tuple[list[dict], list[dict]]:
+                      save_slice: bool, artifact_cleanup: list[str] | None = None,
+                      on_pack_jobs=None) -> tuple[list[dict], list[dict]]:
     """Build (or reuse) each planned pack, store it, and queue one job per plate with the pack's printer configs and model
-    targets, in `packs` order. Returns (jobs, files) for the response."""
+    targets, in `packs` order. Returns (jobs, files) for the response. `on_pack_jobs(session, {project_item_id: quantity})`,
+    if given, runs inside the transaction that commits each pack's jobs (GH #227: a repack records its progress atomically)."""
     library = _projects.get_library_store()
     checked_ready = False
     # Pack output is staged under a throwaway folder and moved to its job-ID folder once the IDs are known; this store
@@ -501,6 +503,12 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             session.add(job)
             new_jobs.append(job)
             next_pos += 1.0
+        if on_pack_jobs is not None:
+            packed: dict[int, int] = {}
+            for qtys in plate_item_qtys[:len(effective_plates)]:
+                for item_id, qty in qtys.items():
+                    packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
+            await on_pack_jobs(session, packed)
         # Commit jobs so the DB assigns their autoincrement IDs.
         await session.commit()
         # Refresh each job so j.id is populated.

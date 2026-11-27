@@ -169,6 +169,8 @@ async def plate_cleared(
     """Mark the printer's bed as cleared so the queue engine can assign the next job. With `results` (BIZ-364), also record
     what printed on `job_id` (a project job this printer ran): failed parts are requeued in their print group, or held once
     they have failed on `part_retry_limit` different printers. No body = a plain clear (the QR / home-automation hook)."""
+    if body is not None and body.job_id is not None and await print_results.has_pending(session, body.job_id):
+        return await _resume_interrupted_requeue(printer_id, body.job_id, key, session)
     lock = print_start.lock_for(printer_id)
     if lock.locked():
         raise HTTPException(409, "Printer is busy. Confirm clearance once it is ready.")
@@ -189,6 +191,19 @@ async def plate_cleared(
         outcome["assumed"] = [{k: v for k, v in a.items() if k != "requeue"} for a in assumed]
     _printers.queue_engine.wake()
     return {"ok": True, **outcome}
+
+
+async def _resume_interrupted_requeue(printer_id: int, job_id: int, key, session: AsyncSession) -> dict:
+    """GH #227: this job's results (and the clear) were committed, but repacking its failed parts was interrupted. The
+    recorded results stand; a retry only finishes the repack — nothing is recorded or counted twice."""
+    if "jobs:write" not in (getattr(key, "scopes", None) or []):
+        raise HTTPException(403, "API key lacks required scope: jobs:write (reporting print results changes the job's project)")
+    job = await session.get(Job, job_id)
+    if job is None or job.assigned_printer_id != printer_id:
+        raise HTTPException(422, f"Job {job_id} did not print on this printer")
+    requeued = await print_results.requeue_reported(session, job)
+    _printers.queue_engine.wake()
+    return {"ok": True, **requeued}
 
 
 async def _save_plate_clear(printer_id: int, body: PlateResults | None, key, session: AsyncSession):
