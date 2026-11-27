@@ -126,6 +126,11 @@ async def lifespan(app: FastAPI):
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
+    try:     # GH #269: before the queue (and any generation) starts, so nothing is mid-staging
+        from .services import library_store, pack_staging
+        await pack_staging.sweep(SessionLocal, library_store.get_library_store(prune_empty=True))
+    except Exception:
+        logging.getLogger("app").exception("Sweeping stray staged pack files failed; continuing")
     await queue_engine.start()
 
     async def _resume_requeues() -> None:      # GH #227: failed parts whose repack an interruption cut short
