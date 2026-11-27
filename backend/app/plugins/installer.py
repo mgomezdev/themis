@@ -577,7 +577,9 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
             # changed the row (GH #247: an upgrade, its rollback, then another upgrade lost the running version), so trust the
             # loader; without a load report, a row still `pending_restart` has not run yet: it is what it recorded as previous.
             from . import loader               # the module, read at call time: load_installed rebinds `last_report`
-            running = loader.last_report.loaded.get(t.id)
+            # A plugin that failed to load at boot runs nothing; the version installed at boot is still the one to keep
+            # (GH #262) — not whatever a later upgrade/rollback chain left in the row.
+            running = loader.last_report.loaded.get(t.id) or loader.last_report.at_boot.get(t.id)
             if row is None:
                 previous = None
             elif running is not None:
