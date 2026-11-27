@@ -403,3 +403,22 @@ async def test_a_failure_after_success_was_recorded_does_not_undo_it(session_fac
     assert out.ok is True
     row = await _row(session_factory, pid)
     assert (row.configured, row.config_error) == (True, None)
+
+
+async def test_a_broadcast_failure_after_a_recorded_success_is_not_raised(session_factory, monkeypatch):
+    """GH #270: mark_configured's state broadcast runs after the success is recorded; its failure must be logged, not raised
+    (which would turn a configured printer into a failed connection test)."""
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+
+    calls = []
+
+    async def broadcast_boom(_event, _payload):
+        calls.append(_event)
+        raise RuntimeError("websocket gone")
+
+    monkeypatch.setattr(printer_manager, "_on_state_broadcast", broadcast_boom)
+    assert await printer_manager.mark_configured(pid, session_factory, broadcast=True) is True
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (True, None) and printer_manager.is_configured(pid)
+    assert calls == ["printer_configured"]
