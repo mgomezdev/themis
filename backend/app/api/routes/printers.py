@@ -868,9 +868,10 @@ async def _save_printer_edit(printer_id: int, body: PrinterUpdate, session: Asyn
         printer.waiver_stop_at = body.waiver_stop_at
     if topology_contents_changed:
         printer.topology_error = 'Filament contents changed; topology refresh required'
-        printer_manager._topology_invalid.add(printer.id)
     variant_touched = "nozzle_variant" in body.model_fields_set or old_model_uuid != printer.model_uuid
     await _save_printer(session, printer=printer if variant_touched else None)
+    if topology_contents_changed:                # GH #259: in-memory state follows the edit only once it is committed
+        printer_manager._topology_invalid.add(printer.id)
     return printer, retest, topology_contents_changed
 
 
