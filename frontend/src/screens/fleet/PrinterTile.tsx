@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { fmtTime } from '../../data/helpers';
-import { StatusPill, Progress, VideoTile, Swatch } from '../../components/ui';
+import { StatusPill, Progress, VideoTile, PrinterImage, Swatch } from '../../components/ui';
 import { Icons } from '../../components/icons';
 import { SEVERITY_COLOR } from '../../lib/severity';
 import type { Printer } from '../../data/types';
@@ -82,7 +82,7 @@ export function AlarmBadge({ printer: p }: { printer: Printer }) {
     : <a href={to} {...props}>{Icons.alert} {p.alarmCount}</a>;
 }
 
-export function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueRowsByPrinter }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]> }) {
+export function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueRowsByPrinter, media = 'camera' }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>; media?: 'camera' | 'image' }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease', ...cardCueStyle(p) }}>
@@ -102,13 +102,15 @@ export function PrinterTile({ printer: p, onClick, refetchFleet, snapshotInterva
       </div>
       <SetupIncompleteCard printer={p} refetchFleet={refetchFleet} />
       <div style={{ padding: '0 14px' }}>
-        <VideoTile
-          live={p.status !== 'offline'}
-          status={p.status}
-          printerId={p.id}
-          intervalMs={snapshotIntervalMs}
-          noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
-        />
+        {media === 'image'
+          ? <PrinterImage printerId={p.id} />
+          : <VideoTile
+              live={p.status !== 'offline'}
+              status={p.status}
+              printerId={p.id}
+              intervalMs={snapshotIntervalMs}
+              noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
+            />}
       </div>
       <div className="row between" style={{ padding: '12px 14px 10px' }}>
         <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>

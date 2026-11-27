@@ -126,7 +126,16 @@ async def lifespan(app: FastAPI):
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
+    try:     # GH #269: before the queue (and any generation) starts, so nothing is mid-staging
+        from .services import library_store, pack_staging
+        await pack_staging.sweep(SessionLocal, library_store.get_library_store(prune_empty=True))
+    except Exception:
+        logging.getLogger("app").exception("Sweeping stray staged pack files failed; continuing")
     await queue_engine.start()
+
+    from .services import print_results as _print_results
+    resume_requeues_task = asyncio.create_task(
+        _print_results.resume_pending_with_retries(SessionLocal, on_resumed=queue_engine.wake), name="resume-requeues")
 
     try:
         from .services.printer_model_registry import sync_registry
@@ -164,6 +173,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if not resume_requeues_task.done():
+        resume_requeues_task.cancel()
+        try:
+            await resume_requeues_task
+        except (asyncio.CancelledError, Exception):  # cancelled or failed: either way the stops below must still run
+            pass
     if warm_task is not None and not warm_task.done():
         warm_task.cancel()
         try:

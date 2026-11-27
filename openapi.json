@@ -790,7 +790,7 @@
           "customer"
         ],
         "summary": "Accept the quote",
-        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept.",
+        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept, or when the quote changed\n(price, visibility) while the acceptance was being recorded: the customer accepts only the price they read.",
         "operationId": "accept_quote_api_v1_customer_projects__project_id__quote_accept_post",
         "parameters": [
           {
@@ -815,6 +815,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "No visible quote, or the quote changed while it was being accepted"
           },
           "422": {
             "description": "Validation Error",
@@ -2244,6 +2247,9 @@
           "404": {
             "description": "Printer not found"
           },
+          "409": {
+            "description": "Printer is busy or the supplied job is not a finished project job"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -3377,6 +3383,49 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/image": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Printer model picture (from its plugin)",
+        "operationId": "printer_image_api_v1_printers__printer_id__image_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found, or its plugin declares no picture for the model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/topology/refresh": {
       "post": {
         "tags": [
@@ -3759,7 +3808,7 @@
             "description": "Unknown mapping"
           },
           "409": {
-            "description": "It is the default of a model with other variants, or a printer uses it"
+            "description": "It is the default of a model with other variants, a printer uses it, or it changed concurrently"
           },
           "422": {
             "description": "Validation Error",

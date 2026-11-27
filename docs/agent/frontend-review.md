@@ -43,6 +43,11 @@ overwrite the real value with the substituted default. If the backend has a genu
 state, it should be distinguishable in the response from a real, deliberately-empty saved value; don't
 collapse both to the same UI default.
 
+When an editable input mirrors a prop ("the server wins" on refresh), don't copy the prop in with
+`useEffect(() => setX(prop), [prop])`: that effect also runs on mount, possibly a task after the row
+first paints, and overwrites anything typed in between (BIZ-408). Reset the state while rendering when the
+prop's identity changes — `useSaved` in `components/PrintGroupsCard.tsx` is the pattern.
+
 ## 4. Type safety — real build, not `tsc --noEmit`
 
 `npx tsc --noEmit` checks nothing here (root `tsconfig.json` is references-only). Use `npm run build`

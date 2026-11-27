@@ -547,7 +547,16 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
                 raise InstallError(f"{t.id!r} is waiting to be uninstalled; restart Themis first")
             target = version_dir(t.id, t.version)
             if target.exists():
-                raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
+                # Compare folders, not strings: on a case-insensitive filesystem 1.0.0-RC1 is the recorded 1.0.0-rc1's folder.
+                kept = [v for v in ((row.version, row.previous_version) if row is not None else ()) if v]
+                if any(version_dir(t.id, v).exists() and target.samefile(version_dir(t.id, v)) for v in kept):
+                    raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
+                # No row records this version: a commit was interrupted between the move and the DB commit. The loader never
+                # loads it, so it is debris; clear it so the same release can be retried.
+                try:
+                    await asyncio.to_thread(shutil.rmtree, target)
+                except OSError as e:
+                    raise InstallError(f"could not clear the leftover folder of an interrupted install ({target}): {e}") from e
             info = await asyncio.to_thread(dry_run, staged.root, t)            # first time any of its code runs: after consent
             staged.migrations = tuple(info["migrations"])
             applied = {v for (v,) in (await session.execute(
@@ -563,10 +572,18 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
             (staged.root / INFO_FILE).write_text(json.dumps({"migrations": list(staged.migrations)}), encoding="utf-8")
             await asyncio.to_thread(shutil.move, str(staged.root), str(target))
             action = "plugin.install" if row is None else "plugin.upgrade"
-            # The version that is actually RUNNING is what a rollback must return to and what must not be deleted. A row
-            # still `pending_restart` has not run yet: the running one is whatever it recorded as `previous_version`.
+            # The version that is actually RUNNING is what a rollback must return to and what must not be deleted. This
+            # process knows it exactly: the loader recorded what it loaded at startup. Upgrades and rollbacks since then only
+            # changed the row (GH #247: an upgrade, its rollback, then another upgrade lost the running version), so trust the
+            # loader; without a load report, a row still `pending_restart` has not run yet: it is what it recorded as previous.
+            from . import loader               # the module, read at call time: load_installed rebinds `last_report`
+            # A plugin that failed to load at boot runs nothing; the version installed at boot is still the one to keep
+            # (GH #262) — not whatever a later upgrade/rollback chain left in the row.
+            running = loader.last_report.loaded.get(t.id) or loader.last_report.at_boot.get(t.id)
             if row is None:
                 previous = None
+            elif running is not None:
+                previous = running
             elif row.status == "pending_restart":
                 previous = row.previous_version
             else:

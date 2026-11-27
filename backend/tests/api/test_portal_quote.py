@@ -1,7 +1,11 @@
 """BIZ-185: customers see their quote, payments and balance in the portal — only when staff make the price
 visible, only their own, and never anything internal."""
+import asyncio
+
 import pytest
 from httpx import AsyncClient
+
+from app.api.routes import customer_portal
 
 
 async def _customer(client: AsyncClient, email="a@example.com") -> dict:
@@ -155,6 +159,81 @@ async def test_changing_the_price_after_acceptance_clears_the_acceptance(client)
     assert (q["price"], q["accepted_at"]) == (150.0, None)
 
 
+async def _accept_racing_a_staff_edit(client, monkeypatch, edit: dict, stage="planning"):
+    """Pause the customer's accept after it has read the project, commit a staff edit, then let the accept finish."""
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True, stage=stage)
+    h = await _login(client)
+    read, resume = asyncio.Event(), asyncio.Event()
+    own = customer_portal._own_project
+
+    async def pause_after_read(*args, **kwargs):
+        row = await own(*args, **kwargs)
+        read.set()
+        await resume.wait()
+        return row
+
+    monkeypatch.setattr(customer_portal, "_own_project", pause_after_read)
+    accepting = asyncio.create_task(client.post(f"/api/v1/customer/projects/{p['id']}/quote/accept", headers=h))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        assert (await client.patch(f"/api/v1/projects/{p['id']}", json=edit)).status_code == 200
+    finally:
+        resume.set()
+        accepted = await accepting
+    monkeypatch.undo()
+    return accepted, (await _mine(client, h, p["id"]))
+
+
+async def test_a_price_change_committed_during_acceptance_is_not_accepted(client, monkeypatch):
+    """GH #231: the accept read $100, staff changed it to $200, and the accept stamped the $200 quote as accepted."""
+    accepted, mine = await _accept_racing_a_staff_edit(client, monkeypatch, {"price": 200.0}, stage="draft")
+    assert accepted.status_code == 409, accepted.text
+    assert (mine["quote"]["price"], mine["quote"]["accepted_at"], mine["stage"]) == (200.0, None, "draft")
+
+
+async def test_hiding_the_quote_during_acceptance_refuses_it(client, monkeypatch):
+    accepted, mine = await _accept_racing_a_staff_edit(client, monkeypatch, {"price_visible": False})
+    assert accepted.status_code == 409, accepted.text
+    assert mine["quote"] is None
+
+
+async def test_an_acceptance_committed_while_staff_change_the_price_is_cleared(client, monkeypatch):
+    """GH #231, reverse order: the staff PATCH read the unaccepted $100 row, the customer accepted $100, then the PATCH wrote
+    $200 — the ORM saw no change to quote_accepted_at (None -> None) and left the acceptance on the new price."""
+    from app.api.routes import projects
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True)
+    h = await _login(client)
+    read, resume = asyncio.Event(), asyncio.Event()
+    load = projects._get_project_or_404
+
+    async def pause_after_read(*args, **kwargs):
+        row = await load(*args, **kwargs)
+        read.set()
+        await resume.wait()
+        return row
+
+    monkeypatch.setattr(projects, "_get_project_or_404", pause_after_read)
+    editing = asyncio.create_task(client.patch(f"/api/v1/projects/{p['id']}", json={"price": 200.0}))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        accepted = await client.post(f"/api/v1/customer/projects/{p['id']}/quote/accept", headers=h)
+        assert accepted.status_code == 200 and accepted.json()["quote"]["accepted_at"], accepted.text
+    finally:
+        resume.set()
+        edited = await editing
+    assert edited.status_code == 200, edited.text
+    q = (await _mine(client, h, p["id"]))["quote"]
+    assert (q["price"], q["accepted_at"]) == (200.0, None)
+
+
+async def test_an_unrelated_staff_edit_during_acceptance_does_not_block_it(client, monkeypatch):
+    accepted, mine = await _accept_racing_a_staff_edit(client, monkeypatch, {"notes": "packed"})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["quote"]["accepted_at"] == mine["quote"]["accepted_at"] is not None
+
+
 async def test_staff_see_the_flag_and_acceptance_on_the_project(client):
     c = await _customer(client)
     p = await _project(client, c["id"], visible=True)
@@ -172,3 +251,55 @@ async def test_the_public_share_page_never_exposes_money_even_when_the_quote_is_
     forbidden = {"price", "amount_paid", "payment_status", "price_visible", "quote", "quote_accepted_at",
                  "filament_cost_total", "customer_id"}
     assert not forbidden & set(public)
+
+
+async def _staff_edit_racing(client, monkeypatch, pid: int, mine: dict, during):
+    """Pause staff edit `mine` after it read the project, run `during` (other writes committing), then let it finish."""
+    from app.api.routes import projects
+    read, resume = asyncio.Event(), asyncio.Event()
+    load = projects._get_project_or_404
+
+    async def pause_first_read(*args, **kwargs):
+        row = await load(*args, **kwargs)
+        if not read.is_set():
+            read.set()
+            await resume.wait()
+        return row
+
+    monkeypatch.setattr(projects, "_get_project_or_404", pause_first_read)
+    editing = asyncio.create_task(client.patch(f"/api/v1/projects/{pid}", json=mine))
+    try:
+        await asyncio.wait_for(read.wait(), 5)
+        await during()
+    finally:
+        resume.set()
+        edited = await editing
+    monkeypatch.undo()
+    return edited
+
+
+async def test_a_price_set_explicitly_is_stored_even_when_a_concurrent_edit_changed_it(client, monkeypatch):
+    """GH #251: staff A loaded $100, staff B committed $150, then A saved $100 — the ORM saw no change and B's $150 stood."""
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True)
+
+    async def other_staff():
+        assert (await client.patch(f"/api/v1/projects/{p['id']}", json={"price": 150.0})).status_code == 200
+
+    edited = await _staff_edit_racing(client, monkeypatch, p["id"], {"price": 100.0}, other_staff)
+    assert edited.status_code == 200 and edited.json()["price"] == 100.0, edited.text
+    assert (await client.get(f"/api/v1/projects/{p['id']}")).json()["price"] == 100.0
+
+
+async def test_an_acceptance_of_a_concurrently_changed_price_is_cleared_when_staff_set_another(client, monkeypatch):
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=100, visible=True)
+    h = await _login(client)
+
+    async def change_and_accept():
+        assert (await client.patch(f"/api/v1/projects/{p['id']}", json={"price": 150.0})).status_code == 200
+        assert (await client.post(f"/api/v1/customer/projects/{p['id']}/quote/accept", headers=h)).status_code == 200
+
+    await _staff_edit_racing(client, monkeypatch, p["id"], {"price": 100.0}, change_and_accept)
+    q = (await _mine(client, h, p["id"]))["quote"]
+    assert (q["price"], q["accepted_at"]) == (100.0, None)        # the customer accepted $150, not this $100

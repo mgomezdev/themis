@@ -222,3 +222,203 @@ async def test_test_unsaved_failure_carries_hint(monkeypatch):
     monkeypatch.setattr(printer_setup, "create_client_from_config", lambda *a: _FakeClient(False, ("10.0.0.9", 8883)))
     out = await printer_setup.test_unsaved("bambu", {"ip_address": "10.0.0.9"})
     assert out.ok is False and out.reachable is False and "Couldn't reach" in out.error
+
+
+async def test_a_probe_of_since_edited_credentials_cannot_mark_the_printer_configured(client, session_factory, monkeypatch):
+    """GH #229: a test of the old access code succeeded after a PATCH changed it, and marked the new, untested code configured.
+    The late result is dropped; the replacement test of the new settings decides."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())             # the PATCH's own retest is driven by hand below
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    updated = {**_FULL, "access_code": "new-code"}
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": updated})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.connection_config, row.configured) == (updated, False)
+    assert printer_manager.is_configured(pid) is False
+
+    async def new_probe(_client, _timeout):
+        return True
+
+    monkeypatch.setattr(printer_setup, "wait_connected", new_probe)
+    assert (await printer_setup.evaluate(pid, session_factory)).ok is True      # the test of the new settings still counts
+    assert (await _row(session_factory, pid)).configured is True
+
+
+async def test_a_late_failure_of_since_edited_credentials_leaves_no_stale_error(client, session_factory, monkeypatch):
+    """GH #229, failure side: the old probe's hint about the old credentials must not land on the new, untested config."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False, ("10.0.0.9", 8883)))
+    monkeypatch.setattr(printer_setup, "_probe", lambda host, port: True)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        return False
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (False, None)
+
+
+async def test_an_exception_in_a_test_of_since_edited_credentials_leaves_no_stale_error(client, session_factory, monkeypatch):
+    """GH #250: the exception path wrote its error onto whatever config was current, i.e. onto an edit made during the test."""
+    import asyncio
+    from unittest.mock import Mock
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr(printer_manager, "_clients", {})
+    monkeypatch.setattr(printer_manager, "_unconfigured", set())
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_probe(_client, _timeout):
+        entered.set()
+        await release.wait()
+        raise RuntimeError("socket blew up")
+
+    monkeypatch.setattr(printer_setup, "wait_connected", old_probe)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (False, None)
+
+
+async def test_an_exception_in_a_test_of_unchanged_settings_is_still_recorded(session_factory, monkeypatch):
+    pid = await _saved(session_factory, _FULL)
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: _FakeClient(False))
+
+    async def boom(_client, _timeout):
+        raise RuntimeError("socket blew up")
+
+    monkeypatch.setattr(printer_setup, "wait_connected", boom)
+    out = await printer_setup.evaluate(pid, session_factory)
+    assert out == printer_setup.TestOutcome(False, "socket blew up", None)
+    assert (await _row(session_factory, pid)).config_error == "socket blew up"
+
+
+async def test_a_disabled_printers_test_of_since_edited_credentials_is_dropped(client, session_factory, monkeypatch):
+    """GH #260: the disabled-printer path wrote its throwaway test's result with no check, so a result for the old
+    credentials landed on an edit made during the test."""
+    import asyncio
+    from unittest.mock import Mock
+    pid = await _saved(session_factory, _FULL, enabled=False)
+    monkeypatch.setattr(printer_setup, "schedule", Mock())
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def old_credentials_test(_plugin, _cfg):
+        entered.set()
+        await release.wait()
+        return printer_setup.TestOutcome(True, None, True)
+
+    monkeypatch.setattr(printer_setup, "test_unsaved", old_credentials_test)
+    old_test = asyncio.create_task(printer_setup.evaluate(pid, session_factory))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        edited = await client.patch(f"/api/v1/printers/{pid}", json={"connection_config": {**_FULL, "access_code": "new"}})
+        assert edited.status_code == 200, edited.text
+    finally:
+        release.set()
+        late = await old_test
+    assert late.ok is False and "changed during the test" in late.error
+    assert (await _row(session_factory, pid)).configured is False
+
+
+async def test_a_disabled_printers_test_of_unchanged_settings_is_recorded(session_factory, monkeypatch):
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL, enabled=False)
+
+    async def ok(_plugin, _cfg):
+        return printer_setup.TestOutcome(True, None, True)
+
+    monkeypatch.setattr(printer_setup, "test_unsaved", ok)
+    assert (await printer_setup.evaluate(pid, session_factory)).ok is True
+    assert (await _row(session_factory, pid)).configured is True and printer_manager.is_configured(pid)
+
+
+async def test_a_failure_after_success_was_recorded_does_not_undo_it(session_factory, monkeypatch):
+    """GH #260: the topology refresh that follows a recorded success raised, and the test's exception path then marked the
+    printer that had just connected fine as unconfigured with that unrelated error."""
+    from app.services.abstract_printer_client import AbstractPrinterClient
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+
+    class _Connects(_FakeClient):                 # a real printer client as far as the manager can tell
+        pass
+
+    AbstractPrinterClient.register(_Connects)
+    fake = _Connects(True)
+    fake.connected = True
+    monkeypatch.setattr("app.services.printer_client_factory.create_client", lambda _p: fake)
+
+    async def topology_boom(_pid):
+        raise RuntimeError("topology refresh failed")
+
+    monkeypatch.setattr(printer_manager, "on_topology_change", topology_boom)
+    out = await printer_setup.evaluate(pid, session_factory)
+    assert out.ok is True
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (True, None)
+
+
+async def test_a_broadcast_failure_after_a_recorded_success_is_not_raised(session_factory, monkeypatch):
+    """GH #270: mark_configured's state broadcast runs after the success is recorded; its failure must be logged, not raised
+    (which would turn a configured printer into a failed connection test)."""
+    from app.services.printer_manager import printer_manager
+    pid = await _saved(session_factory, _FULL)
+
+    calls = []
+
+    async def broadcast_boom(_event, _payload):
+        calls.append(_event)
+        raise RuntimeError("websocket gone")
+
+    monkeypatch.setattr(printer_manager, "_on_state_broadcast", broadcast_boom)
+    assert await printer_manager.mark_configured(pid, session_factory, broadcast=True) is True
+    row = await _row(session_factory, pid)
+    assert (row.configured, row.config_error) == (True, None) and printer_manager.is_configured(pid)
+    assert calls == ["printer_configured"]

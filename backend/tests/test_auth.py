@@ -25,6 +25,10 @@ def _make_app() -> FastAPI:
     async def protected() -> dict:
         return {"ok": True}
 
+    @app.get("/printers/{id}/image", dependencies=[Depends(require_scope("printers:read"))])
+    async def printer_image(id: str) -> dict:
+        return {"ok": True}
+
     @app.get("/printers/{id}/snapshot", dependencies=[Depends(require_scope("printers:read"))])
     async def printer_snapshot(id: str) -> dict:
         return {"ok": True}
@@ -124,6 +128,14 @@ async def test_key_via_query_param(env):
     resp = await client.get(f"/printers/printer1/snapshot?key={raw}")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+async def test_key_via_query_param_on_printer_image(env):
+    client, seed_key, _factory = env
+    raw = await seed_key(["printers:read"])
+    # the Fleet card's <img src=".../image?key=..."> can't send headers (BIZ-406)
+    assert (await client.get(f"/printers/printer1/image?key={raw}")).status_code == 200
+    assert (await client.get("/printers/printer1/image")).status_code == 401
 
 
 async def test_key_via_query_param_not_allowed_on_generic_route(env):

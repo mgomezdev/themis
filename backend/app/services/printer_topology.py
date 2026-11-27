@@ -1,14 +1,15 @@
 """Shared topology/dispatch synchronization and neutral validation."""
 import asyncio
+from weakref import WeakValueDictionary
 from sqlalchemy import select
 from ..models import Printer, JobPrinterConfig, Job
 
-_locks: dict[int, asyncio.Lock] = {}
+_locks: WeakValueDictionary[tuple[asyncio.AbstractEventLoop, int], asyncio.Lock] = WeakValueDictionary()
 _refresh_generations: dict[int, int] = {}
 
 
 def lock_for(printer_id: int) -> asyncio.Lock:
-    return _locks.setdefault(printer_id, asyncio.Lock())
+    return _locks.setdefault((asyncio.get_running_loop(), printer_id), asyncio.Lock())
 
 
 async def check_device(session, printer_id: int):
@@ -46,6 +47,7 @@ async def check_assignment(session, job_id: int, printer_id: int):
     job = await session.get(Job, job_id)
     if job is None or job.status != 'uploading' or job.assigned_printer_id != printer_id:
         raise ValueError('Print assignment was cancelled or changed')
+    return printer
 
 
 

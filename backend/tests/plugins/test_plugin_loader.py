@@ -188,3 +188,12 @@ async def test_reconcile_records_active_error_and_removes_deleted_rows(env, sess
     async with session_factory() as s:
         rows = {r.plugin_id: (r.status, r.error) for r in (await s.execute(select(InstalledPlugin))).scalars()}
     assert rows == {"ok_one": ("active", None), "bad_one": ("error", "ImportError: x"), "mig_one": ("error", "migration v1 failed")}
+
+
+def test_the_report_records_the_boot_version_of_a_plugin_that_failed_to_load(env):
+    """GH #262: the installer needs the version installed at boot even when its code did not load."""
+    env.put(pb.files("good_one", "1.0.0"))
+    env.put(pb.files("broke_one", "2.1.0", code="raise ImportError('x')"))
+    report = env.load()
+    assert "broke_one" in report.errors and "broke_one" not in report.loaded
+    assert report.at_boot == {"good_one": "1.0.0", "broke_one": "2.1.0"}

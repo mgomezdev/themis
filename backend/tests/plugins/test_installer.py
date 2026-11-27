@@ -248,9 +248,7 @@ async def _install(session_factory, version="1.0.0", **kw):
 
 async def test_upgrade_keeps_the_running_version_and_prunes_the_rest(data_dir, session_factory):
     await _install(session_factory, "1.0.0")
-    async with session_factory() as s:                                     # the restart happened: 1.0.0 is running
-        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
-        await s.commit()
+    await _started(session_factory)                                        # the restart happened: 1.0.0 is running
     row = await _install(session_factory, "1.1.0")
     assert (row.version, row.previous_version, row.status) == ("1.1.0", "1.0.0", "pending_restart")
     # a second upgrade BEFORE the restart: 1.1.0 never ran, so the running 1.0.0 must stay (code it imported, rollback target)
@@ -259,8 +257,7 @@ async def test_upgrade_keeps_the_running_version_and_prunes_the_rest(data_dir, s
     assert sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir()) == ["1.0.0", "1.2.0"]
     async with session_factory() as s:
         assert [r.action for r in (await s.execute(select(AuditLog))).scalars()] == ["plugin.install", "plugin.upgrade", "plugin.upgrade"]
-        (await s.get(InstalledPlugin, "acme_inv")).status = "active"       # restarted again
-        await s.commit()
+    await _started(session_factory)                                        # restarted again: 1.2.0 runs
     row = await _install(session_factory, "1.3.0")
     assert (row.previous_version, sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir())) == ("1.2.0", ["1.2.0", "1.3.0"])
 
@@ -339,6 +336,42 @@ async def test_same_version_is_refused_and_leaves_the_original_intact(data_dir, 
         assert (await s.get(InstalledPlugin, "acme_inv")).name == "Acme inventory"
 
 
+async def test_an_upgrade_interrupted_after_the_move_can_be_retried(data_dir, session_factory):
+    """GH #230: a crash between moving the package into its version folder and committing the row left that folder behind;
+    the recorded version still loads, but retrying the same release was refused as "already installed"."""
+    import shutil
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.0.0")), session_factory)
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
+    new = pb.make_zip(pb.files("acme_inv", version="1.1.0", name="Acme v1.1"))
+    debris = await stage(new)                                    # durable state at the crash: moved, row unchanged
+    (debris.root / installer.INFO_FILE).write_text('{"migrations": []}', encoding="utf-8")
+    (debris.root / "stale-marker").write_text("from the interrupted attempt", encoding="utf-8")
+    shutil.move(debris.root, installer.version_dir("acme_inv", "1.1.0"))
+
+    row = await stage_commit(new, session_factory)
+    assert (row.version, row.previous_version, row.status, row.name) == ("1.1.0", "1.0.0", "pending_restart", "Acme v1.1")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()           # the running version is untouched
+    installed = installer.version_dir("acme_inv", "1.1.0")
+    # the retry's package replaced the debris (not nested inside it, which a move into an existing folder would do)
+    assert not (installed / "stale-marker").exists() and (installed / "themis-plugin.toml").is_file()
+    assert [p.name for p in installed.iterdir() if p.is_dir()] == ["acme_inv"]
+
+
+async def test_the_running_version_folder_is_never_treated_as_debris(data_dir, session_factory):
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.0.0")), session_factory)
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
+    await stage_commit(pb.make_zip(pb.files("acme_inv", version="1.1.0")), session_factory)   # 1.0.0 is now previous_version
+    staged = await stage(pb.make_zip(pb.files("acme_inv", version="1.0.0", name="Changed")))
+    async with session_factory() as s:
+        with pytest.raises(InstallError, match="already installed"):
+            await installer.commit(s, staged.token, actor="a")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()
+
+
 async def test_commit_rejects_unknown_tokens_and_a_mismatched_expected_id(data_dir, session_factory):
     async with session_factory() as s:
         for bad in ("nope", "../../etc", "0" * 32):
@@ -350,9 +383,13 @@ async def test_commit_rejects_unknown_tokens_and_a_mismatched_expected_id(data_d
 
 
 async def _started(session_factory, plugin_id="acme_inv"):
-    """The restart happened: the installed version is running (so an upgrade keeps it as the rollback target)."""
+    """The restart happened: the installed version is running (so an upgrade keeps it as the rollback target) and the loader
+    reports it as what this process loaded."""
+    from app.plugins import loader
     async with session_factory() as s:
-        (await s.get(InstalledPlugin, plugin_id)).status = "active"
+        row = await s.get(InstalledPlugin, plugin_id)
+        row.status = "active"
+        loader.last_report.loaded[plugin_id] = row.version
         await s.commit()
 
 
@@ -493,3 +530,37 @@ async def test_only_github_plugins_check_for_updates(data_dir, session_factory):
     row = await _install(session_factory)
     with pytest.raises(InstallError, match="only plugins installed from GitHub"):
         await installer.check_update(row)
+
+
+async def test_an_upgrade_after_rolling_back_a_pending_upgrade_keeps_the_running_version(data_dir, session_factory, monkeypatch):
+    """GH #247: 1.0 runs; upgrade to 1.1 (pending), roll back (still pending), upgrade to 1.2. The row then said previous=1.1,
+    and the prune deleted the running 1.0 folder."""
+    await _install(session_factory, "1.0.0")
+    await _started(session_factory)
+    await _install(session_factory, "1.1.0")
+    async with session_factory() as s:
+        await installer.rollback(s, "acme_inv", actor="a")
+    row = await _install(session_factory, "1.2.0")
+    assert (row.version, row.previous_version, row.status) == ("1.2.0", "1.0.0", "pending_restart")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir()                 # still on disk: it is what is running
+    assert not installer.version_dir("acme_inv", "1.1.0").exists()             # never ran: pruned
+    async with session_factory() as s:
+        assert (await installer.rollback(s, "acme_inv", actor="a")).version == "1.0.0"
+
+
+async def test_a_plugin_that_failed_to_load_keeps_its_boot_version_through_an_upgrade_rollback_upgrade(data_dir, session_factory):
+    """GH #262: a plugin that failed to load at boot is not in the loader's `loaded`, so the row rule applied and the same
+    upgrade → rollback → upgrade chain made a never-run version the rollback target and pruned the installed one."""
+    from app.plugins import loader
+    await _install(session_factory, "1.0.0")
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, "acme_inv")).status = "error"            # booted, but its code failed to load
+        await s.commit()
+    loader.last_report.at_boot["acme_inv"] = "1.0.0"
+    loader.last_report.errors["acme_inv"] = "ImportError: x"
+    await _install(session_factory, "1.1.0")
+    async with session_factory() as s:
+        await installer.rollback(s, "acme_inv", actor="a")
+    row = await _install(session_factory, "1.2.0")
+    assert (row.version, row.previous_version) == ("1.2.0", "1.0.0")
+    assert installer.version_dir("acme_inv", "1.0.0").is_dir() and not installer.version_dir("acme_inv", "1.1.0").exists()

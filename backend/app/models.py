@@ -759,6 +759,9 @@ class JobItemFailure(Base):
     printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     resolution: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # GH #227: failed quantity recorded as "requeued" but not yet repacked (0 once its replacement jobs are queued or it is
+    # held). Committed with the results; each repacked pack decrements it in the transaction that queues the pack's jobs.
+    requeue_pending: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class MaintenanceItem(Base):
@@ -1068,6 +1071,8 @@ class IdempotencyKey(Base):
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
+    # GH #246: the request that holds an in-progress claim (a takeover replaces it); only that request may finish it.
+    claim_token: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
 

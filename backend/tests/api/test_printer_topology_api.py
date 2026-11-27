@@ -266,3 +266,28 @@ async def test_finishing_one_refresh_cannot_clear_a_later_pending_refresh(client
     first_result, problem, second_result = await asyncio.gather(first, dispatch, second)
     assert first_result.status_code == second_result.status_code == 200
     assert problem is not None and 'pending' in problem
+
+
+async def test_a_refused_filament_edit_leaves_the_printer_dispatchable(client, new_printer, session_factory, monkeypatch):
+    """GH #259: the edit marked the topology invalid in memory before its save; a save refused after that (an ownership
+    conflict, a nozzle mapping removed meanwhile) rolled the edit back but left the printer undispatchable in memory."""
+    from fastapi import HTTPException
+    from app.api.routes import printers as printer_routes
+    pid = await new_printer()
+    live = MagicMock(connected=True)
+    live.refresh_topology.side_effect = lambda cfg: snapshot()
+    printer_manager.register_client(pid, live)
+    printer_manager.set_session_factory(session_factory)
+    assert (await client.post(f'/api/v1/printers/{pid}/topology/refresh', json={})).status_code == 200
+    assert pid not in printer_manager._topology_invalid
+
+    async def refused(session, **_kw):
+        await session.rollback()
+        raise HTTPException(409, "This printer is already owned by another binding")
+
+    monkeypatch.setattr(printer_routes, "_save_printer", refused)
+    r = await client.patch(f'/api/v1/printers/{pid}', json={'loaded_filaments': [{'slot': 0, 'position_id': 'S0', 'type': 'PETG'}]})
+    assert r.status_code == 409, r.text
+    assert pid not in printer_manager._topology_invalid
+    async with session_factory() as s:
+        assert (await s.get(Printer, pid)).topology_error is None

@@ -321,6 +321,3 @@ async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: Asyn
     client = _printers._get_connected_client(printer_id)
     _require_capability(client, "chamber_temp", "a chamber setpoint")
     return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
-
-
-_direct_start_locks: dict[tuple[int, int], asyncio.Lock] = {}     # keyed by (event loop, printer)

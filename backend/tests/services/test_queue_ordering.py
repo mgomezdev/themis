@@ -27,6 +27,7 @@ class World:
         self.mgr._clients = {}  # reconcile looks clients up here; none registered = 'printing' jobs are left alone
         self.mgr.get_all_printer_ids.side_effect = lambda: sorted(self.online)
         self.mgr.is_printer_ready.side_effect = lambda pid: pid in self.online
+        self.mgr.is_awaiting_plate_clear.return_value = False
         client = MagicMock()
         client.file_upload_supported = False
         client.start_print.return_value = True

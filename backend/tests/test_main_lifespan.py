@@ -225,3 +225,16 @@ async def test_a_warmup_still_polling_at_shutdown_is_cancelled_and_the_services_
     boot.inventory_stop.assert_awaited_once()                    # and shutdown carried on past it
     boot.engine_stop.assert_awaited_once()
     boot.plugin_stop.assert_awaited_once()
+
+
+async def test_startup_sweeps_stray_staged_pack_files(boot, session_factory, tmp_path):
+    """GH #269: a pack staged by a process that died before its jobs committed is removed at boot; a moved pack is kept."""
+    library = tmp_path / "data" / "library"
+    stray = library / "Job Pack 3MFs" / "_tmp_dead" / "p.3mf"
+    kept = library / "Job Pack 3MFs" / "12" / "p.3mf"
+    for path in (stray, kept):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pk")
+    (library / ".legacy_migrated").touch()
+    async with main.lifespan(main.app):
+        assert not stray.exists() and kept.is_file()

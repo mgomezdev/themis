@@ -45,7 +45,7 @@ project_groups      (project_id CASCADE; one is_default per project; v059) ← p
 project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)
 project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,
                        created_at — non-3D-printed hardware for the assembly, e.g. magnets/screws)
-job_item_failures   (+ v060: printer_id plain int, created_at, resolution printed|requeued|held|reprinted|dropped = the project failure log, BIZ-364; project_items.quantity_held; queue_config.part_retry_limit default 2)
+job_item_failures   (+ v060: printer_id plain int, created_at, resolution printed|requeued|held|reprinted|dropped = the project failure log, BIZ-364; project_items.quantity_held; queue_config.part_retry_limit default 2; + v083 requeue_pending = failed qty committed with the results but not yet repacked — each pack decrements it in the transaction that queues its jobs; a retry of the report or the startup sweep `print_results.resume_pending` finishes it, GH #227)
 maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_maintenance_state.maintenance_item_id
 maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
 printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))
@@ -594,7 +594,7 @@ already `complete` when v046 ran are backfilled to 1 (the old inline path counte
 ### projects.external_ref, idempotency_keys, webhook_destinations  (v047 — BIZ-172)
 
 `projects.external_ref VARCHAR(255)` + partial unique index `ux_projects_source_external_ref (source_app, external_ref) WHERE external_ref IS NOT NULL`.
-`idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
+`idempotency_keys{id, scope, key, request_hash, state in_progress|done|partial, status_code, response JSON, created_at, claim_token (v084, GH #246)}` unique `(scope, key)`. `claim_token` names the request holding an in-progress claim (a stale takeover replaces it); `release` only frees the caller's own claim (`idempotency.new_owner()`); `complete` / `partial` apply while the key is in progress, whoever finishes first (committed work outranks a running claim).
 `webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
 v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).
 

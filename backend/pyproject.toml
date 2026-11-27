@@ -57,7 +57,7 @@ where = ["."]
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["plugins/*/themis-plugin.toml", "plugins/*/defaults.toml"]
+app = ["plugins/*/themis-plugin.toml", "plugins/*/defaults.toml", "plugins/*/images/*.png"]
 
 # Lint: pyflakes + pycodestyle errors (ruff's default set), plus three rules that each caught a real defect here:
 # RUF006 (an unreferenced asyncio task can be garbage-collected mid-run), B017 (`pytest.raises(Exception)` passes on any

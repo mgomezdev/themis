@@ -17,14 +17,15 @@ from pathlib import Path
 from typing import Literal, Optional
 from fastapi import Depends, Header, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ._filament_ask import row_tuple, tuple_columns
 from ...services.filament_tuple import FilamentTuple
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectGroup, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
-from ...services import idempotency, model_targets, print_results, project_events, project_groups, slice_cache, bed_requirement
+from ...services import idempotency, model_targets, pack_staging, print_results, project_events, project_groups, slice_cache, bed_requirement
 from ...services.three_mf_parser import plate_numbers
 from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_scanner import (
@@ -70,7 +71,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
-PACK_FOLDER = "Job Pack 3MFs"
+PACK_FOLDER = pack_staging.PACK_FOLDER
 
 
 async def _stored(store: ArtifactStore, key: str) -> bool:
@@ -238,22 +239,45 @@ async def generate_project(
     (`Idempotent-Replay: true`) and creates no further files or jobs."""
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = f"POST /api/v1/projects/{project_id}/generate"
+    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
+    owner = idempotency.new_owner()
     if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()))
+        async def committed_since(baseline: dict) -> str | None:
+            # A stale claim whose first attempt already committed jobs must not generate them again (GH #225).
+            created = await _job_count(factory, project_id) - baseline.get("jobs_before", jobs_before)
+            return (f"An earlier request with this Idempotency-Key created {created} job(s) for project {project_id}: check the "
+                    "project's jobs, then retry with a new Idempotency-Key") if created > 0 else None
+
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()),
+                                         baseline={"jobs_before": jobs_before}, committed_since=committed_since,
+                                         owner=owner)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
-    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
+    record_pack = None
+    if idempotency_key:
+        packs_done = {"n": 0}
+
+        async def record_pack(sess: AsyncSession, _packed: dict) -> None:
+            # GH #258: each pack's jobs commit with a note on the key, so a stale takeover re-checks progress made after
+            # it read the claim, and a request whose claim was taken over (409 here) rolls this pack back.
+            await idempotency.note_progress(sess, scope, idempotency_key, owner,
+                                            {"jobs_before": jobs_before, "packs_committed": packs_done["n"] + 1})
+            packs_done["n"] += 1
+
     try:
-        result = await _generate_project(project_id, body, session)
+        result = await _generate_project(project_id, body, session, on_pack_jobs=record_pack)
     except BaseException:
         if idempotency_key:
-            created = await _job_count(factory, project_id) - jobs_before
+            await session.rollback()   # release the request's own write transaction (a refused pack) before the key's own
+            # This request's own committed packs, not the project's job count: after a takeover that count includes the
+            # retry's jobs, and a request that committed nothing must not mark the retry's key partial.
+            created = await _job_count(factory, project_id) - jobs_before if packs_done["n"] else 0
             if created > 0:       # some groups were committed: a retry under this key would generate them again
                 await idempotency.partial(factory, scope, idempotency_key, f"This request created {created} job(s) for project {project_id} "
                                           "before it failed: check the project's jobs, then retry with a new Idempotency-Key")
             else:
-                await idempotency.release(factory, scope, idempotency_key)
+                await idempotency.release(factory, scope, idempotency_key, owner=owner)
         raise
     if idempotency_key:
         await _remember(factory, scope, idempotency_key, 200, result)
@@ -386,10 +410,63 @@ async def _plan_group_packs(session: AsyncSession, pgroup: ProjectGroup, pg_item
     return packs, out, [p for p, _ in resolved.printers]
 
 
+async def _move_pack_best_effort(session: AsyncSession, pack_store, new_file: UploadedFile, tmp_key: str, final_key: str,
+                                 folder: str, project_id: int) -> None:
+    """Move a committed pack from its staging key to its job-ID folder (GH #261). The jobs are already committed and the file
+    is valid where it is, so a failure is logged, never raised: the pack's remaining steps still run. The row is updated in
+    its own short session, so the caller's session is never rolled back (that would expire everything it still uses); if
+    that update fails after the move, the file is moved back so the row and the disk always agree."""
+    try:
+        moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+    except Exception:
+        logger.exception("project %s: moving pack %s to %s failed; it stays at %s", project_id, new_file.id, final_key, tmp_key)
+        return
+    try:
+        async with async_sessionmaker(session.bind, expire_on_commit=False)() as side:
+            await side.execute(update(UploadedFile).where(UploadedFile.id == new_file.id)
+                               .values(relative_path=moved.key, mtime=moved.mtime, folder=folder))
+            await side.commit()
+    except Exception:
+        logger.exception("project %s: recording the move of pack %s failed; moving it back to %s", project_id, new_file.id, tmp_key)
+        try:
+            await asyncio.to_thread(pack_store.move, moved.key, tmp_key)
+        except Exception:
+            logger.exception("project %s: pack %s is at %s but recorded at %s; a library scan re-links it", project_id,
+                             new_file.id, moved.key, tmp_key)
+        return
+    for attr, value in (("relative_path", moved.key), ("mtime", moved.mtime), ("folder", folder)):
+        set_committed_value(new_file, attr, value)
+
+
 async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
-                      save_slice: bool, artifact_cleanup: list[str] | None = None) -> tuple[list[dict], list[dict]]:
+                      save_slice: bool, artifact_cleanup: list[str] | None = None,
+                      on_pack_jobs=None) -> tuple[list[dict], list[dict]]:
     """Build (or reuse) each planned pack, store it, and queue one job per plate with the pack's printer configs and model
-    targets, in `packs` order. Returns (jobs, files) for the response."""
+    targets, in `packs` order. Returns (jobs, files) for the response. `on_pack_jobs(session, {project_item_id: quantity})`,
+    if given, runs inside the transaction that commits each pack's jobs (GH #227: a repack records its progress atomically).
+    A pack staged but whose jobs never commit is discarded (GH #269) unless something references it."""
+    staged: list = []          # [tmp_key, file_id or None] of the pack staged but whose jobs are not committed yet
+    try:
+        return await _queue_packs_unguarded(session, proj, packs, constructor, allow_cached=allow_cached,
+                                            save_slice=save_slice, artifact_cleanup=artifact_cleanup,
+                                            on_pack_jobs=on_pack_jobs, staged=staged)
+    except BaseException:
+        # Not shielded: a cancellation that lands in this cleanup skips it, and the startup sweep removes the pack instead.
+        # The slicer-send path is one atomic transaction: its row rolls back and `artifact_cleanup` removes the file.
+        if staged and not session.info.get("slicer_transaction"):
+            try:
+                await session.rollback()        # release this session's write lock before the side session deletes
+                await pack_staging.discard_if_unreferenced(async_sessionmaker(session.bind, expire_on_commit=False),
+                                                           _projects.get_library_store(prune_empty=True), *staged)
+            except Exception:
+                logger.exception("project %s: could not discard staged pack %s; a startup sweep removes it", proj.id,
+                                 staged[0])
+        raise
+
+
+async def _queue_packs_unguarded(session: AsyncSession, proj: Project, packs: list[dict], constructor, *, allow_cached: bool,
+                                 save_slice: bool, artifact_cleanup: list[str] | None, on_pack_jobs,
+                                 staged: list) -> tuple[list[dict], list[dict]]:
     library = _projects.get_library_store()
     checked_ready = False
     # Pack output is staged under a throwaway folder and moved to its job-ID folder once the IDs are known; this store
@@ -433,8 +510,9 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 label = _filament_label(ask)
                 out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
                 # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-                tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
+                tmp_key = f"{pack_staging.STAGING_PREFIX}{_uuid.uuid4().hex[:10]}/{out_filename}"
                 published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
+                staged[:] = [tmp_key, None]
                 if artifact_cleanup is not None:
                     artifact_cleanup.append(tmp_key)
                 # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
@@ -453,11 +531,14 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                     content_hash=pack_hash,
                     mtime=published.mtime,
                     missing=False,
-                    pack_recipe_hash=recipe_hash,
+                    # Set with its jobs' commit, not here: a staged pack is not offered for reuse (GH #269), so discarding
+                    # it when its own pack fails can never pull it from under a concurrent generation.
+                    pack_recipe_hash=None,
                 )
                 session.add(new_file)
                 await session.commit()
                 await session.refresh(new_file)
+                staged[1] = new_file.id
                 slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
                                       pack_content_hash=pack_hash)
 
@@ -494,39 +575,9 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
             session.add(job)
             new_jobs.append(job)
             next_pos += 1.0
-        # Commit jobs so the DB assigns their autoincrement IDs.
-        await session.commit()
-        # Refresh each job so j.id is populated.
-        for j in new_jobs:
-            await session.refresh(j)
-
-        if reused is None:
-            # Rename temp dir to the job-ID subfolder now that IDs are known.
-            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
-            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
-            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
-            if artifact_cleanup is not None:
-                artifact_cleanup[-1] = moved.key
-            new_file.relative_path = moved.key
-            new_file.mtime = moved.mtime
-            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
-            await session.commit()
-
-        if fixed is None:
-            cached_plates = (await session.execute(
-                select(func.count(func.distinct(SlicedVersion.plate_number)))
-                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
-                .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
-            )).scalar() or 0
-            files_out.append({
-                "id": new_file.id,
-                "original_filename": new_file.original_filename,
-                "folder": new_file.folder,
-                "plate_count": len(plate_nums),
-                # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
-                "pack_reused": reused is not None,
-                "cached_plates": cached_plates,
-            })
+        # Flush, not commit: the jobs get their IDs, and they commit together with their configs/targets below, so a crash
+        # can never leave a job with no printer configs (which nothing would ever dispatch).
+        await session.flush()
 
         # Create printer configs for each of the group's eligible printers × job, each with its target's process profile
         # ("" = the printer's own default, BIZ-358). The machine preset is deliberately NOT set here — queue_engine reads it
@@ -560,7 +611,49 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
                 ))
             await session.flush()
             await model_targets.materialize_job(session, j.id)
+        if on_pack_jobs is not None:
+            packed: dict[int, int] = {}
+            for qtys in plate_item_qtys[:len(effective_plates)]:
+                for item_id, qty in qtys.items():
+                    packed[int(item_id)] = packed.get(int(item_id), 0) + int(qty)
+            await on_pack_jobs(session, packed)
+        if reused is None and fixed is None:
+            new_file.pack_recipe_hash = recipe_hash
         await session.commit()
+        staged.clear()                 # its jobs reference it now: never discarded
+
+        if reused is None:
+            # Rename temp dir to the job-ID subfolder now that IDs are known.
+            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
+            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
+            if session.info.get("slicer_transaction"):
+                # One atomic send: a failure here must fail the whole send (its handler rolls back and cleans up).
+                moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+                if artifact_cleanup is not None:
+                    artifact_cleanup[-1] = moved.key
+                new_file.relative_path, new_file.mtime = moved.key, moved.mtime
+                new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
+                await session.commit()
+            else:
+                await _move_pack_best_effort(session, pack_store, new_file, tmp_key, final_key, f"/{PACK_FOLDER}/{job_id_label}",
+                                             proj.id)
+
+        if fixed is None:
+            cached_plates = (await session.execute(
+                select(func.count(func.distinct(SlicedVersion.plate_number)))
+                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+                .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
+            )).scalar() or 0
+            files_out.append({
+                "id": new_file.id,
+                "original_filename": new_file.original_filename,
+                "folder": new_file.folder,
+                "plate_count": len(plate_nums),
+                # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
+                "pack_reused": reused is not None,
+                "cached_plates": cached_plates,
+            })
+
 
         # Trigger estimates for each new job if enabled.
         queue_cfg = await session.get(QueueConfig, 1)
@@ -585,7 +678,7 @@ async def _queue_packs(session: AsyncSession, proj: Project, packs: list[dict], 
     return jobs_out, files_out
 
 
-async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession) -> dict:
+async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession, *, on_pack_jobs=None) -> dict:
     proj = await _get_project_or_404(project_id, session)
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
@@ -678,7 +771,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         proj.result_file_id = None
         await session.commit()
 
-    jobs_out, files_out = await _queue_packs(session, proj, packs, constructor,
+    jobs_out, files_out = await _queue_packs(session, proj, packs, constructor, on_pack_jobs=on_pack_jobs,
                                              allow_cached=body.allow_cached, save_slice=body.save_slice)
     packed_groups = [g for g in groups_out if not g.get("pool")]
 

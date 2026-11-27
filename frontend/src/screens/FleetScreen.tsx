@@ -14,6 +14,40 @@ import { PrinterExpandedCard } from './fleet/PrinterExpandedCard';
 import { AddPrinterCard, PrinterRow, PrinterTile } from './fleet/PrinterTile';
 
 type Layout = 'cards' | 'rows';
+type Media = 'camera' | 'image';
+const MEDIA_KEY = 'themis.fleet.media';
+
+function loadMedia(): Media {
+  try { return localStorage.getItem(MEDIA_KEY) === 'image' ? 'image' : 'camera'; } catch { return 'camera'; }
+}
+
+// ── Media toggle (Camera / Image on the cards) ────────────────────────────────
+function MediaToggle({ value, onChange }: { value: Media; onChange: (v: Media) => void }) {
+  const opts: { id: Media; label: string; icon: React.ReactElement }[] = [
+    { id: 'camera', label: 'Camera', icon: Icons.camera },
+    { id: 'image',  label: 'Image',  icon: Icons.printer },
+  ];
+  return (
+    <div className="row layout-toggle" role="group" aria-label="Card media" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-1)', border: '1px solid var(--border-1)' }}>
+      {opts.map(o => {
+        const on = value === o.id;
+        return (
+          <button key={o.id} onClick={() => onChange(o.id)} className="row gap-2" title={o.label} aria-pressed={on}
+                  style={{
+                    padding: '4px 10px', borderRadius: 5, border: 'none',
+                    background: on ? 'var(--bg-2)' : 'transparent',
+                    color: on ? 'var(--text-1)' : 'var(--text-3)',
+                    fontSize: 12, fontWeight: 500, cursor: 'pointer', alignItems: 'center',
+                    boxShadow: on ? '0 0 0 1px var(--border-2)' : 'none',
+                  }}>
+            {React.cloneElement(o.icon, { size: 13 } as React.SVGProps<SVGSVGElement>)}
+            <span>{o.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── Layout toggle (Cards / Rows) ──────────────────────────────────────────────
 function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout) => void }) {
@@ -44,8 +78,8 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
 }
 
 // ── FleetGrid (cards layout) ──────────────────────────────────────────────────
-function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueRowsByPrinter, refetchMaintenance, fleetModels }: {
-  printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
+function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueRowsByPrinter, refetchMaintenance, fleetModels, media }: {
+  media: Media; printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
   printerTypes: PrinterType[]; refetchFleet: () => void; snapshotIntervalMs?: number;
   dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>; refetchMaintenance: () => void;
   fleetModels: FleetVendorModel[];
@@ -58,7 +92,7 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
               ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
-              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} />}
+              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} media={media} />}
           </div>
         );
       })}
@@ -98,6 +132,8 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
 export function FleetScreen() {
   const [printers, refetchFleet] = useFleetData();
   const [layout, setLayout] = useState<Layout>('cards');
+  const [media, setMediaState] = useState<Media>(loadMedia);
+  const setMedia = (m: Media) => { setMediaState(m); try { localStorage.setItem(MEDIA_KEY, m); } catch { /* storage blocked: the choice just won't persist */ } };
   // The row table has seven fixed columns; on a phone the card layout is the only one that fits.
   const narrow = useMediaQuery('(max-width: 768px)');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -164,6 +200,7 @@ export function FleetScreen() {
           </div>
         </div>
         <div className="row gap-2 wrap">
+          {(layout === 'cards' || narrow) && <MediaToggle value={media} onChange={setMedia} />}
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm nowrap mobile-redundant">{Icons.refresh} Sync now</button>
           {canScan && (
@@ -179,7 +216,7 @@ export function FleetScreen() {
       {scanning && <ScanSpoolModal onClose={() => setScanning(false)} onAssigned={refetchFleet} />}
 
       {(layout === 'cards' || narrow) && (
-        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
+        <FleetGrid media={media} printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
       {layout === 'rows' && !narrow && (
         <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />

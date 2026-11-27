@@ -25,7 +25,7 @@ MANIFEST = PluginManifest(
     factory=SnapmakerExtendedClient,
     legacy_printer_types={"snapmaker_extended": ("snapmaker", "u1_extended")},
     manufacturers=(
-    Manufacturer("snapmaker", "Snapmaker", (PrinterModel("u1_extended", "U1 (Extended)", bed_mm=(270, 270), toolheads=4),)),
+    Manufacturer("snapmaker", "Snapmaker", (PrinterModel("u1_extended", "U1 (Extended)", bed_mm=(270, 270), toolheads=4, image="images/u1_extended.png"),)),
     ),
     description="Snapmaker U1 (Extended) printers.",
 )

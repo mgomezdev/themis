@@ -9,7 +9,8 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select, update
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -504,6 +505,13 @@ async def _create_project(body: ProjectCreate, session: AsyncSession, progress: 
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
         await sync_project_totals(session, proj)
+    if progress.get("idempotency"):        # GH #245: the key learns of the project in the same commit that creates it
+        await session.flush()
+        try:
+            await idempotency.note_progress(session, *progress["idempotency"], {"created_id": proj.id})
+        except HTTPException:
+            await session.rollback()           # taken over while this request stalled: the retry's project is the one
+            raise
     await session.commit()
     progress["created_id"] = proj.id                       # from here on a failure must not be retried under the same Idempotency-Key
     await session.refresh(proj)
@@ -529,12 +537,20 @@ async def create_project(
         raise HTTPException(422, "external_ref needs a source_app")
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = "POST /api/v1/projects"
+    owner = idempotency.new_owner()
+    progress: dict = {}
     if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()))
+        async def committed_since(baseline: dict) -> str | None:
+            created = baseline.get("created_id")
+            return (f"Project {created} was already created by an earlier request with this Idempotency-Key: fetch it instead "
+                    "of retrying with this key") if created is not None else None
+
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()), owner=owner,
+                                         committed_since=committed_since)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
-    progress: dict = {}
+        progress["idempotency"] = (scope, idempotency_key, owner)
     try:
         result, created = await _create_project(body, session, progress)
     except BaseException:
@@ -543,7 +559,7 @@ async def create_project(
                 await idempotency.partial(factory, scope, idempotency_key, f"Project {progress['created_id']} was already created by this "
                                           "request before it failed: fetch it instead of retrying with this key")
             else:
-                await idempotency.release(factory, scope, idempotency_key)
+                await idempotency.release(factory, scope, idempotency_key, owner=owner)
         raise
     response.status_code = 201 if created else 200
     if idempotency_key:
@@ -605,9 +621,14 @@ async def patch_project(
     if body.amount_paid is not None and not await has_payments(session, project_id):
         proj.amount_paid = body.amount_paid
     if "price" in body.model_fields_set:
-        if body.price != proj.price:
-            proj.quote_accepted_at = None   # what the customer accepted no longer matches
-        proj.price = body.price
+        # Write the price explicitly, comparing with the row as stored, not as loaded (GH #251): an equal-to-loaded price is a
+        # no-op for the ORM, so a concurrent staff edit committed since would silently win; and the customer's acceptance must
+        # be cleared whenever the stored price changes (GH #231), even by an acceptance committed after this request's read.
+        await session.execute(update(Project).where(Project.id == proj.id).values(
+            quote_accepted_at=case((Project.price.is_not(body.price), None), else_=Project.quote_accepted_at),
+            price=body.price).execution_options(synchronize_session=False))
+        set_committed_value(proj, "price", body.price)
+        session.expire(proj, ["quote_accepted_at"])
     if body.price_visible is not None:
         proj.price_visible = body.price_visible
     if body.payment_status is not None and not await has_payments(session, project_id):

@@ -153,7 +153,7 @@ async def test_print_is_gated_like_upload_and_print(client, pid, session_factory
     mock.start_print.assert_not_called()
 
 
-async def test_print_claims_the_printer_first_and_releases_it_if_the_printer_refuses(client, pid):
+async def test_print_keeps_the_plate_reserved_when_start_is_unconfirmed(client, pid):
     mock = _client(**FULL)
     seen = {}
 
@@ -165,8 +165,8 @@ async def test_print_claims_the_printer_first_and_releases_it_if_the_printer_ref
 
     assert (await _print(client, pid)).status_code == 502
     assert seen["gate_during_start"] is True
-    assert not printer_manager.is_awaiting_plate_clear(pid)
-    assert (await client.get(f"/api/v1/printers/{pid}")).json()["awaiting_plate_clear"] is False
+    assert printer_manager.is_awaiting_plate_clear(pid)
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["awaiting_plate_clear"] is True
 
 
 async def test_print_rejects_non_printable_names_and_needs_the_capability(client, pid):
@@ -291,14 +291,14 @@ async def test_concurrent_direct_starts_on_one_printer_start_exactly_one_print(c
     mock.start_print.side_effect = start
     printer_manager._clients[pid] = mock
 
-    from app.api.routes import printers as routes
-    real_gate = routes._set_plate_gate
+    from app.services import print_start
+    real_gate = print_start.reserve_plate
 
     async def slow_gate(*a, **kw):
         await asyncio.sleep(0.05)              # latency between "checks passed" and "printer claimed"
         return await real_gate(*a, **kw)
 
-    with patch.object(routes, "_set_plate_gate", slow_gate):
+    with patch.object(print_start, "reserve_plate", slow_gate):
         r1, r2 = await asyncio.gather(_print(client, pid, "a.gcode"), _print(client, pid, "b.gcode"))
 
     assert sorted([r1.status_code, r2.status_code]) == [200, 409]

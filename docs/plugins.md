@@ -249,7 +249,7 @@ Pipeline (`app/plugins/installer.py`), the same for both sources:
 5. **Commit** (one at a time): move to `<data>/plugins/<id>/<version>/`, write the `installed_plugins` row (`pending_restart`),
    audit-log it. A failure at any step removes the staging directory and anything moved, and leaves no row.
 
-Installing a **different version of an installed id** is an upgrade: the version that is *running* stays on disk as
+Installing a **different version of an installed id** is an upgrade: the version that is *running* (or, for a plugin that failed to load, the version installed at boot) stays on disk as
 `previous_version` (older ones are pruned). Upgrading again before a restart keeps that running version, not the staged one that
 never ran. Re-installing the *same* version is refused — bump `version`.
 
@@ -331,7 +331,10 @@ functionality lives in the neutral core API (`/api/v1/inventory/*`); the old `/a
 Disabling or uninstalling a provider keeps resource references (printer bindings, preferences) as dormant data and surfaces the
 state; the host never silently selects another implementation. Printer models are core-owned (`printer_models`, BIZ-262): plugins
 contribute `Manufacturer`/`PrinterModel` declarations (optionally `equivalents=` for G-code compatibility, BIZ-263) and Themis assigns
-the stable UUIDs.
+the stable UUIDs. A model may declare `image="images/<model>.png"`: a PNG inside the plugin package that the Fleet card shows in Image
+mode (BIZ-406). Core serves it at `GET /api/v1/printers/{id}/image` via `services/printer_images.py` (404 when undeclared, missing,
+outside the package, or the plugin is disabled; the card then shows a generic icon) and stores no image itself. List `images/*.png` in
+`package-data` for packaged plugins.
 
 ### Notification channels (`notify.channel`, BIZ-252)
 

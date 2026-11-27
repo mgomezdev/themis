@@ -352,6 +352,52 @@ async def test_two_requests_cannot_both_take_over_one_stale_claim(session_factor
     assert all(r is None or getattr(r, "status_code", None) == 409 for r in results)
 
 
+async def test_a_stale_takeover_does_not_repeat_a_generation_whose_jobs_were_committed(client, tmp_path, session_factory, monkeypatch):
+    """GH #225: the first request committed its job and stalled before recording its response; once the claim went stale a retry
+    took the key over and generated the job again. The retry now finds the committed work and the key turns partial."""
+    from app.api.routes import project_generate
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    headers = {"Idempotency-Key": "same-generation"}
+    generate = project_generate._generate_project
+    committed, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_after_commit(*args, **kwargs):
+        result = await generate(*args, **kwargs)
+        if not committed.is_set():
+            committed.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(project_generate, "_generate_project", stall_after_commit)
+    first = asyncio.create_task(_generate(client, tmp_path, project_id, headers))
+    try:
+        await asyncio.wait_for(committed.wait(), 5)
+        assert await _count(session_factory, Job) == 1
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await _generate(client, tmp_path, project_id, headers)
+    finally:
+        resume.set()
+        original = await first
+    assert retry.status_code == 409 and "created 1 job(s)" in retry.json()["detail"], retry.text
+    assert original.status_code == 200, original.text
+    assert await _count(session_factory, Job) == 1
+    again = await _generate(client, tmp_path, project_id, headers)                       # the key stays partial: never re-run
+    assert again.status_code == 409 and await _count(session_factory, Job) == 1
+
+
+async def test_a_stale_claim_with_no_committed_work_is_still_taken_over(session_factory, monkeypatch):
+    seen = []
+
+    async def nothing_committed(baseline):
+        seen.append(baseline)
+        return None
+
+    assert await idempotency.claim(session_factory, "S", "k", "h", baseline={"jobs_before": 3}) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    assert await idempotency.claim(session_factory, "S", "k", "h", committed_since=nothing_committed) is None
+    assert seen == [{"jobs_before": 3}]
+
+
 async def test_a_completed_claim_is_not_overwritten_by_a_late_second_completion(session_factory):
     await idempotency.claim(session_factory, "S", "late", "h")
     await idempotency.complete(session_factory, "S", "late", 200, {"first": True})
@@ -391,3 +437,244 @@ async def test_a_reused_project_id_does_not_swallow_the_new_projects_event(clien
 
     assert second["id"] == first["id"]
     assert [p["name"] for p in wire.payloads("project.created")] == ["One", "Two"]
+
+
+async def _taken_over(session_factory, monkeypatch, key="k"):
+    """The first request claims `key`, stalls past STALE_AFTER and a retry takes the claim over. Returns (zombie, retry) owners."""
+    zombie, retry = idempotency.new_owner(), idempotency.new_owner()
+    assert await idempotency.claim(session_factory, "S", key, "h", owner=zombie) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    assert await idempotency.claim(session_factory, "S", key, "h", owner=retry) is None
+    monkeypatch.undo()
+    return zombie, retry
+
+
+async def test_a_zombie_release_does_not_free_the_retrys_claim(session_factory, monkeypatch):
+    """GH #246: the original failing with nothing committed must not delete the claim the retry holds (a third request would
+    then run the work a second time while the retry is still doing it)."""
+    zombie, _ = await _taken_over(session_factory, monkeypatch)
+    await idempotency.release(session_factory, "S", "k", owner=zombie)
+    with pytest.raises(Exception, match="still being processed"):
+        await idempotency.claim(session_factory, "S", "k", "h", owner=idempotency.new_owner())
+
+
+async def test_a_zombie_that_committed_its_work_wins_and_a_late_failure_cannot_overwrite_a_response(session_factory, monkeypatch):
+    """Committed work outranks a claim still running: the zombie's response stands (the retry's later completion and the
+    zombie's own late partial change nothing), and the retry's release can no longer delete the finished key."""
+    zombie, retry = await _taken_over(session_factory, monkeypatch)
+    await idempotency.complete(session_factory, "S", "k", 201, {"from": "zombie"})
+    await idempotency.complete(session_factory, "S", "k", 200, {"from": "retry"})
+    await idempotency.partial(session_factory, "S", "k", "late failure")
+    await idempotency.release(session_factory, "S", "k", owner=retry)
+    replay = await idempotency.claim(session_factory, "S", "k", "h", owner=idempotency.new_owner())
+    assert (replay.status_code, replay.response) == (201, {"from": "zombie"})
+
+
+async def test_the_holder_can_still_release_or_mark_partial(session_factory, monkeypatch):
+    await _taken_over(session_factory, monkeypatch, key="a")
+    await idempotency.partial(session_factory, "S", "a", "retry failed after committing")
+    with pytest.raises(Exception, match="retry failed after committing"):
+        await idempotency.claim(session_factory, "S", "a", "h", owner=idempotency.new_owner())
+    _, retry = await _taken_over(session_factory, monkeypatch, key="b")
+    await idempotency.release(session_factory, "S", "b", owner=retry)
+    assert await idempotency.claim(session_factory, "S", "b", "h", owner=idempotency.new_owner()) is None
+
+
+async def test_a_stale_takeover_does_not_create_the_project_a_second_time(client, session_factory, monkeypatch):
+    """GH #245: the first create committed its project and stalled before recording its response; once the claim went stale
+    a retry took the key over and created the project again (the external_ref dedupe only helps callers that send one)."""
+    from app.api.routes import projects as project_routes
+    create = project_routes._create_project
+    committed, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_after_commit(*args, **kwargs):
+        result = await create(*args, **kwargs)
+        if not committed.is_set():
+            committed.set()
+            await resume.wait()
+        return result
+
+    monkeypatch.setattr(project_routes, "_create_project", stall_after_commit)
+    headers = {"Idempotency-Key": "same-create"}
+    first = asyncio.create_task(client.post("/api/v1/projects", json={"name": "Once"}, headers=headers))
+    try:
+        await asyncio.wait_for(committed.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+    finally:
+        resume.set()
+        original = await first
+    assert original.status_code == 201, original.text
+    assert retry.status_code == 409 and f"Project {original.json()['id']} was already created" in retry.json()["detail"]
+    assert await _count(session_factory, Project) == 1
+    again = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)          # the key stays partial
+    assert again.status_code == 409 and await _count(session_factory, Project) == 1
+
+
+async def test_an_original_that_commits_after_its_claim_was_taken_over_creates_nothing(client, session_factory, monkeypatch):
+    """The mirror order: the original stalls BEFORE its commit, the retry takes over and creates the project, then the
+    original resumes. Its commit must not add a second project under the same key."""
+    from app.api.routes import projects as project_routes
+    validate = project_routes._valid_customer_id
+    stalled, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_first(*args, **kwargs):
+        if not stalled.is_set():
+            stalled.set()
+            await resume.wait()
+        return await validate(*args, **kwargs)
+
+    monkeypatch.setattr(project_routes, "_valid_customer_id", stall_first)
+    headers = {"Idempotency-Key": "zombie-create"}
+    first = asyncio.create_task(client.post("/api/v1/projects", json={"name": "Once"}, headers=headers))
+    try:
+        await asyncio.wait_for(stalled.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+        assert retry.status_code == 201, retry.text
+    finally:
+        resume.set()
+        original = await first
+    assert original.status_code == 409 and "taken over" in original.json()["detail"], original.text
+    assert await _count(session_factory, Project) == 1
+    replay = await client.post("/api/v1/projects", json={"name": "Once"}, headers=headers)
+    assert replay.status_code == 201 and replay.json()["id"] == retry.json()["id"]
+
+
+async def test_a_stale_create_that_committed_nothing_is_still_taken_over(client, session_factory, monkeypatch):
+    first_owner = idempotency.new_owner()
+    scope = "POST /api/v1/projects"
+    from app.api.routes.projects import ProjectCreate
+    req = idempotency.request_hash(ProjectCreate(name="Later").model_dump())
+    assert await idempotency.claim(session_factory, scope, "dead", req, owner=first_owner) is None   # died before creating
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    retry = await client.post("/api/v1/projects", json={"name": "Later"}, headers={"Idempotency-Key": "dead"})
+    assert retry.status_code == 201, retry.text
+    assert await _count(session_factory, Project) == 1
+
+
+async def test_a_takeover_does_not_act_on_progress_recorded_after_it_read_the_claim(session_factory, monkeypatch):
+    """GH #258: the original's progress committed between the retry's read of the stale claim and its takeover update; the
+    retry decided on the old baseline and took over anyway, repeating committed work. The takeover now re-checks it."""
+    from app.models import IdempotencyKey
+    original = idempotency.new_owner()
+    assert await idempotency.claim(session_factory, "S", "race", "h", baseline={"jobs_before": 0}, owner=original) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+
+    async def original_commits_meanwhile(baseline):
+        async with session_factory() as s:                       # the stalled original records its work right now
+            await idempotency.note_progress(s, "S", "race", original, {"created_id": 7})
+            await s.commit()
+        return None                                              # judged on the stale baseline: nothing committed yet
+
+    with pytest.raises(Exception, match="still being processed"):
+        await idempotency.claim(session_factory, "S", "race", "h", committed_since=original_commits_meanwhile,
+                                owner=idempotency.new_owner())
+    async with session_factory() as s:
+        row = (await s.execute(select(IdempotencyKey).where(IdempotencyKey.key == "race"))).scalar_one()
+    assert (row.claim_token, row.response) == (original, {"created_id": 7})       # still the original's claim
+
+
+async def test_a_takeover_with_unchanged_progress_still_succeeds(session_factory, monkeypatch):
+    assert await idempotency.claim(session_factory, "S", "same", "h", baseline={"jobs_before": 3},
+                                   owner=idempotency.new_owner()) is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+
+    async def nothing(_baseline):
+        return None
+
+    retry = idempotency.new_owner()
+    assert await idempotency.claim(session_factory, "S", "same", "h", committed_since=nothing, owner=retry) is None
+    from app.models import IdempotencyKey
+    async with session_factory() as s:
+        row = (await s.execute(select(IdempotencyKey).where(IdempotencyKey.key == "same"))).scalar_one()
+    assert (row.claim_token, row.state) == (retry, "in_progress")                 # the retry holds the claim now
+
+
+async def test_a_generation_whose_claim_was_taken_over_before_its_pack_committed_adds_no_jobs(
+        client, tmp_path, session_factory, monkeypatch):
+    """GH #258 on generate: the original stalled before committing its pack, a retry took the stale claim over and generated;
+    the resumed original's pack must not commit a second set of jobs (its progress note no longer matches its claim)."""
+    from app.api.routes import project_generate
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    headers = {"Idempotency-Key": "stalled-generation"}
+    load = project_generate._get_project_or_404
+    stalled, resume = asyncio.Event(), asyncio.Event()
+
+    async def stall_first_generation(*args, **kwargs):     # after claiming the key, before any write of its own
+        if not stalled.is_set():
+            stalled.set()
+            await resume.wait()
+        return await load(*args, **kwargs)
+
+    monkeypatch.setattr(project_generate, "_get_project_or_404", stall_first_generation)
+    first = asyncio.create_task(_generate(client, tmp_path, project_id, headers))
+    try:
+        await asyncio.wait_for(stalled.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = await _generate(client, tmp_path, project_id, headers)
+        assert retry.status_code == 200, retry.text
+    finally:
+        resume.set()
+        original = await first
+    assert original.status_code == 409 and "taken over" in original.json()["detail"], original.text
+    assert await _count(session_factory, Job) == len(retry.json()["jobs"])
+    replay = await _generate(client, tmp_path, project_id, headers)
+    assert replay.status_code == 200 and replay.headers.get("Idempotent-Replay") == "true"
+
+
+async def test_a_refused_original_does_not_mark_a_still_running_retrys_key_partial(client, tmp_path, session_factory, monkeypatch):
+    """GH #270: a generation refused after a takeover must judge 'partial' by the packs IT committed, not by the project's job
+    count, which includes the jobs the retry (still running) has committed."""
+    from app.api.routes import project_generate
+    from app.models import IdempotencyKey
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    # Patched once for the whole test: two overlapping `with patch(...)` blocks would exit out of order and leak mocks.
+    monkeypatch.setattr("app.config.get_library_dir", lambda: tmp_path / "library")
+    monkeypatch.setattr("app.config.get_filecache_dir", lambda: tmp_path / "filecache")
+    monkeypatch.setattr("app.api.routes.projects.get_project_constructor", lambda: fake_packer(_make_3mf_bytes(plate_count=1)))
+    headers = {"Idempotency-Key": "running-retry"}
+
+    def post():
+        return client.post(f"/api/v1/projects/{project_id}/generate", json={}, headers=headers)
+
+    load, remember = project_generate._get_project_or_404, project_generate._remember
+    original_stalled, original_go = asyncio.Event(), asyncio.Event()
+    retry_committed, retry_go = asyncio.Event(), asyncio.Event()
+
+    async def stall_original(*args, **kwargs):
+        if not original_stalled.is_set():
+            original_stalled.set()
+            await original_go.wait()
+        return await load(*args, **kwargs)
+
+    async def stall_retry_before_recording(*args, **kwargs):     # its jobs are committed, its response not yet stored
+        retry_committed.set()
+        await retry_go.wait()
+        return await remember(*args, **kwargs)
+
+    monkeypatch.setattr(project_generate, "_get_project_or_404", stall_original)
+    monkeypatch.setattr(project_generate, "_remember", stall_retry_before_recording)
+    original = asyncio.create_task(post())
+    retry = None
+    try:
+        await asyncio.wait_for(original_stalled.wait(), 5)
+        monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+        retry = asyncio.create_task(post())
+        await asyncio.wait_for(retry_committed.wait(), 5)
+        assert await _count(session_factory, Job) > 0                 # the premise: the retry's jobs are committed
+        original_go.set()
+        refused = await original                                     # resumes while the retry is still in progress
+        assert refused.status_code == 409 and "taken over" in refused.json()["detail"], refused.text
+    finally:
+        original_go.set()
+        retry_go.set()
+        await asyncio.gather(original, *([retry] if retry is not None else []), return_exceptions=True)
+    done = retry.result()
+    assert done.status_code == 200, done.text
+    async with session_factory() as s:
+        key = (await s.execute(select(IdempotencyKey).where(IdempotencyKey.key == "running-retry"))).scalar_one()
+    assert key.state == "done"                                       # not turned partial by the refused original
+    assert await _count(session_factory, Job) == len(done.json()["jobs"])    # the original's refused pack rolled back
+    replay = await post()
+    assert replay.status_code == 200 and replay.json() == done.json(), replay.text
