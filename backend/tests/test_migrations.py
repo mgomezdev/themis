@@ -719,3 +719,18 @@ async def test_v083_requeue_pending_defaults_existing_failure_rows_to_nothing_pe
         await v083_requeue_pending.down(conn)
         assert "requeue_pending" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(job_item_failures)"))).fetchall()}
     await engine.dispose()
+
+
+async def test_v084_adds_and_drops_the_idempotency_claim_token():
+    from app.migrations import v084_idempotency_claim_token as v84
+    engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE idempotency_keys (id INTEGER PRIMARY KEY, state TEXT)"))
+        await conn.execute(text("INSERT INTO idempotency_keys VALUES (1, 'done')"))
+        await v84.up(conn)
+        await v84.up(conn)
+        assert (await conn.execute(text("SELECT id, state, claim_token FROM idempotency_keys"))).one() == (1, "done", None)
+        await v84.down(conn)
+        await v84.down(conn)
+        assert "claim_token" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(idempotency_keys)"))).fetchall()}
+    await engine.dispose()

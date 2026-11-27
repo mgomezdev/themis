@@ -529,8 +529,9 @@ async def create_project(
         raise HTTPException(422, "external_ref needs a source_app")
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
     scope = "POST /api/v1/projects"
+    owner = idempotency.new_owner()
     if idempotency_key:
-        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()))
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()), owner=owner)
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
@@ -543,7 +544,7 @@ async def create_project(
                 await idempotency.partial(factory, scope, idempotency_key, f"Project {progress['created_id']} was already created by this "
                                           "request before it failed: fetch it instead of retrying with this key")
             else:
-                await idempotency.release(factory, scope, idempotency_key)
+                await idempotency.release(factory, scope, idempotency_key, owner=owner)
         raise
     response.status_code = 201 if created else 200
     if idempotency_key:
