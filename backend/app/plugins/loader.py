@@ -22,6 +22,7 @@ logger = logging.getLogger("app")
 @dataclass
 class LoadReport:
     loaded: dict[str, str] = field(default_factory=dict)       # id -> version now running
+    at_boot: dict[str, str] = field(default_factory=dict)      # id -> version installed at boot (loaded or failed): GH #262
     errors: dict[str, str] = field(default_factory=dict)       # id -> why it did not load
     removed: list[str] = field(default_factory=list)           # ids whose code was deleted (pending_removal)
 
@@ -95,6 +96,7 @@ def load_installed(plugins_dir: Path, db_path: Path) -> LoadReport:
                 shutil.rmtree(plugins_dir / plugin_id, ignore_errors=True)
             report.removed.append(plugin_id)
             continue
+        report.at_boot[plugin_id] = version
         try:
             _load_one(plugins_dir, plugin_id, version, reserved)
             report.loaded[plugin_id] = version
